@@ -1,0 +1,10 @@
+[package]
+name = "mmo-cs"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+anny = { path = "../../anny" }
+ese = { path = "../../ese", features = ["dim-512", "quant-8"] }
+fold = { path = "../../fold" }
