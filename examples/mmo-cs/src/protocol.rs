@@ -20,6 +20,11 @@ use crate::domain::{PlayerId, Team};
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMsg {
+    /// Picks the battleground and match length for a battle that hasn't
+    /// been configured yet (`Battle::park.is_none()`). First one in wins —
+    /// once a battle has a park, later `ConfigureBattle`s are ignored, the
+    /// same "locks once set" discipline `Join` uses against `Active`.
+    ConfigureBattle { park_id: String, duration_secs: u64 },
     Join { player: PlayerId, team: Team },
     Ping { player: PlayerId, lat: f64, lon: f64, client_ms: u64 },
     StartBattle,

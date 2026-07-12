@@ -5,10 +5,11 @@
 //! logic, `web.rs` for the HTTP/websocket surface, `parks.rs` for the
 //! battleground catalog.
 //!
-//! Run with `cargo run -p mmo-cs`, then open http://localhost:3000 — join
-//! a team in two browser tabs (or two devices), start the battle once both
-//! teams have a member, and use devtools' geolocation override (or a real
-//! phone) to move each "player" in or out of the chosen park's bounding box.
+//! Run with `cargo run -p mmo-cs`, then open http://localhost:3000 — pick a
+//! park and match length from the menu, join a team in two browser tabs
+//! (or two devices), start the battle once both teams have a member, and
+//! use devtools' geolocation override (or a real phone) to move each
+//! "player" in or out of the chosen park's bounding box.
 
 mod battle;
 mod domain;
@@ -54,11 +55,8 @@ fn placeholder_scoreboard() -> Scoreboard {
     Scoreboard {
         battle: domain::Battle {
             id: 0,
-            park: domain::Park {
-                id: String::new(),
-                name: String::new(),
-                bbox: domain::Bbox { min_lon: 0.0, min_lat: 0.0, max_lon: 0.0, max_lat: 0.0 },
-            },
+            park: None,
+            duration_ms: None,
             status: domain::BattleStatus::Pending,
             started_at_ms: None,
             ends_at_ms: None,

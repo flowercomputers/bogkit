@@ -96,7 +96,13 @@ pub enum BattleOutcome {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Battle {
     pub id: u64,
-    pub park: Park,
+    /// `None` until someone configures the match (see
+    /// `ClientMsg::ConfigureBattle`) — the client shows a park-search +
+    /// duration menu while this is unset, and the join/start lobby once
+    /// it's set.
+    pub park: Option<Park>,
+    /// Chosen alongside `park`; how long the battle runs once started.
+    pub duration_ms: Option<u64>,
     pub status: BattleStatus,
     pub started_at_ms: Option<u64>,
     pub ends_at_ms: Option<u64>,
