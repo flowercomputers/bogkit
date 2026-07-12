@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>patterns</title>
+<style>
+  :root {
+    --bg: #faf7f2;
+    --panel: #fffdf9;
+    --ink: #2b2620;
+    --muted: #8a8072;
+    --line: #e4dccd;
+    --accent: #6b5d43;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: ui-sans-serif, system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    display: flex;
+    height: 100vh;
+  }
+  aside {
+    width: 300px;
+    flex-shrink: 0;
+    background: var(--panel);
+    border-right: 1px solid var(--line);
+    padding: 1.25rem;
+    overflow-y: auto;
+  }
+  h1 { font-size: 1.05rem; margin: 0 0 1rem; letter-spacing: 0.02em; }
+  h1 small { color: var(--muted); font-weight: normal; }
+  .profile-row { display: flex; gap: 0.4rem; margin-bottom: 1rem; }
+  select, input, button {
+    font: inherit;
+    color: inherit;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 0.35rem 0.5rem;
+  }
+  select { flex: 1; min-width: 0; }
+  button { cursor: pointer; background: var(--panel); }
+  button:hover { border-color: var(--accent); }
+  label {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.6rem;
+    margin: 0.45rem 0;
+    font-size: 0.86rem;
+  }
+  label span { color: var(--muted); }
+  label input { width: 5.2rem; text-align: right; }
+  #name { width: 100%; margin-bottom: 0.75rem; }
+  .section { margin-top: 1.1rem; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+  main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .toolbar {
+    padding: 0.6rem 1rem;
+    border-bottom: 1px solid var(--line);
+    font-size: 0.8rem;
+    color: var(--muted);
+    display: flex;
+    justify-content: space-between;
+  }
+  #viewer { flex: 1; overflow: auto; padding: 1rem; }
+  #viewer svg { width: 100%; height: auto; max-height: 100%; display: block; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<aside>
+  <h1>patterns <small>/ trouser block</small></h1>
+  <div class="profile-row">
+    <select id="profiles"></select>
+    <button id="new" title="new profile">+</button>
+    <button id="delete" title="delete profile">&times;</button>
+  </div>
+  <input id="name" placeholder="profile name">
+  <div class="section">measurements (cm)</div>
+  <div id="fields"></div>
+</aside>
+<main>
+  <div class="toolbar">
+    <span id="status">connecting&hellip;</span>
+    <a id="download" download="pattern.svg" href="#">download svg</a>
+  </div>
+  <div id="viewer"></div>
+</main>
+<script>
+const FIELDS = [
+  ["waist", "waist"],
+  ["hip", "hip (seat)"],
+  ["body_rise", "body rise"],
+  ["inseam", "inseam"],
+  ["knee", "knee"],
+  ["ankle", "ankle / hem"],
+  ["hip_ease", "hip ease"],
+  ["waist_ease", "waist ease"],
+];
+
+const fieldsDiv = document.getElementById("fields");
+for (const [key, labelText] of FIELDS) {
+  const label = document.createElement("label");
+  const span = document.createElement("span");
+  span.textContent = labelText;
+  const input = document.createElement("input");
+  input.type = "number";
+  input.step = "0.5";
+  input.id = `m-${key}`;
+  label.append(span, input);
+  fieldsDiv.append(label);
+}
+
+let snapshot = { profiles: [], drafted: [] };
+let selectedId = null;
+
+const ws = new WebSocket(`ws://${location.host}/ws`);
+const statusEl = document.getElementById("status");
+ws.onopen = () => { statusEl.textContent = "live"; };
+ws.onclose = () => { statusEl.textContent = "disconnected — reload"; };
+
+ws.onmessage = (event) => {
+  snapshot = JSON.parse(event.data);
+  if (selectedId === null || !snapshot.profiles.some((p) => p.id === selectedId)) {
+    selectedId = snapshot.profiles[0]?.id ?? null;
+  }
+  render();
+};
+
+function selected() {
+  return snapshot.profiles.find((p) => p.id === selectedId) ?? null;
+}
+
+function render() {
+  const picker = document.getElementById("profiles");
+  picker.replaceChildren(...snapshot.profiles.map((p) => {
+    const opt = document.createElement("option");
+    opt.value = p.id;
+    opt.textContent = p.name;
+    opt.selected = p.id === selectedId;
+    return opt;
+  }));
+
+  const profile = selected();
+  if (profile) {
+    setUnlessFocused(document.getElementById("name"), profile.name);
+    for (const [key] of FIELDS) {
+      setUnlessFocused(document.getElementById(`m-${key}`), profile.m[key]);
+    }
+    const svg = snapshot.drafted.find(([id]) => id === selectedId)?.[1] ?? "";
+    document.getElementById("viewer").innerHTML = svg;
+    document.getElementById("download").href =
+      "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+  } else {
+    document.getElementById("viewer").innerHTML = "";
+  }
+}
+
+// don't clobber the field the user is currently editing
+function setUnlessFocused(input, value) {
+  if (document.activeElement !== input) input.value = value;
+}
+
+function sendUpsert() {
+  const profile = selected();
+  if (!profile) return;
+  const m = {};
+  for (const [key] of FIELDS) {
+    const v = parseFloat(document.getElementById(`m-${key}`).value);
+    m[key] = Number.isFinite(v) ? v : profile.m[key];
+  }
+  const name = document.getElementById("name").value.trim() || profile.name;
+  ws.send(JSON.stringify({ op: "upsert", profile: { id: profile.id, name, m } }));
+}
+
+document.getElementById("fields").addEventListener("input", sendUpsert);
+document.getElementById("name").addEventListener("input", sendUpsert);
+
+document.getElementById("profiles").onchange = (e) => {
+  selectedId = parseInt(e.target.value, 10);
+  render();
+};
+
+document.getElementById("new").onclick = () => {
+  const id = Math.max(0, ...snapshot.profiles.map((p) => p.id)) + 1;
+  const base = selected();
+  const m = base ? { ...base.m } : {
+    waist: 80, hip: 100, body_rise: 28, inseam: 78,
+    knee: 40, ankle: 24, hip_ease: 4, waist_ease: 2,
+  };
+  selectedId = id;
+  ws.send(JSON.stringify({ op: "upsert", profile: { id, name: `profile ${id}`, m } }));
+};
+
+document.getElementById("delete").onclick = () => {
+  if (selectedId === null || snapshot.profiles.length <= 1) return;
+  ws.send(JSON.stringify({ op: "delete", id: selectedId }));
+  selectedId = null;
+};
+</script>
+</body>
+</html>
