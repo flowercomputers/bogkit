@@ -40,6 +40,8 @@
 //! parallel branches. The tuple's reader is the tuple of its elements'
 //! readers.
 
+use serde::{Deserialize, Serialize};
+
 use crate::stream::Readable;
 
 use crate::stream::{PipelineInitCtx, WriteTx};
@@ -134,7 +136,7 @@ impl<D: Clone, T: Push<D>> Push<D> for &mut T {
 /// The currency of keyed operators: [`KeyBy`] produces `Keyed` streams,
 /// [`Aggregate`] consumes and emits them, and [`Unkey`] strips the key back
 /// off.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Keyed<K, V> {
     pub key: K,
     pub val: V,

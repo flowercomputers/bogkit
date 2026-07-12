@@ -1,0 +1,202 @@
+[
+  {
+    "id": "B058",
+    "name": "McCarren Park",
+    "bbox": {
+      "min_lon": -73.955882,
+      "min_lat": 40.718881,
+      "max_lon": -73.948648,
+      "max_lat": 40.723314
+    }
+  },
+  {
+    "id": "B073",
+    "name": "Prospect Park",
+    "bbox": {
+      "min_lon": -73.97943,
+      "min_lat": 40.651304,
+      "max_lon": -73.962127,
+      "max_lat": 40.672439
+    }
+  },
+  {
+    "id": "B032",
+    "name": "Fort Greene Park",
+    "bbox": {
+      "min_lon": -73.977689,
+      "min_lat": 40.68974,
+      "max_lon": -73.973268,
+      "max_lat": 40.693334
+    }
+  },
+  {
+    "id": "B114",
+    "name": "Msgr. McGolrick Park",
+    "bbox": {
+      "min_lon": -73.944372,
+      "min_lat": 40.723192,
+      "max_lon": -73.942335,
+      "max_lat": 40.725692
+    }
+  },
+  {
+    "id": "B113A",
+    "name": "Cadman Plaza Park",
+    "bbox": {
+      "min_lon": -73.991249,
+      "min_lat": 40.696457,
+      "max_lon": -73.989855,
+      "max_lat": 40.700667
+    }
+  },
+  {
+    "id": "B087",
+    "name": "Sunset Park",
+    "bbox": {
+      "min_lon": -74.006581,
+      "min_lat": 40.645987,
+      "max_lon": -74.000906,
+      "max_lat": 40.649965
+    }
+  },
+  {
+    "id": "B066",
+    "name": "Owl's Head Park",
+    "bbox": {
+      "min_lon": -74.035388,
+      "min_lat": 40.638445,
+      "max_lon": -74.029339,
+      "max_lat": 40.641407
+    }
+  },
+  {
+    "id": "B529",
+    "name": "Bushwick Inlet Park",
+    "bbox": {
+      "min_lon": -73.963913,
+      "min_lat": 40.721483,
+      "max_lon": -73.957658,
+      "max_lat": 40.72592
+    }
+  },
+  {
+    "id": "B057",
+    "name": "Marine Park",
+    "bbox": {
+      "min_lon": -73.939059,
+      "min_lat": 40.582935,
+      "max_lon": -73.905238,
+      "max_lat": 40.609381
+    }
+  },
+  {
+    "id": "B028",
+    "name": "Dyker Beach Park",
+    "bbox": {
+      "min_lon": -74.024493,
+      "min_lat": 40.604296,
+      "max_lon": -74.011979,
+      "max_lat": 40.618182
+    }
+  },
+  {
+    "id": "B021",
+    "name": "Commodore Barry Park",
+    "bbox": {
+      "min_lon": -73.980381,
+      "min_lat": 40.696465,
+      "max_lon": -73.97746,
+      "max_lat": 40.698127
+    }
+  },
+  {
+    "id": "B008",
+    "name": "Betsy Head Park",
+    "bbox": {
+      "min_lon": -73.914781,
+      "min_lat": 40.661834,
+      "max_lon": -73.911293,
+      "max_lat": 40.665244
+    }
+  },
+  {
+    "id": "Q004",
+    "name": "Astoria Park",
+    "bbox": {
+      "min_lon": -73.928154,
+      "min_lat": 40.774738,
+      "max_lon": -73.91816,
+      "max_lat": 40.782601
+    }
+  },
+  {
+    "id": "Q015",
+    "name": "Forest Park",
+    "bbox": {
+      "min_lon": -73.870446,
+      "min_lat": 40.694768,
+      "max_lon": -73.83437,
+      "max_lat": 40.711206
+    }
+  },
+  {
+    "id": "Q099",
+    "name": "Flushing Meadows Corona Park",
+    "bbox": {
+      "min_lon": -73.854297,
+      "min_lat": 40.717144,
+      "max_lon": -73.826383,
+      "max_lat": 40.765032
+    }
+  },
+  {
+    "id": "Q102",
+    "name": "Juniper Valley Park",
+    "bbox": {
+      "min_lon": -73.885247,
+      "min_lat": 40.717631,
+      "max_lon": -73.87371,
+      "max_lat": 40.721953
+    }
+  },
+  {
+    "id": "Q024",
+    "name": "Kissena Park",
+    "bbox": {
+      "min_lon": -73.814103,
+      "min_lat": 40.742081,
+      "max_lon": -73.794534,
+      "max_lat": 40.750029
+    }
+  },
+  {
+    "id": "Q458",
+    "name": "Fort Totten Park",
+    "bbox": {
+      "min_lon": -73.782083,
+      "min_lat": 40.787834,
+      "max_lon": -73.772296,
+      "max_lat": 40.796599
+    }
+  },
+  {
+    "id": "Q012",
+    "name": "Crocheron Park",
+    "bbox": {
+      "min_lon": -73.771907,
+      "min_lat": 40.769739,
+      "max_lon": -73.763123,
+      "max_lat": 40.773405
+    }
+  },
+  {
+    "id": "Q020",
+    "name": "Highland Park",
+    "bbox": {
+      "min_lon": -73.893912,
+      "min_lat": 40.683582,
+      "max_lon": -73.8832,
+      "max_lat": 40.691266
+    }
+  }
+]
