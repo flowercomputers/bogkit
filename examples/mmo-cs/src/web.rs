@@ -100,12 +100,16 @@ async fn index() -> Html<&'static str> {
   #banner { padding: 0.75rem; border-radius: 6px; margin: 1rem 0; display: none; }
   #banner.show { display: block; }
   #status { color: #555; }
+  #my-status { font-weight: bold; margin: 0.5rem 0; }
+  #my-status.in { color: #2a7; }
+  #my-status.out { color: #c33; }
   button:disabled { opacity: 0.5; }
 </style>
 </head>
 <body>
 <h1>area denial: <span id="park">connecting...</span></h1>
 <div id="status"></div>
+<div id="my-status"></div>
 <div id="banner"></div>
 <div class="teams">
   <div class="team" id="team-court_square">
@@ -142,6 +146,7 @@ let myTeam = localStorage.getItem(TEAM_KEY); // "court_square" | "church_ave" | 
 let latest = null; // last scoreboard from the server
 let watchId = null;
 let lastPingAt = 0;
+let lastFix = null; // { lat, lon } from the most recent geolocation fix
 
 const ws = new WebSocket(`ws://${location.host}/ws`);
 
@@ -163,19 +168,45 @@ function startStreaming() {
   watchId = navigator.geolocation.watchPosition(
     (pos) => {
       const now = Date.now();
-      if (now - lastPingAt < 3000) return; // throttle to ~1 ping / 3s
+      lastFix = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+      renderMyStatus(); // update immediately, independent of the ping throttle below
+      if (now - lastPingAt < 3000) return; // throttle sends to ~1 ping / 3s
       lastPingAt = now;
       send({
         type: "ping",
         player: playerId,
-        lat: pos.coords.latitude,
-        lon: pos.coords.longitude,
+        lat: lastFix.lat,
+        lon: lastFix.lon,
         client_ms: now,
       });
     },
     (err) => console.warn("geolocation error", err),
     { enableHighAccuracy: true, maximumAge: 5000 },
   );
+}
+
+function inBounds(bbox, lat, lon) {
+  return lon >= bbox.min_lon && lon <= bbox.max_lon && lat >= bbox.min_lat && lat <= bbox.max_lat;
+}
+
+// Shown only while actively streaming (on a team, battle active). Computed
+// entirely client-side from the last GPS fix and the battle's bbox (already
+// in every scoreboard) — no extra server round-trip needed.
+function renderMyStatus() {
+  const el = document.getElementById("my-status");
+  if (!latest || !myTeam || latest.battle.status !== "active") {
+    el.textContent = "";
+    el.className = "";
+    return;
+  }
+  if (!lastFix) {
+    el.textContent = "you: waiting for location...";
+    el.className = "";
+    return;
+  }
+  const inside = inBounds(latest.battle.park.bbox, lastFix.lat, lastFix.lon);
+  el.textContent = inside ? "you: ✅ inside the battleground" : "you: ❌ outside the battleground";
+  el.className = inside ? "in" : "out";
 }
 
 function fmtCountdown(ms) {
@@ -236,6 +267,8 @@ function render() {
       banner.textContent = `${label} wins ${via}!`;
     }
   }
+
+  renderMyStatus();
 }
 
 ws.onmessage = (event) => {
