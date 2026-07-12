@@ -14,6 +14,7 @@ use axum::routing::get;
 use tokio::sync::watch;
 
 use crate::domain::Scoreboard;
+use crate::parks;
 use crate::protocol::ClientMsg;
 
 type AppState = (mpsc::Sender<ClientMsg>, watch::Receiver<Scoreboard>);
@@ -80,9 +81,12 @@ async fn handle_socket(mut socket: WebSocket, (msg_tx, mut state_rx): AppState) 
     }
 }
 
-async fn index() -> Html<&'static str> {
-    Html(
-        r#"<!doctype html>
+async fn index() -> Html<String> {
+    let parks_json = serde_json::to_string(parks::all()).unwrap_or_else(|_| "[]".to_string());
+    Html(PAGE_TEMPLATE.replacen("__PARKS_JSON__", &parks_json, 1))
+}
+
+const PAGE_TEMPLATE: &str = r#"<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -104,14 +108,38 @@ async fn index() -> Html<&'static str> {
   #my-status.in { color: #2a7; }
   #my-status.out { color: #c33; }
   button:disabled { opacity: 0.5; }
+  #config-screen { border: 1px solid #888; border-radius: 6px; padding: 0.75rem; margin: 1rem 0; }
+  #config-screen label { display: block; margin-top: 0.75rem; font-size: 0.9rem; color: #555; }
+  #park-search, #duration-select { width: 100%; padding: 0.4rem; font-size: 1rem; box-sizing: border-box; }
+  #park-results { max-height: 10rem; overflow-y: auto; margin-top: 0.25rem; }
+  .park-result { padding: 0.4rem 0.5rem; border-radius: 4px; cursor: pointer; }
+  .park-result:hover { background: #eee; }
+  #park-selected { margin-top: 0.5rem; font-weight: bold; }
+  #create-match { width: 100%; padding: 0.6rem; font-size: 1rem; margin-top: 1rem; }
 </style>
 </head>
 <body>
 <h1>area denial: <span id="park">connecting...</span></h1>
 <div id="status"></div>
+
+<div id="config-screen" style="display:none">
+  <h3 style="margin-top:0">choose a battleground</h3>
+  <input type="text" id="park-search" placeholder="search parks by name..." autocomplete="off">
+  <div id="park-results"></div>
+  <div id="park-selected"></div>
+  <label for="duration-select">match length</label>
+  <select id="duration-select">
+    <option value="900">15 minutes</option>
+    <option value="1800">30 minutes</option>
+    <option value="3600">1 hour</option>
+    <option value="10800" selected>3 hours</option>
+  </select>
+  <button id="create-match" disabled>create match</button>
+</div>
+
 <div id="my-status"></div>
 <div id="banner"></div>
-<div class="teams">
+<div class="teams" id="teams">
   <div class="team" id="team-court_square">
     <h3>Team Court Square</h3>
     <div id="members-court_square">0 members</div>
@@ -133,6 +161,7 @@ async fn index() -> Html<&'static str> {
   team-wide aggregate — never your teammates' or opponents' positions.
 </p>
 <script>
+const PARKS = __PARKS_JSON__; // [{id, name, bbox}, ...] — the full catalog, embedded so search needs no round trip
 const PLAYER_KEY = "mmo_player_id";
 const TEAM_KEY = "mmo_team";
 
@@ -144,6 +173,7 @@ if (!playerId) {
 let myTeam = localStorage.getItem(TEAM_KEY); // "court_square" | "church_ave" | null
 
 let latest = null; // last scoreboard from the server
+let lastBattleId = null; // detects the server moving on to a fresh battle
 let watchId = null;
 let lastPingAt = 0;
 let lastFix = null; // { lat, lon } from the most recent geolocation fix
@@ -162,6 +192,53 @@ function join(team) {
   send({ type: "join", player: playerId, team });
   render();
 }
+
+// --- park search + match-length menu, shown while battle.park is null ---
+let selectedParkId = null;
+const parkSearch = document.getElementById("park-search");
+const parkResults = document.getElementById("park-results");
+const parkSelected = document.getElementById("park-selected");
+const durationSelect = document.getElementById("duration-select");
+const createMatchBtn = document.getElementById("create-match");
+
+function renderParkResults(query) {
+  const q = query.trim().toLowerCase();
+  const matches = PARKS.filter((p) => p.name.toLowerCase().includes(q)).slice(0, 8);
+  parkResults.innerHTML = "";
+  for (const p of matches) {
+    const row = document.createElement("div");
+    row.className = "park-result";
+    row.textContent = p.name;
+    row.onclick = () => selectPark(p);
+    parkResults.appendChild(row);
+  }
+}
+
+function selectPark(p) {
+  selectedParkId = p.id;
+  parkSelected.textContent = `selected: ${p.name}`;
+  parkResults.innerHTML = "";
+  parkSearch.value = p.name;
+  createMatchBtn.disabled = false;
+}
+
+parkSearch.oninput = () => {
+  selectedParkId = null;
+  parkSelected.textContent = "";
+  createMatchBtn.disabled = true;
+  renderParkResults(parkSearch.value);
+};
+
+createMatchBtn.onclick = () => {
+  if (!selectedParkId) return;
+  send({
+    type: "configure_battle",
+    park_id: selectedParkId,
+    duration_secs: Number(durationSelect.value),
+  });
+};
+
+renderParkResults(""); // browsable from the start, narrows as you type
 
 function startStreaming() {
   if (watchId !== null || !navigator.geolocation) return;
@@ -194,7 +271,7 @@ function inBounds(bbox, lat, lon) {
 // in every scoreboard) — no extra server round-trip needed.
 function renderMyStatus() {
   const el = document.getElementById("my-status");
-  if (!latest || !myTeam || latest.battle.status !== "active") {
+  if (!latest || !myTeam || !latest.battle.park || latest.battle.status !== "active") {
     el.textContent = "";
     el.className = "";
     return;
@@ -223,6 +300,36 @@ function render() {
   const { battle, court_square, church_ave } = latest;
   const teams = { court_square, church_ave };
 
+  // The server starts a fresh battle immediately after the last one ends —
+  // clear a stale team choice so the join/start flow is ready to go again
+  // instead of leaving join buttons hidden and "start" stuck disabled.
+  if (lastBattleId !== null && battle.id !== lastBattleId && myTeam) {
+    myTeam = null;
+    localStorage.removeItem(TEAM_KEY);
+  }
+  lastBattleId = battle.id;
+
+  const configScreen = document.getElementById("config-screen");
+  const teamsEl = document.getElementById("teams");
+  const startBtn = document.getElementById("start");
+  const statusEl = document.getElementById("status");
+  const banner = document.getElementById("banner");
+
+  if (!battle.park) {
+    // nobody's picked a battleground yet — show only the search/duration
+    // menu and hide the join/start lobby until configure_battle lands
+    configScreen.style.display = "";
+    teamsEl.style.display = "none";
+    startBtn.style.display = "none";
+    banner.classList.remove("show");
+    document.getElementById("park").textContent = "choose a park";
+    statusEl.textContent = "pick a battleground and match length to open the lobby";
+    document.getElementById("my-status").textContent = "";
+    return;
+  }
+  configScreen.style.display = "none";
+  teamsEl.style.display = "";
+
   document.getElementById("park").textContent = battle.park.name;
 
   for (const key of ["court_square", "church_ave"]) {
@@ -237,12 +344,9 @@ function render() {
     btn.style.display = myTeam || battle.status !== "pending" ? "none" : "";
   }
 
-  const startBtn = document.getElementById("start");
   startBtn.style.display = battle.status === "pending" && myTeam ? "" : "none";
   startBtn.disabled = court_square.members === 0 || church_ave.members === 0;
 
-  const statusEl = document.getElementById("status");
-  const banner = document.getElementById("banner");
   banner.classList.remove("show");
 
   if (battle.status === "pending") {
@@ -280,6 +384,4 @@ ws.onmessage = (event) => {
 setInterval(() => { if (latest && latest.battle.status === "active") render(); }, 1000);
 </script>
 </body>
-</html>"#,
-    )
-}
+</html>"#;
