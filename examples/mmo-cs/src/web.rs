@@ -144,6 +144,7 @@ if (!playerId) {
 let myTeam = localStorage.getItem(TEAM_KEY); // "court_square" | "church_ave" | null
 
 let latest = null; // last scoreboard from the server
+let lastBattleId = null; // detects the server moving on to a fresh battle
 let watchId = null;
 let lastPingAt = 0;
 let lastFix = null; // { lat, lon } from the most recent geolocation fix
@@ -222,6 +223,15 @@ function render() {
   if (!latest) return;
   const { battle, court_square, church_ave } = latest;
   const teams = { court_square, church_ave };
+
+  // The server starts a fresh battle immediately after the last one ends —
+  // clear a stale team choice so the join/start flow is ready to go again
+  // instead of leaving join buttons hidden and "start" stuck disabled.
+  if (lastBattleId !== null && battle.id !== lastBattleId && myTeam) {
+    myTeam = null;
+    localStorage.removeItem(TEAM_KEY);
+  }
+  lastBattleId = battle.id;
 
   document.getElementById("park").textContent = battle.park.name;
 
