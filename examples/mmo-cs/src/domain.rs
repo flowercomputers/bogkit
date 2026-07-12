@@ -13,8 +13,6 @@ pub enum Team {
 }
 
 impl Team {
-    pub const ALL: [Team; 2] = [Team::CourtSquare, Team::ChurchAve];
-
     pub fn label(self) -> &'static str {
         match self {
             Team::CourtSquare => "Team Court Square",
@@ -95,7 +93,7 @@ pub enum BattleOutcome {
     Tie,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Battle {
     pub id: u64,
     pub park: Park,

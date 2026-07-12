@@ -14,9 +14,16 @@
 //! Both streams' pipeline types contain a closure (the presence pipeline
 //! captures the current battle's bounding box), so — like `chat`'s and
 //! `search`'s pipelines — they can't be named as a function parameter or
-//! return type. Everything that touches them (message handling, win-
-//! condition evaluation, snapshotting) is inlined directly in [`run`]
-//! instead of factored into helper functions, for the same reason.
+//! return type. Everything that touches them (message handling, snapshotting)
+//! is inlined directly in [`run`] instead of factored into helper functions,
+//! for the same reason. Win-condition *decisions* don't have that
+//! restriction — they're plain data in and out, so that logic lives in
+//! [`crate::win`] instead, where it's unit-testable on its own.
+//!
+//! On startup, `run` resumes the most recent battle on disk if it hadn't
+//! ended yet (see [`find_resumable_battle`]) rather than always starting
+//! fresh — see that function's docs for what does and doesn't survive a
+//! restart.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -33,12 +40,10 @@ use crate::domain::{
 };
 use crate::parks;
 use crate::protocol::ClientMsg;
+use crate::win;
 
 /// A player's ping counts as live only if it arrived within this long.
 const PRESENCE_HORIZON: Duration = Duration::from_secs(45);
-/// A team must read as fully swept for this long, continuously, before the
-/// instant elimination win is confirmed — smooths over one flaky/late fix.
-const ELIMINATION_CONFIRM_MS: u64 = 60_000;
 /// How long a battle runs before the timeout win condition decides it.
 /// Overridable via `MMO_BATTLE_DURATION_SECS` for testing — a real battle
 /// takes 3 hours to time out, far too long to exercise by hand.
@@ -54,6 +59,64 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
+fn battle_json_path(dir: &Path) -> std::path::PathBuf {
+    dir.join("battle.json")
+}
+
+/// Persists just enough of `Battle` (status, timers, chosen park) to resume
+/// after a restart — the roster/presence facts themselves are already
+/// durable via fold's own stores under `dir`. Best-effort: nothing reads
+/// this back except a fresh process's startup scan, so a failed write here
+/// only costs a clean resume after the *next* restart, not the live game.
+fn save_battle(dir: &Path, battle: &Battle) {
+    if let Ok(json) = serde_json::to_vec(battle) {
+        let _ = std::fs::write(battle_json_path(dir), json);
+    }
+}
+
+fn load_battle(dir: &Path) -> Option<Battle> {
+    let bytes = std::fs::read(battle_json_path(dir)).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+/// Highest `battle-{n}` id already on disk under `data_dir` (0 if none).
+/// Used both to find the most recent battle to resume and to make sure a
+/// fresh battle always picks an unused id — so `run` never has cause to
+/// delete an existing directory, unlike the id counter simply restarting
+/// at 1 on every process start.
+fn max_existing_battle_id(data_dir: &Path) -> u64 {
+    std::fs::read_dir(data_dir)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| {
+            entry.file_name().to_str()?.strip_prefix("battle-")?.parse::<u64>().ok()
+        })
+        .max()
+        .unwrap_or(0)
+}
+
+/// If the most recent battle on disk was interrupted before it ended,
+/// returns its id and last-known state so `run` can reopen the same
+/// roster/presence stores in place instead of starting a new battle over
+/// them.
+///
+/// What survives a restart: roster membership and location pings (both are
+/// durable fold state), and the battle's status/timers/chosen park (from
+/// `battle.json`). What doesn't: the elimination debounce (`zero_since` in
+/// `run`) always restarts cold — a team that was, say, 55 seconds into
+/// being confirmed swept when the process restarted needs a fresh
+/// `ELIMINATION_CONFIRM_MS` window after resuming. That only delays an
+/// instant-win confirmation; it can't produce a wrong one.
+fn find_resumable_battle(data_dir: &Path) -> Option<(u64, Battle)> {
+    let id = max_existing_battle_id(data_dir);
+    if id == 0 {
+        return None;
+    }
+    let battle = load_battle(&data_dir.join(format!("battle-{id}")))?;
+    (battle.status != BattleStatus::Ended).then_some((id, battle))
+}
+
 /// Owns the fold stores for the whole process lifetime: runs one battle to
 /// completion, then immediately opens a fresh one so the server never needs
 /// a restart between battles.
@@ -64,23 +127,32 @@ pub fn run(data_dir: &Path, rx: mpsc::Receiver<ClientMsg>, state_tx: watch::Send
         .map(|secs| secs * 1000)
         .unwrap_or(DEFAULT_BATTLE_DURATION_MS);
 
-    let mut next_id = 1u64;
+    let mut next_id = max_existing_battle_id(data_dir) + 1;
+    let mut resume = find_resumable_battle(data_dir);
 
     loop {
-        let park = parks::pick_battleground();
-        let mut battle = Battle {
-            id: next_id,
-            park: park.clone(),
-            status: BattleStatus::Pending,
-            started_at_ms: None,
-            ends_at_ms: None,
-            outcome: None,
+        let (battle_dir, mut battle) = match resume.take() {
+            Some((id, battle)) => {
+                let dir = data_dir.join(format!("battle-{id}"));
+                println!("resuming battle {id} ({:?}) at {}", battle.status, battle.park.name);
+                (dir, battle)
+            }
+            None => {
+                let battle = Battle {
+                    id: next_id,
+                    park: parks::pick_battleground(),
+                    status: BattleStatus::Pending,
+                    started_at_ms: None,
+                    ends_at_ms: None,
+                    outcome: None,
+                };
+                let dir = data_dir.join(format!("battle-{next_id}"));
+                println!("battle {} pending at {}", battle.id, battle.park.name);
+                next_id += 1;
+                (dir, battle)
+            }
         };
-        let battle_dir = data_dir.join(format!("battle-{next_id}"));
-        next_id += 1;
-        let _ = std::fs::remove_dir_all(&battle_dir);
-
-        println!("battle {} pending at {}", battle.id, battle.park.name);
+        save_battle(&battle_dir, &battle);
 
         // Roster pipeline: KeyBy(team) + Aggregate(count) -> Table<Team, i64>.
         // Permanent membership fact, never wrapped in Retain.
@@ -101,7 +173,7 @@ pub fn run(data_dir: &Path, rx: mpsc::Receiver<ClientMsg>, state_tx: watch::Send
         // Presence pipeline: Retain(liveness) -> KeyBy(team) + Aggregate(in/out
         // counts) -> Table<Team, PresenceCounts>. `bbox` is captured by the
         // step closure at battle-creation time, since it differs per battle.
-        let bbox = park.bbox;
+        let bbox = battle.park.bbox;
         let mut presence = KeyedStream::new(
             battle_dir.join("presence.db"),
             Retain::new(
@@ -124,7 +196,9 @@ pub fn run(data_dir: &Path, rx: mpsc::Receiver<ClientMsg>, state_tx: watch::Send
         );
 
         // team -> instant since which that team has read as fully swept,
-        // continuously; cleared the moment it's no longer swept
+        // continuously; cleared the moment it's no longer swept. Always
+        // starts empty, including on resume — see find_resumable_battle's
+        // doc comment for why that's fine.
         let mut zero_since: HashMap<Team, u64> = HashMap::new();
 
         // Reads roster/presence directly rather than through a helper fn:
@@ -139,6 +213,12 @@ pub fn run(data_dir: &Path, rx: mpsc::Receiver<ClientMsg>, state_tx: watch::Send
             ($team:expr) => {{
                 let pc: PresenceCounts = presence.rtx(|t| t.get(&$team)).unwrap_or_default();
                 pc
+            }};
+        }
+        macro_rules! team_snapshot {
+            ($team:expr) => {{
+                let pc = presence_counts!($team);
+                win::TeamSnapshot { members: roster_count!($team), pinging: pc.pinging, in_bounds: pc.in_bounds }
             }};
         }
         macro_rules! snapshot {
@@ -204,66 +284,31 @@ pub fn run(data_dir: &Path, rx: mpsc::Receiver<ClientMsg>, state_tx: watch::Send
                 Err(RecvTimeoutError::Disconnected) => return,
             }
 
-            // --- win-condition evaluation ---
-            //
-            // Total silence (`pinging == 0`) never counts toward elimination
-            // — only a team that's still confirmed pinging, but confirmed
-            // entirely outside the box, does. This avoids a shared dead zone
-            // (both teams' phones losing signal together) falsely ending the
-            // battle; a team that quietly goes silent can only lose via the
-            // timeout path below, where its stale presence decays toward 0%
-            // as `Retain` ages its last ping out.
+            // win-condition evaluation: see `crate::win` for the decision
+            // logic itself (pure, unit-tested there) — this just gathers
+            // the current counts and applies whichever outcome it returns.
             if battle.status == BattleStatus::Active {
                 let now = now_ms();
+                let cs_snap = team_snapshot!(Team::CourtSquare);
+                let ca_snap = team_snapshot!(Team::ChurchAve);
 
-                for team in Team::ALL {
-                    let members = roster_count!(team);
-                    let pc = presence_counts!(team);
-                    let swept = members > 0 && pc.pinging > 0 && pc.in_bounds == 0;
+                let outcome = win::check_elimination(
+                    now,
+                    &mut zero_since,
+                    [(Team::CourtSquare, cs_snap), (Team::ChurchAve, ca_snap)],
+                )
+                .or_else(|| {
+                    let ends_at = battle.ends_at_ms?;
+                    (now >= ends_at).then(|| win::check_timeout(cs_snap, ca_snap))
+                });
 
-                    if swept {
-                        let since = *zero_since.entry(team).or_insert(now);
-                        if now - since >= ELIMINATION_CONFIRM_MS {
-                            battle.status = BattleStatus::Ended;
-                            battle.outcome = Some(BattleOutcome::Elimination { winner: team.opponent() });
-                            break;
-                        }
-                    } else {
-                        zero_since.remove(&team);
-                    }
-                }
-
-                // 3-hour timeout: higher in-bounds % of roster wins; ties
-                // break on higher absolute in-bounds headcount; still tied
-                // after that is a draw.
-                if battle.status == BattleStatus::Active
-                    && let Some(ends_at) = battle.ends_at_ms
-                    && now >= ends_at
-                {
-                    let pct_and_count = |team: Team| -> (f64, i64) {
-                        let members = roster_count!(team);
-                        let pc = presence_counts!(team);
-                        let pct = if members > 0 { pc.in_bounds as f64 / members as f64 } else { 0.0 };
-                        (pct, pc.in_bounds)
-                    };
-                    let (cs_pct, cs_in) = pct_and_count(Team::CourtSquare);
-                    let (ca_pct, ca_in) = pct_and_count(Team::ChurchAve);
-
+                if let Some(outcome) = outcome {
                     battle.status = BattleStatus::Ended;
-                    battle.outcome = Some(if cs_pct > ca_pct {
-                        BattleOutcome::Timeout { winner: Team::CourtSquare }
-                    } else if ca_pct > cs_pct {
-                        BattleOutcome::Timeout { winner: Team::ChurchAve }
-                    } else if cs_in > ca_in {
-                        BattleOutcome::Timeout { winner: Team::CourtSquare }
-                    } else if ca_in > cs_in {
-                        BattleOutcome::Timeout { winner: Team::ChurchAve }
-                    } else {
-                        BattleOutcome::Tie
-                    });
+                    battle.outcome = Some(outcome);
                 }
             }
 
+            save_battle(&battle_dir, &battle);
             let _ = state_tx.send(snapshot!());
 
             if battle.status == BattleStatus::Ended {

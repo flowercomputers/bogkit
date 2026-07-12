@@ -6,11 +6,11 @@
 
 use std::sync::mpsc;
 
+use axum::Router;
 use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::response::Html;
 use axum::routing::get;
-use axum::Router;
 use tokio::sync::watch;
 
 use crate::domain::Scoreboard;

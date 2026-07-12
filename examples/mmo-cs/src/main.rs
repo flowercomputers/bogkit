@@ -15,6 +15,7 @@ mod domain;
 mod parks;
 mod protocol;
 mod web;
+mod win;
 
 use std::sync::mpsc;
 
@@ -23,10 +24,12 @@ use protocol::ClientMsg;
 use tokio::sync::watch;
 
 fn main() {
-    // MMO_DATA_DIR should point at a stable path for a real deployment (a
-    // tmp-cleaner or reboot could otherwise wipe an in-progress battle);
-    // defaults to a fresh temp dir for local dev, matching the other
-    // example crates' convention.
+    // MMO_DATA_DIR should point at a stable path for a real deployment: with
+    // one, a restart resumes the most recent unfinished battle (see
+    // `battle::run`) instead of abandoning it, and a tmp-cleaner or reboot
+    // can't wipe an in-progress one out from under it. Defaults to a fresh
+    // temp dir for local dev, matching the other example crates'
+    // convention — every local run starts a brand new battle.
     let data_dir = match std::env::var_os("MMO_DATA_DIR") {
         Some(dir) => std::path::PathBuf::from(dir),
         None => {
