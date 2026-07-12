@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>overhead — what's above you right now</title>
+<style>
+  :root {
+    --bg: #07090f;
+    --panel: #0d1119;
+    --edge: #1c2333;
+    --text: #c9d4e8;
+    --dim: #5f6c85;
+    --accent: #7aa2ff;
+    --good: #6fd39a;
+    --warn: #f0b26b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.45 ui-monospace, "SF Mono", Menlo, monospace;
+    display: flex; height: 100vh; overflow: hidden;
+  }
+  #skywrap { flex: 1; display: flex; align-items: center; justify-content: center; position: relative; }
+  canvas { display: block; }
+  #tooltip {
+    position: absolute; pointer-events: none; display: none;
+    background: #131a28ee; border: 1px solid var(--edge); border-radius: 6px;
+    padding: 6px 10px; font-size: 12px; z-index: 10; white-space: nowrap;
+  }
+  #tooltip .tt-name { color: #fff; font-weight: 600; }
+  #tooltip .tt-meta { color: var(--dim); }
+  #side {
+    width: 340px; min-width: 340px; height: 100vh; overflow-y: auto;
+    background: var(--panel); border-left: 1px solid var(--edge); padding: 16px;
+  }
+  h1 { font-size: 15px; margin: 0 0 2px; color: #fff; letter-spacing: 0.5px; }
+  .sub { color: var(--dim); font-size: 11.5px; margin-bottom: 14px; }
+  .card {
+    border: 1px solid var(--edge); border-radius: 8px;
+    padding: 10px 12px; margin-bottom: 12px; background: #0a0e16;
+  }
+  .card h2 {
+    font-size: 11px; margin: 0 0 8px; color: var(--dim);
+    text-transform: uppercase; letter-spacing: 1px; font-weight: 600;
+  }
+  label { color: var(--dim); font-size: 12px; }
+  input[type="number"] {
+    width: 84px; background: #121826; color: var(--text);
+    border: 1px solid var(--edge); border-radius: 5px; padding: 4px 6px;
+    font: inherit; font-size: 12.5px;
+  }
+  select, button {
+    background: #121826; color: var(--text); border: 1px solid var(--edge);
+    border-radius: 5px; padding: 4px 8px; font: inherit; font-size: 12.5px; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); color: #fff; }
+  .row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+  .kv { display: flex; justify-content: space-between; font-size: 12.5px; padding: 1.5px 0; }
+  .kv .k { color: var(--dim); }
+  .kv .v { color: var(--text); }
+  .readpath { font-size: 12.5px; color: var(--dim); }
+  .readpath b { color: var(--accent); font-weight: 600; }
+  .histrow { display: flex; align-items: center; gap: 6px; font-size: 11px; padding: 1px 0; }
+  .histrow .hl { width: 34px; color: var(--dim); text-align: right; }
+  .histrow .hb { height: 7px; background: var(--accent); border-radius: 2px; opacity: 0.75; }
+  .histrow .hn { color: var(--dim); }
+  #feed { max-height: 230px; overflow-y: auto; }
+  .ev { font-size: 11.5px; padding: 3px 0; border-bottom: 1px solid #11161f; }
+  .ev .t { color: var(--dim); margin-right: 6px; }
+  .ev .a-moved { color: var(--warn); }
+  .ev .a-appeared { color: var(--good); }
+  .ev .a-loaded { color: var(--accent); }
+  .ev .d { color: var(--dim); display: block; padding-left: 14px; }
+  .ev .d.crossed { color: var(--good); }
+  #conn { font-size: 11px; }
+  .ok { color: var(--good); } .bad { color: #e06c75; }
+</style>
+</head>
+<body>
+<div id="skywrap">
+  <canvas id="sky"></canvas>
+  <div id="tooltip"></div>
+</div>
+
+<div id="side">
+  <h1>overhead</h1>
+  <div class="sub">bodies within 30° of your zenith, live from a fold database · <span id="conn" class="bad">connecting…</span></div>
+
+  <div class="card">
+    <h2>observer</h2>
+    <div class="row">
+      <label>lat <input id="lat" type="number" step="0.01" min="-90" max="90" value="40.71"></label>
+      <label>lon <input id="lon" type="number" step="0.01" min="-180" max="180" value="-74.01"></label>
+    </div>
+    <div class="row">
+      <button id="geo">use my location</button>
+      <label>warp
+        <select id="warp">
+          <option value="1">1×</option>
+          <option value="60">60×</option>
+          <option value="600" selected>600×</option>
+          <option value="3600">3600×</option>
+        </select>
+      </label>
+    </div>
+    <div class="kv"><span class="k">sky time</span><span class="v" id="vtclock">—</span></div>
+    <div class="kv"><span class="k">local sidereal time</span><span class="v" id="lst">—</span></div>
+  </div>
+
+  <div class="card">
+    <h2>read path (per refresh)</h2>
+    <div class="readpath" id="readpath">waiting for first snapshot…</div>
+  </div>
+
+  <div class="card">
+    <h2>database (materialized views)</h2>
+    <div id="kinds"></div>
+    <div style="margin-top:8px" id="hist"></div>
+  </div>
+
+  <div class="card">
+    <h2>delta stream (retract / insert)</h2>
+    <div id="feed"></div>
+  </div>
+</div>
+
+<script>
+"use strict";
+const DEG = Math.PI / 180;
+const CONE = 30;
+
+// ---- astro (mirrors the server's formulas) ----
+function gmstDeg(ms) {
+  const jd = ms / 86400000 + 2440587.5;
+  return ((280.46061837 + 360.98564736629 * (jd - 2451545.0)) % 360 + 360) % 360;
+}
+function altAz(raDeg, decDeg, latDeg, lstDeg) {
+  const H = (lstDeg - raDeg) * DEG, dec = decDeg * DEG, lat = latDeg * DEG;
+  const alt = Math.asin(Math.sin(dec) * Math.sin(lat) + Math.cos(dec) * Math.cos(lat) * Math.cos(H));
+  const az = Math.atan2(Math.sin(H), Math.cos(H) * Math.sin(lat) - Math.tan(dec) * Math.cos(lat)) / DEG + 180;
+  return [alt / DEG, az];
+}
+
+// ---- state ----
+let bodies = [];
+let vtBaseMs = Date.now(), recvPerf = performance.now(), warp = 600;
+let lat = 40.71, lon = -74.01;
+let hover = null, mouse = null;
+
+const canvas = document.getElementById("sky");
+const ctx = canvas.getContext("2d");
+const tooltip = document.getElementById("tooltip");
+
+function vtNow() { return vtBaseMs + (performance.now() - recvPerf) * warp; }
+function lstNow() { return ((gmstDeg(vtNow()) + lon) % 360 + 360) % 360; }
+
+// ---- websocket ----
+let ws;
+function sendParams() {
+  lat = parseFloat(document.getElementById("lat").value) || 0;
+  lon = parseFloat(document.getElementById("lon").value) || 0;
+  warp = parseFloat(document.getElementById("warp").value) || 1;
+  vtBaseMs = vtNow(); recvPerf = performance.now(); // keep clock continuous
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ lat, lon, warp }));
+}
+function connect() {
+  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onopen = () => { document.getElementById("conn").textContent = "live"; document.getElementById("conn").className = "ok"; sendParams(); };
+  ws.onclose = () => { document.getElementById("conn").textContent = "reconnecting…"; document.getElementById("conn").className = "bad"; setTimeout(connect, 1500); };
+  ws.onmessage = (event) => {
+    const m = JSON.parse(event.data);
+    if (m.type !== "sky") return;
+    bodies = m.bodies;
+    vtBaseMs = m.vt_ms; recvPerf = performance.now(); warp = m.warp;
+    lat = m.lat; lon = m.lon;
+
+    const rp = m.read_path;
+    document.getElementById("readpath").innerHTML =
+      `<b>${rp.buckets_read}</b> of ${rp.buckets_total} sky buckets read → ` +
+      `<b>${rp.candidates}</b> candidates → <b>${rp.overhead}</b> overhead`;
+
+    const kindOrder = m.stats.kind_counts.sort((a, b) => b[1] - a[1]);
+    document.getElementById("kinds").innerHTML =
+      `<div class="kv"><span class="k">bodies total</span><span class="v">${m.stats.total}</span></div>` +
+      kindOrder.map(([k, n]) => `<div class="kv"><span class="k">${k}</span><span class="v">${n}</span></div>`).join("");
+
+    const hist = m.stats.mag_hist.filter(([b]) => b >= -2); // sun/moon skew the scale
+    const maxN = Math.max(...hist.map(([, n]) => n), 1);
+    document.getElementById("hist").innerHTML =
+      `<div class="kv"><span class="k">magnitude histogram</span></div>` +
+      hist.map(([b, n]) =>
+        `<div class="histrow"><span class="hl">${b >= 0 ? "+" : ""}${b}</span>` +
+        `<span class="hb" style="width:${Math.max(2, 160 * n / maxN)}px"></span><span class="hn">${n}</span></div>`).join("");
+
+    document.getElementById("feed").innerHTML = m.events.map(e => {
+      const t = new Date(e.at_ms).toLocaleTimeString();
+      const crossed = e.detail.includes("CROSSED");
+      return `<div class="ev"><span class="t">${t}</span><span class="a-${e.action}">${e.action}</span> ` +
+        `<b>${e.name}</b>${e.detail ? `<span class="d${crossed ? " crossed" : ""}">${e.detail}</span>` : ""}</div>`;
+    }).join("");
+  };
+}
+connect();
+
+document.getElementById("lat").onchange = sendParams;
+document.getElementById("lon").onchange = sendParams;
+document.getElementById("warp").onchange = sendParams;
+document.getElementById("geo").onclick = () => {
+  navigator.geolocation.getCurrentPosition(pos => {
+    document.getElementById("lat").value = pos.coords.latitude.toFixed(3);
+    document.getElementById("lon").value = pos.coords.longitude.toFixed(3);
+    sendParams();
+  }, () => alert("geolocation unavailable — set lat/lon manually"));
+};
+
+// ---- rendering ----
+const PLANET_COLORS = {
+  Mercury: "#c8c0b8", Venus: "#f5e6c8", Mars: "#ff6f4f", Jupiter: "#f0c884",
+  Saturn: "#e8d9a0", Uranus: "#9fd8e0", Neptune: "#6f8fe8",
+};
+
+function resize() {
+  const wrap = document.getElementById("skywrap");
+  const s = Math.min(wrap.clientWidth, wrap.clientHeight) - 24;
+  canvas.width = s * devicePixelRatio; canvas.height = s * devicePixelRatio;
+  canvas.style.width = s + "px"; canvas.style.height = s + "px";
+}
+window.onresize = resize;
+resize();
+
+function project(alt, az, R, cx, cy) {
+  // zenith at center, cone edge at the rim; north up, east left (sky view)
+  const r = (90 - alt) / CONE * R;
+  return [cx - r * Math.sin(az * DEG), cy - r * Math.cos(az * DEG)];
+}
+
+function draw() {
+  const W = canvas.width, H = canvas.height;
+  const cx = W / 2, cy = H / 2, R = W / 2 - 30 * devicePixelRatio;
+  const lst = lstNow();
+  ctx.clearRect(0, 0, W, H);
+
+  // dome
+  const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, R);
+  g.addColorStop(0, "#0b1020"); g.addColorStop(1, "#060810");
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(cx, cy, R, 0, 7); ctx.fill();
+
+  // altitude rings at 70° and 80°
+  ctx.strokeStyle = "#1a2233"; ctx.lineWidth = devicePixelRatio;
+  for (const alt of [70, 80]) {
+    ctx.beginPath(); ctx.arc(cx, cy, (90 - alt) / CONE * R, 0, 7); ctx.stroke();
+  }
+  ctx.beginPath(); ctx.arc(cx, cy, R, 0, 7); ctx.strokeStyle = "#26314a"; ctx.stroke();
+
+  // zenith cross + compass
+  ctx.strokeStyle = "#2a3550";
+  ctx.beginPath();
+  ctx.moveTo(cx - 6 * devicePixelRatio, cy); ctx.lineTo(cx + 6 * devicePixelRatio, cy);
+  ctx.moveTo(cx, cy - 6 * devicePixelRatio); ctx.lineTo(cx, cy + 6 * devicePixelRatio);
+  ctx.stroke();
+  ctx.fillStyle = "#5f6c85"; ctx.font = `${12 * devicePixelRatio}px ui-monospace, monospace`;
+  ctx.textAlign = "center";
+  ctx.fillText("N", cx, cy - R - 10 * devicePixelRatio);
+  ctx.fillText("S", cx, cy + R + 18 * devicePixelRatio);
+  ctx.fillText("E", cx - R - 14 * devicePixelRatio, cy + 4 * devicePixelRatio);
+  ctx.fillText("W", cx + R + 14 * devicePixelRatio, cy + 4 * devicePixelRatio);
+
+  hover = null;
+  let hoverDist = 14 * devicePixelRatio;
+
+  for (const b of bodies) {
+    const [alt, az] = altAz(b.ra_deg, b.dec_deg, lat, lst);
+    if (alt < 90 - CONE - 0.5) continue; // drifted out since last snapshot
+    const [x, y] = project(alt, az, R, cx, cy);
+
+    if (mouse) {
+      const d = Math.hypot(x - mouse[0], y - mouse[1]);
+      if (d < hoverDist) { hoverDist = d; hover = { b, x, y }; }
+    }
+
+    const dpr = devicePixelRatio;
+    if (b.kind === "sun") {
+      const glow = ctx.createRadialGradient(x, y, 0, x, y, 22 * dpr);
+      glow.addColorStop(0, "#fff3c4"); glow.addColorStop(0.4, "#ffd75e88"); glow.addColorStop(1, "transparent");
+      ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(x, y, 22 * dpr, 0, 7); ctx.fill();
+      ctx.fillStyle = "#ffe9a0"; ctx.beginPath(); ctx.arc(x, y, 7 * dpr, 0, 7); ctx.fill();
+    } else if (b.kind === "moon") {
+      ctx.fillStyle = "#d8dde8"; ctx.beginPath(); ctx.arc(x, y, 5.5 * dpr, 0, 7); ctx.fill();
+      ctx.fillStyle = "#9aa2b5"; ctx.beginPath(); ctx.arc(x - 1.6 * dpr, y - 1.2 * dpr, 1.4 * dpr, 0, 7); ctx.fill();
+    } else if (b.kind === "planet") {
+      ctx.fillStyle = PLANET_COLORS[b.name] || "#fff";
+      ctx.beginPath(); ctx.arc(x, y, 3.4 * dpr, 0, 7); ctx.fill();
+    } else if (b.kind === "star") {
+      const r = Math.max(0.6, 3.2 - 0.45 * b.mag) * dpr;
+      ctx.fillStyle = "#eef2ff";
+      ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
+    } else if (b.kind === "galaxy") {
+      ctx.fillStyle = "#b8a6e899";
+      ctx.beginPath(); ctx.ellipse(x, y, 5 * dpr, 2.4 * dpr, 0.6, 0, 7); ctx.fill();
+    } else if (b.kind.includes("cluster")) {
+      ctx.strokeStyle = "#8fd8c799"; ctx.lineWidth = dpr;
+      ctx.setLineDash([2 * dpr, 2 * dpr]);
+      ctx.beginPath(); ctx.arc(x, y, 4.5 * dpr, 0, 7); ctx.stroke();
+      ctx.setLineDash([]);
+    } else { // nebulae & friends
+      const neb = ctx.createRadialGradient(x, y, 0, x, y, 6 * dpr);
+      neb.addColorStop(0, "#6fc9d8aa"); neb.addColorStop(1, "transparent");
+      ctx.fillStyle = neb; ctx.beginPath(); ctx.arc(x, y, 6 * dpr, 0, 7); ctx.fill();
+    }
+
+    const label = b.kind !== "star" && b.kind !== "galaxy" && !b.kind.includes("cluster")
+      ? true : b.mag <= 1.4;
+    if (label && b.name) {
+      ctx.fillStyle = "#8b98b8"; ctx.textAlign = "left";
+      ctx.font = `${10.5 * devicePixelRatio}px ui-monospace, monospace`;
+      ctx.fillText(b.name, x + 7 * devicePixelRatio, y - 5 * devicePixelRatio);
+    }
+  }
+
+  // hover tooltip
+  if (hover) {
+    const rect = canvas.getBoundingClientRect();
+    tooltip.style.display = "block";
+    tooltip.style.left = rect.left + hover.x / devicePixelRatio + 14 + "px";
+    tooltip.style.top = rect.top + hover.y / devicePixelRatio - 10 + "px";
+    tooltip.innerHTML = `<span class="tt-name">${hover.b.name}</span><br>` +
+      `<span class="tt-meta">${hover.b.kind}${hover.b.con && hover.b.con !== "-" ? " · " + hover.b.con : ""} · mag ${hover.b.mag.toFixed(1)}</span>`;
+  } else {
+    tooltip.style.display = "none";
+  }
+
+  // clocks
+  const vt = vtNow();
+  document.getElementById("vtclock").textContent =
+    new Date(vt).toISOString().replace("T", " ").slice(0, 19) + " UTC" + (warp !== 1 ? ` (${warp}×)` : "");
+  const l = lst / 15;
+  const lh = Math.floor(l), lm = Math.floor((l - lh) * 60), ls = Math.floor(((l - lh) * 60 - lm) * 60);
+  document.getElementById("lst").textContent =
+    `${String(lh).padStart(2, "0")}h ${String(lm).padStart(2, "0")}m ${String(ls).padStart(2, "0")}s`;
+
+  requestAnimationFrame(draw);
+}
+
+canvas.onmousemove = (e) => {
+  const rect = canvas.getBoundingClientRect();
+  mouse = [(e.clientX - rect.left) * devicePixelRatio, (e.clientY - rect.top) * devicePixelRatio];
+};
+canvas.onmouseleave = () => { mouse = null; };
+
+requestAnimationFrame(draw);
+</script>
+</body>
+</html>

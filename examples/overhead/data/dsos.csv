@@ -1,0 +1,367 @@
+name,ra_hours,dec_deg,mag,con,kind
+Coalsack,12.85,-62.5,0.0,Cru,dark nebula
+Hyades,4.45,15.85,0.5,Tau,open cluster
+Col 70,5.59333,-1.08333,0.6,Ori,open cluster
+Col 173,8.04694,-46.3833,0.6,Vel,open cluster
+Large Magellanic Cloud,5.39294,-69.7561,0.8,-,galaxy
+Col 302,16.4333,-26.2167,1.0,Sco,open cluster
+Col 39,3.36667,49.0,1.2,Per,open cluster
+Pleiades,3.79,24.117,1.6,Tau,open cluster
+Col 256,12.4167,26.0,1.8,Com,open cluster
+Southern Pleiades,10.72,-64.4,1.9,Car,open cluster
+Col 135,7.28833,-36.8333,2.1,Pup,open cluster
+Small Magellanic Cloud,0.877222,-72.8003,2.2,Tuc,galaxy
+IC 2391,8.67,-53.0667,2.5,Vel,open cluster
+NGC 6231,16.903,-41.8242,2.6,Sco,open cluster
+Col 121,6.90333,-24.6333,2.6,Cma,open cluster
+NGC 2451,7.75417,-37.9675,2.8,Pup,open cluster
+Col 69,5.59133,9.94111,2.8,Ori,open cluster
+NGC 3532,11.0965,-58.7703,3.0,Car,open cluster
+Col 65,5.41806,15.6997,3.0,Tau,open cluster
+Col 359,18.0183,2.9,3.0,Oph,open cluster
+Praesepe,8.67283,19.6719,3.1,Cnc,open cluster
+M 7,17.8975,-34.7928,3.3,Sco,open cluster
+Col 140,7.39833,-32.2,3.5,Cma,open cluster
+M 31,0.712306,41.2683,3.6,And,galaxy
+Col 132,7.24,-31.1667,3.6,Cma,open cluster
+Col 399,19.4233,20.1833,3.6,Vul,open cluster
+NGC 2362,7.31153,-24.9542,3.8,CMa,open cluster
+NGC 2516,7.96864,-60.7533,3.8,Car,open cluster
+omega Cen,13.4461,-47.4769,3.9,Cen,globular cluster
+47 Tuc,0.401417,-72.0808,4.0,Tuc,globular cluster
+NGC 1981,5.586,-4.425,4.2,Ori,open cluster
+NGC 2232,6.46697,-4.8475,4.2,Mon,open cluster
+NGC 3114,10.0452,-60.1089,4.2,Car,open cluster
+kappa Cru cluster,12.8936,-60.3561,4.2,Cru,open cluster
+M 6,17.6724,-32.2542,4.2,Sco,open cluster
+IC 4665,17.7717,5.71667,4.2,Oph,open cluster
+Col 62,5.375,41.0,4.2,Aur,open cluster
+IC 2581,10.4567,-57.6333,4.3,Car,open cluster
+M 47,7.60972,-14.4825,4.4,Pup,open cluster
+NGC 2478,7.60972,-14.4825,4.4,Pup,open cluster
+Col 228,10.7011,-59.9167,4.4,Car,open cluster
+M 41,6.76667,-20.7542,4.5,CMa,open cluster
+IC 2395,8.685,-48.2,4.6,Vel,open cluster
+NGC 6633,18.4542,6.50833,4.6,Oph,open cluster
+M 25,18.5267,-19.25,4.6,Sgr,open cluster
+M 39,21.5301,48.4486,4.6,Cyg,open cluster
+Col 106,6.61833,5.95,4.6,Mon,open cluster
+NGC 2547,8.16958,-49.2256,4.7,Vel,open cluster
+NGC 3293,10.5983,-58.2361,4.7,Car,open cluster
+IC 4756,18.65,5.45,5.0,Ser,open cluster
+Col 203,8.79833,-42.45,5.0,Vel,open cluster
+Col 234,10.7558,-59.75,5.0,Car,open cluster
+M 35,6.14886,24.3578,5.1,Gem,open cluster
+NGC 6025,16.0547,-60.4317,5.1,TrA,open cluster
+Col 107,6.62833,4.73333,5.1,Mon,open cluster
+M 34,2.70206,42.7461,5.2,Per,open cluster
+NGC 6193,16.6889,-48.7625,5.2,Ara,open cluster
+M 22,18.6067,-23.9033,5.2,Sgr,globular cluster
+NGC 6871,20.0998,35.7772,5.2,Cyg,open cluster
+Double cluster,2.31772,57.135,5.3,Per,open cluster
+NGC 3766,11.604,-61.61,5.3,Cen,open cluster
+NGC 6397,17.6781,-53.6736,5.3,Ara,globular cluster
+NGC 6752,19.181,-59.9819,5.3,Pav,globular cluster
+Col 411,20.2886,-79.0333,5.3,Oct,open cluster
+NGC 2281,6.80494,41.0789,5.4,Aur,open cluster
+NGC 6087,16.314,-57.9344,5.4,Nor,open cluster
+M 4,16.3932,-26.5253,5.4,Sco,globular cluster
+NGC 6281,17.0781,-37.9853,5.4,Sco,open cluster
+Col 97,6.52167,5.91667,5.4,Mon,open cluster
+NGC 5662,14.5938,-56.6181,5.5,Cen,open cluster
+NGC 6383,17.5784,-32.5814,5.5,Sco,open cluster
+M 23,17.9513,-18.9853,5.5,Sgr,open cluster
+Col 230,10.7322,-59.55,5.5,Car,open cluster
+M 37,5.87175,32.5531,5.6,Aur,open cluster
+NGC 5460,14.1244,-48.3425,5.6,Cen,open cluster
+NGC 6067,16.2197,-54.2183,5.6,Nor,open cluster
+NGC 7686,23.502,49.1342,5.6,And,open cluster
+NGC 752,1.96331,37.85,5.7,And,open cluster
+M 5,15.3094,2.08278,5.7,Ser,globular cluster
+NGC 6416,17.7389,-32.3611,5.7,Sco,open cluster
+Col 89,6.3,23.6333,5.7,Gem,open cluster
+Triangulum galaxy,1.56411,30.6603,5.8,Tri,galaxy
+NGC 2477,7.86939,-38.5333,5.8,Pup,open cluster
+M 48,8.22864,-5.75056,5.8,Hya,open cluster
+NGC 6124,16.4222,-40.6536,5.8,Sco,open cluster
+M 13,16.6948,36.46,5.8,Her,globular cluster
+Wild Duck cluster,18.8516,-6.27,5.8,Sct,open cluster
+NGC 2169,6.14008,13.9647,5.9,Ori,open cluster
+M 50,7.04508,-8.39056,5.9,Mon,open cluster
+NGC 5281,13.7764,-62.9164,5.9,Cen,open cluster
+NGC 6250,16.9656,-45.9367,5.9,Ara,open cluster
+M 21,18.0704,-22.49,5.9,Sgr,open cluster
+Col 29,2.62167,55.9833,5.9,Per,open cluster
+M 36,5.60492,34.1408,6.0,Aur,open cluster
+NGC 2301,6.86258,0.459167,6.0,Mon,open cluster
+NGC 3228,10.3562,-51.7325,6.0,Vel,open cluster
+NGC 5316,13.8992,-61.8692,6.0,Cen,open cluster
+NGC 6322,17.3071,-42.9339,6.0,Sco,open cluster
+NGC 6605,18.306,-15.0128,6.0,Ser,open cluster
+NGC 1746,5.06394,23.7678,6.1,Tau,open cluster
+M 46,7.69633,-14.81,6.1,Pup,open cluster
+NGC 2669,8.77294,-52.9475,6.1,Vel,open cluster
+M 12,16.7873,-1.94778,6.1,Oph,globular cluster
+NGC 7160,21.8945,62.6033,6.1,Cep,open cluster
+Col 202,8.775,-52.9,6.1,Vel,open cluster
+Col 350,17.8019,1.35,6.1,Oph,open cluster
+NGC 1545,4.34897,50.2553,6.2,Per,open cluster
+M 93,7.74144,-23.8531,6.2,Pup,open cluster
+NGC 2808,9.20072,-64.8631,6.2,Car,globular cluster
+NGC 2546,8.20433,-37.5942,6.3,Pup,open cluster
+M 3,13.7031,28.3756,6.3,CVn,globular cluster
+NGC 5617,14.4956,-60.7108,6.3,Cen,open cluster
+NGC 6541,18.134,-43.7158,6.3,CrA,globular cluster
+M 55,19.6665,-30.9622,6.3,Sgr,globular cluster
+NGC 6940,20.5741,28.2828,6.3,Vul,open cluster
+M 15,21.4996,12.1667,6.3,Peg,globular cluster
+Col 394,18.8744,-20.9911,6.3,Sgr,open cluster
+NGC 457,1.32572,58.2908,6.4,Cas,open cluster
+NGC 1528,4.25525,51.2114,6.4,Per,open cluster
+NGC 1647,4.76544,19.1117,6.4,Tau,open cluster
+NGC 1662,4.80803,10.9303,6.4,Ori,open cluster
+M 38,5.47847,35.855,6.4,Aur,open cluster
+NGC 6242,16.9259,-39.4608,6.4,Sco,open cluster
+M 62,17.0201,-30.1122,6.4,Oph,globular cluster
+NGC 7243,22.2524,49.8975,6.4,Lac,open cluster
+Col 91,6.36167,2.36667,6.4,Mon,open cluster
+Col 367,18.1619,-23.6597,6.4,Sgr,open cluster
+NGC 129,0.498361,60.2097,6.5,Cas,open cluster
+NGC 654,1.73317,61.8828,6.5,Cas,open cluster
+NGC 2354,7.23758,-25.6925,6.5,CMa,open cluster
+NGC 2520,8.08283,-28.1467,6.5,Pup,open cluster
+NGC 2527,8.08283,-28.1467,6.5,Pup,open cluster
+NGC 2539,8.17719,-12.8192,6.5,Pup,open cluster
+NGC 5822,15.0726,-54.3964,6.5,Lup,open cluster
+M 92,17.2854,43.1364,6.5,Her,globular cluster
+NGC 1444,3.82303,52.6622,6.6,Per,open cluster
+NGC 3572,11.172,-60.2483,6.6,Car,open cluster
+NGC 6169,16.5679,-44.0456,6.6,Nor,open cluster
+M 10,16.9525,-4.09944,6.6,Oph,globular cluster
+M 29,20.3994,38.5078,6.6,Cyg,open cluster
+M 2,21.5581,-0.823056,6.6,Aqr,globular cluster
+Col 316,16.925,-40.8333,6.6,Sco,open cluster
+NGC 1027,2.70975,61.5944,6.7,Cas,open cluster
+NGC 1342,3.52781,37.3744,6.7,Per,open cluster
+NGC 2129,6.01847,23.3222,6.7,Gem,open cluster
+NGC 2343,7.13522,-10.6169,6.7,Mon,open cluster
+NGC 2423,7.61853,-13.8714,6.7,Pup,open cluster
+NGC 6167,16.5764,-49.7719,6.7,Nor,open cluster
+NGC 6709,18.8552,10.3186,6.7,Aql,open cluster
+NGC 7789,23.9567,56.7083,6.7,Cas,open cluster
+Col 197,8.7475,-41.2333,6.7,Vel,open cluster
+Col 336,17.6033,-33.4833,6.7,Sco,open cluster
+NGC 362,1.05394,-70.8483,6.8,Tuc,globular cluster
+NGC 5128,13.4247,-43.0167,6.8,Cen,galaxy
+M 19,17.0438,-26.2681,6.8,Oph,globular cluster
+NGC 6388,17.6047,-44.7347,6.8,Sco,globular cluster
+NGC 6723,18.9925,-36.6317,6.8,Sgr,globular cluster
+NGC 6811,19.6216,46.3889,6.8,Cyg,open cluster
+IC 1369,21.2017,47.7333,6.8,Cyg,open cluster
+Col 232,10.7497,-59.55,6.8,Car,open cluster
+NGC 1502,4.13036,62.3317,6.9,Cam,open cluster
+NGC 2439,7.67928,-31.6925,6.9,Pup,open cluster
+M 67,8.85558,11.8119,6.9,Cnc,open cluster
+NGC 3201,10.2935,-46.4111,6.9,Vel,globular cluster
+NGC 4609,12.7055,-62.9939,6.9,Cru,open cluster
+IC 4651,17.4117,-49.95,6.9,Ara,open cluster
+M 18,18.3329,-17.1019,6.9,Sgr,open cluster
+M 28,18.4091,-24.87,6.9,Sgr,globular cluster
+M 30,21.6728,-23.1792,6.9,Cap,globular cluster
+M 52,23.414,61.6067,6.9,Cas,open cluster
+Col 241,11.1911,-60.6667,6.9,Car,open cluster
+Col 299,16.3317,-54.9667,6.9,Nor,open cluster
+NGC 225,0.725639,61.7903,7.0,Cas,open cluster
+NGC 1582,4.53333,43.8481,7.0,Per,open cluster
+NGC 1807,5.17808,16.5311,7.0,Tau,open cluster
+NGC 1857,5.33486,39.3436,7.0,Aur,open cluster
+NGC 2571,8.31564,-29.7492,7.0,Pup,open cluster
+NGC 2645,8.65086,-46.2272,7.0,Vel,open cluster
+IC 2488,9.46,-56.9833,7.0,Vel,open cluster
+NGC 7063,21.406,36.4875,7.0,Cyg,open cluster
+Col 36,3.19667,63.25,7.0,Cas,open cluster
+Col 111,6.645,6.9,7.0,Mon,open cluster
+Col 231,10.7453,-59.3667,7.0,Car,open cluster
+Col 401,19.64,0.333333,7.0,Aql,open cluster
+NGC 663,1.77111,61.2183,7.1,Cas,open cluster
+NGC 1851,5.23508,-40.0472,7.1,Col,globular cluster
+NGC 2353,7.24175,-10.2658,7.1,Mon,open cluster
+Col 155,7.625,-12.0667,7.1,Pup,open cluster
+Col 258,12.4528,-60.7667,7.1,Cru,open cluster
+NGC 2335,7.11375,-10.0286,7.2,Mon,open cluster
+NGC 2360,7.29531,-15.6414,7.2,CMa,open cluster
+NGC 2910,9.50806,-52.9139,7.2,Vel,open cluster
+NGC 4372,12.4293,-72.6592,7.2,Mus,globular cluster
+NGC 4463,12.4987,-64.7897,7.2,Mus,open cluster
+NGC 6134,16.4629,-49.1511,7.2,Nor,open cluster
+NGC 6178,16.5964,-45.6436,7.2,Sco,open cluster
+NGC 6208,16.8245,-53.7283,7.2,Ara,open cluster
+NGC 6425,17.7838,-31.5294,7.2,Sco,open cluster
+NGC 6441,17.8369,-37.0511,7.2,Sco,globular cluster
+NGC 7082,21.4883,47.1264,7.2,Cyg,open cluster
+NGC 2251,6.57736,8.36639,7.3,Mon,open cluster
+NGC 2482,7.91953,-24.2547,7.3,Pup,open cluster
+M 81,9.92581,69.0653,7.3,UMa,galaxy
+M 68,12.6578,-26.7428,7.3,Hya,globular cluster
+M 80,16.2842,-22.975,7.3,Sco,globular cluster
+NGC 6819,19.6883,40.1867,7.3,Cyg,open cluster
+IC 4996,20.275,37.6333,7.3,Cyg,open cluster
+Helix nebula,22.494,-20.8372,7.3,Aqr,planetary nebula
+Col 21,1.83667,27.0833,7.3,Tri,open cluster
+Col 96,6.505,2.86667,7.3,Mon,open cluster
+M 103,1.55606,60.6581,7.4,Cas,open cluster
+NGC 2384,7.41994,-21.0233,7.4,CMa,open cluster
+NGC 2396,7.46747,-11.7197,7.4,Pup,open cluster
+NGC 2567,8.30808,-30.6456,7.4,Pup,open cluster
+NGC 3330,10.6465,-54.1156,7.4,Vel,open cluster
+NGC 4103,12.111,-61.25,7.4,Cru,open cluster
+NGC 4349,12.4017,-61.8703,7.4,Cru,open cluster
+NGC 5286,13.774,-51.3733,7.4,Cen,globular cluster
+NGC 6200,16.7354,-47.4625,7.4,Ara,open cluster
+NGC 6401,17.6436,-23.9089,7.4,Oph,globular cluster
+M 27,19.9934,22.7214,7.4,Vul,planetary nebula
+NGC 6910,20.3867,40.7786,7.4,Cyg,open cluster
+NGC 2286,6.79447,-3.14778,7.5,Mon,open cluster
+M 101,14.0534,54.3486,7.5,UMa,galaxy
+NGC 6544,18.1224,-24.9975,7.5,Sgr,globular cluster
+NGC 6716,18.9095,-19.9011,7.5,Sgr,open cluster
+NGC 6755,19.1303,4.26639,7.5,Aql,open cluster
+Col 343,17.6933,-40.1,7.5,Sco,open cluster
+NGC 957,2.55528,57.5697,7.6,Per,open cluster
+NGC 1664,4.85233,43.6744,7.6,Aur,open cluster
+NGC 2483,7.92744,-27.8869,7.6,Pup,open cluster
+NGC 2506,8.00047,-10.7697,7.6,Mon,open cluster
+NGC 2533,8.11781,-29.8839,7.6,Pup,open cluster
+NGC 3247,10.4311,-57.9264,7.6,Car,open cluster
+NGC 3680,11.427,-43.25,7.6,Cen,open cluster
+NGC 5138,13.4542,-59.0408,7.6,Cen,open cluster
+NGC 5986,15.7676,-37.7861,7.6,Lup,globular cluster
+M 14,17.6267,-3.24611,7.6,Oph,globular cluster
+NGC 6520,18.057,-27.8911,7.6,Sgr,open cluster
+NGC 6624,18.3946,-30.3608,7.6,Sgr,globular cluster
+NGC 6866,20.0653,44.1592,7.6,Cyg,open cluster
+NGC 7039,21.1799,45.6219,7.6,Cyg,open cluster
+Col 220,10.4311,-57.9264,7.6,Car,open cluster
+Col 419,20.3017,40.7167,7.6,Cyg,open cluster
+NGC 1778,5.13492,37.0228,7.7,Aur,open cluster
+NGC 1817,5.20731,16.6842,7.7,Tau,open cluster
+M 79,5.40294,-24.5242,7.7,Lep,globular cluster
+NGC 2345,7.13856,-13.1939,7.7,CMa,open cluster
+Ghost of Jupiter,10.4128,-18.6428,7.7,Hya,planetary nebula
+NGC 3519,11.0674,-61.3681,7.7,Car,open cluster
+M 53,13.2153,18.1689,7.7,Com,globular cluster
+NGC 5606,14.4631,-59.6322,7.7,Cen,open cluster
+M 69,18.5231,-32.3481,7.7,Sgr,globular cluster
+M 54,18.9176,-30.4783,7.7,Sgr,globular cluster
+NGC 7209,22.0855,46.4836,7.7,Lac,open cluster
+NGC 7235,22.2069,57.2714,7.7,Cep,open cluster
+Col 236,10.9547,-61.11,7.7,Car,open cluster
+Col 272,13.5072,-61.3167,7.7,Cen,open cluster
+Col 274,13.5372,-62.8,7.7,Cen,open cluster
+Col 337,17.6133,-32.4833,7.7,Sco,open cluster
+Col 408,19.885,18.3333,7.7,Sge,open cluster
+Sculptor galaxy,0.792528,-25.2881,7.8,Scl,galaxy
+NGC 2670,8.75819,-48.7917,7.8,Vel,open cluster
+M 83,13.6167,-29.8678,7.8,Hya,galaxy
+M 107,16.5422,-13.0528,7.8,Oph,globular cluster
+M 9,17.3199,-18.5164,7.8,Oph,globular cluster
+NGC 6352,17.4247,-48.4228,7.8,Ara,globular cluster
+NGC 6664,18.6092,-8.22083,7.8,Sct,open cluster
+M 70,18.7201,-32.2919,7.8,Sgr,globular cluster
+NGC 6834,19.8701,29.4081,7.8,Cyg,open cluster
+NGC 6939,20.525,60.6622,7.8,Cep,open cluster
+Col 147,7.43972,-47.6667,7.8,Pup,open cluster
+Col 185,8.375,-36.1667,7.8,Pup,open cluster
+Col 205,9.00889,-48.985,7.8,Vel,open cluster
+Col 378,18.4117,-19.7167,7.8,Sgr,open cluster
+NGC 659,1.73972,60.6692,7.9,Cas,open cluster
+NGC 744,1.97497,55.4747,7.9,Per,open cluster
+NGC 2367,7.33458,-21.8842,7.9,CMa,open cluster
+NGC 2414,7.55356,-15.4539,7.9,Pup,open cluster
+NGC 2489,7.93775,-30.0642,7.9,Pup,open cluster
+Sombrero galaxy,12.6665,-11.6231,7.9,Vir,galaxy
+NGC 5823,15.0918,-55.6036,7.9,Cir,open cluster
+NGC 6584,18.3105,-52.215,7.9,Tel,globular cluster
+NGC 6830,19.8499,23.1,7.9,Vul,open cluster
+NGC 7510,23.1844,60.5708,7.9,Cep,open cluster
+Col 146,7.455,-24.0333,7.9,Pup,open cluster
+Col 283,14.5172,-61.1667,7.9,Cen,open cluster
+Col 292,15.8308,-57.6197,7.9,Nor,open cluster
+NGC 1965,5.44142,-68.8064,8.0,Dor,open cluster
+NGC 1970,5.644,-69.0942,8.0,Dor,open cluster
+NGC 2252,6.57858,5.36639,8.0,Mon,open cluster
+NGC 2374,7.39892,-13.2633,8.0,CMa,open cluster
+NGC 2395,7.45358,13.6081,8.0,Gem,open cluster
+IC 2714,11.2983,-62.7,8.0,Car,open cluster
+M 94,12.8481,41.12,8.0,CVn,galaxy
+NGC 5927,15.4668,-50.6728,8.0,Lup,globular cluster
+NGC 6259,17.0126,-44.655,8.0,Sco,open cluster
+NGC 6546,18.1229,-23.2961,8.0,Sgr,open cluster
+NGC 6647,18.547,-17.2286,8.0,Sgr,open cluster
+M 26,18.7552,-9.38361,8.0,Sct,open cluster
+IC 4895,19.75,-14.8,8.0,Sgr,galaxy
+NGC 6883,20.1888,35.8322,8.0,Cyg,open cluster
+Saturn nebula,21.0696,-11.3636,8.0,Aqr,planetary nebula
+Col 227,10.7033,-65.1,8.0,Car,open cluster
+Col 338,17.635,-37.72,8.0,Sco,open cluster
+Blue planetary,11.8383,-57.1822,8.1,Cen,planetary nebula
+M 110,0.67275,41.6906,8.2,And,galaxy
+M 32,0.711611,40.8644,8.3,And,galaxy
+Blue Snowball,23.4316,42.535,8.3,And,planetary nebula
+M 49,12.4963,8.0,8.4,Vir,galaxy
+M 64,12.9456,21.6828,8.4,Com,galaxy
+M 56,19.2765,30.1847,8.4,Lyr,globular cluster
+M 71,19.8961,18.7783,8.4,Sge,globular cluster
+Whirlpool galaxy,13.4978,47.1953,8.5,CVn,galaxy
+Spindle galaxy,10.0872,-7.71917,8.6,Sex,galaxy
+M 75,20.1013,-21.9214,8.6,Sgr,globular cluster
+M 106,12.316,47.3042,8.7,CVn,galaxy
+M 87,12.5137,12.3906,8.8,Vir,galaxy
+M 60,12.7277,11.5519,8.8,Vir,galaxy
+Ring nebula in Lyra,18.893,33.0286,8.8,Lyr,planetary nebula
+Blinking planetary,19.7467,50.5253,8.8,Cyg,planetary nebula
+M 82,9.93075,69.6786,8.9,UMa,galaxy
+M 66,11.3375,12.9911,9.0,Leo,galaxy
+M 86,12.4366,12.9464,9.0,Vir,galaxy
+Sunflower galaxy,13.2636,42.0306,9.0,CVn,galaxy
+M 77,2.71131,-0.0130556,9.1,Cet,galaxy
+Eskimo nebula,7.48633,20.9117,9.1,Gem,planetary nebula
+Eight-burst planetary,10.1171,-40.4364,9.2,Vel,planetary nebula
+M 85,12.4234,18.1908,9.2,Com,galaxy
+M 72,20.8911,-12.5369,9.2,Aqr,globular cluster
+M 96,10.7794,11.8236,9.3,Leo,galaxy
+M 65,11.3155,13.0936,9.3,Leo,galaxy
+M 105,10.7971,12.5814,9.4,Leo,galaxy
+M 84,12.418,12.8869,9.4,Vir,galaxy
+M 74,1.61156,15.7842,9.5,Psc,galaxy
+M 61,12.3652,4.47333,9.6,Vir,galaxy
+M 90,12.6139,13.1625,9.6,Vir,galaxy
+Bug nebula,17.2291,-37.1033,9.6,Sco,planetary nebula
+Pin-wheel nebula,12.3138,14.4169,9.7,Com,galaxy
+M 100,12.3819,15.8225,9.7,Com,galaxy
+M 88,12.5331,14.4208,9.7,Com,galaxy
+M 89,12.5944,12.5564,9.8,Vir,galaxy
+M 59,12.7007,11.6467,9.8,Vir,galaxy
+Owl nebula,11.2466,55.0186,9.9,UMa,planetary nebula
+M 109,11.96,53.3744,9.9,UMa,galaxy
+Barnard's galaxy,19.749,-14.8103,9.9,Sgr,galaxy
+M 95,10.7327,11.7036,10.0,Leo,galaxy
+M 98,12.2301,14.9,10.0,Com,galaxy
+M 76,1.70503,51.5711,10.1,Per,planetary nebula
+M 58,12.6287,11.8181,10.1,Vir,galaxy
+M 108,11.192,55.6733,10.2,UMa,galaxy
+M 91,12.5909,14.4967,10.4,Com,galaxy
+Antennae,12.0314,-18.8686,10.5,Crv,galaxy
+The Eyes,12.4613,13.0789,10.8,Vir,galaxy
+Helix galaxy,8.92628,58.7339,10.9,UMa,galaxy
+Little Gem,17.8208,-20.0094,11.2,Sgr,planetary nebula
+Siamese Twins,12.6091,11.2578,11.5,Vir,galaxy
+Box nebula,17.2345,-12.9108,11.5,Oph,planetary nebula
+Bear Paw galaxy,8.22069,45.9919,11.7,Lyn,galaxy
+Box,12.2052,29.1794,12.3,Com,galaxy
+The Mice,12.7696,30.7264,13.5,Com,galaxy
+Polarissima Australis,1.69522,-89.3344,13.6,Oct,galaxy
+Stephan's Quintet,22.5977,33.9447,13.9,Peg,galaxy
+Papillon,11.5665,49.0621,14.08,UMa,galaxy
+Polarissima Borealis,11.7875,89.0928,14.4,UMi,galaxy
+Copeland's Septet,11.6291,22.0208,15.2,Leo,galaxy

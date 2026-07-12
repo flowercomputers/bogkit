@@ -34,6 +34,7 @@ In this directory you'll find a few examples that show bog style databases in va
 - `timeseries` — weather readings bucketed into hourly and daily aggregates, updated incrementally. `cargo run -p timeseries`
 - `chat` — a chat backend where fold is the source of truth and every update is broadcast to clients over a websocket. `cargo run -p chat`, then open http://localhost:3000
 - `search` — text search three ways over one document stream: BM25 keyword search, HNSW semantic search over ese embeddings, and hybrid rank fusion. A good base for agent memory or document search projects. `cargo run -p search`
+- `overhead` — a live map of what's above your head: ~2000 stars and deep-sky objects materialized once into a celestial bucket index, so "what's overhead" is a sliding window of point reads while the only real deltas are the sun, moon, and planets actually moving. `cargo run -p overhead`, then open http://localhost:3000
 
 ## More about Bog
 Bog is a database runtime that makes every attempt to do as much work as possible as early as possible, to make reads incredibly fast. This means compiling queries into functions that eagerly update their output as mutations occur.
