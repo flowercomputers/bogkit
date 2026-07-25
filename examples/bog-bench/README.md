@@ -1,17 +1,24 @@
 # bog-bench
 
-**What your agent's tooling actually costs it in context — as a live fold view.**
+**A benchmark harness for agent tooling, built so that staying current costs the
+same no matter how much history you have.**
 
-Category: **agent context / memory support**
+Category: **performance**
 
 An agent's context window is its scarcest resource, and most of what fills it is
 not the user's problem — it is the agent's own tooling. A `Read` that dumps 40k
 characters back. A `Bash` call that fails and gets retried. An MCP tool quietly
 erroring half the time and burning a turn on every attempt.
 
-You can measure that today, but only in batch: point a script at your
-transcripts, wait, get a report — and the report is stale the moment an agent
-makes another call.
+Harnesses that measure this run in batch: point a script at your transcripts,
+re-read all of them, recompute every total, emit a report — which is stale the
+moment an agent makes another call, and gets slower every week you keep using
+it.
+
+bog-bench is built on `fold` instead, and the headline number is what that
+buys: **16 ms to fold in a new session, whether your history is 51 sessions or
+801**, against 417–630 ms and climbing for a full rescan. Both routes are
+checked against each other before either number is reported.
 
 bog-bench makes it a **materialized view instead of a report**. Every tool call
 is a delta pushed through a `fold` pipeline into persistent sinks. Ingest a
