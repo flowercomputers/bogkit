@@ -12,6 +12,12 @@
 //! Ingestion is transactional and crash-safe; reads observe one consistent
 //! snapshot across all sinks.
 //!
+//! # Crate layout
+//! - [`pipeline`] — the [`Push`](pipeline::Push) trait, operators, and
+//!   [`terminal`](pipeline::terminal) sinks.
+//! - [`stream`] — the [`Stream`](stream::Stream) driver and transaction
+//!   plumbing.
+//!
 //! # Example
 //!
 //! ```no_run
@@ -47,12 +53,6 @@
 //! st.wtx(|tx| tx.remove(&"hello".to_string()));
 //! st.rtx(|(count, _)| assert_eq!(count.get(), 1));
 //! ```
-//!
-//! # Crate layout
-//! - [`pipeline`] — the [`Push`](pipeline::Push) trait, operators, and
-//!   [`terminal`](pipeline::terminal) sinks.
-//! - [`stream`] — the [`Stream`](stream::Stream) driver and transaction
-//!   plumbing.
 
 pub mod pipeline;
 
