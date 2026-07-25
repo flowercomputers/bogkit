@@ -1,10 +1,16 @@
 use crate::{pipeline::*, stream::*, tests::fresh_db};
 use anny::metric::L2;
+use std::time::Instant;
 
 type Sink = terminal::search::Hnsw<u32, f32, L2, 4>;
 
 fn ids(hits: &[Scored<f32, u32>]) -> Vec<u32> {
     hits.iter().map(|h| h.val).collect()
+}
+
+// distinct first coordinate => querying dv(i) has a unique zero-distance hit
+fn dv(i: u32) -> [f32; 4] {
+    [i as f32, (i % 7) as f32, ((i / 3) % 5) as f32, 0.0]
 }
 
 #[test]
@@ -75,5 +81,117 @@ fn hnsw_nearest_upsert_retract_recover() {
         assert_eq!(idx.len(), 2);
         assert_eq!(ids(&idx.search(&[20.0, 20.0, 20.0, 20.0]))[0], 1);
         assert_eq!(ids(&idx.search(&[9.0, 9.0, 9.0, 9.0]))[0], 3);
+    });
+}
+
+#[test]
+fn hnsw_graph_snapshot_fast_reopen() {
+    let path = fresh_db("hnsw_snap.db");
+    // a foreign non-.jnl file at the db-dir root is ignored by fjall recovery
+    let graph = path.join("hnsw.graph");
+    let n: u32 = 400;
+
+    let mut st = Stream::new(&path, Sink::new("vecs", L2, 42).with_graph_snapshot(&graph));
+    st.wtx(|tx| {
+        for i in 0..n {
+            tx.insert(&Keyed::new(i, dv(i)));
+        }
+    });
+
+    let queries: Vec<[f32; 4]> = (0..25).map(|i| dv(i * 17 % n)).collect();
+    let baseline: Vec<Vec<u32>> = st.rtx(|idx| {
+        idx.save_graph().unwrap();
+        queries.iter().map(|q| ids(&idx.search(q))).collect()
+    });
+    drop(st);
+
+    // the restored graph is the saved graph: results match exactly
+    let t = Instant::now();
+    let st = Stream::new(&path, Sink::new("vecs", L2, 42).with_graph_snapshot(&graph));
+    eprintln!("snapshot reopen: {:?}", t.elapsed());
+    st.rtx(|idx| {
+        assert_eq!(idx.len(), n as usize);
+        for (q, want) in queries.iter().zip(&baseline) {
+            assert_eq!(&ids(&idx.search(q)), want);
+        }
+    });
+    drop(st);
+
+    let t = Instant::now();
+    let st = Stream::new(&path, Sink::new("vecs", L2, 42));
+    eprintln!("rebuild reopen:  {:?}", t.elapsed());
+    st.rtx(|idx| assert_eq!(idx.len(), n as usize));
+}
+
+#[test]
+fn hnsw_graph_snapshot_corrupt_falls_back() {
+    let path = fresh_db("hnsw_snap_corrupt.db");
+    let graph = path.join("hnsw.graph");
+    let n: u32 = 120;
+
+    let mut st = Stream::new(&path, Sink::new("vecs", L2, 7).with_graph_snapshot(&graph));
+    st.wtx(|tx| {
+        for i in 0..n {
+            tx.insert(&Keyed::new(i, dv(i)));
+        }
+    });
+    st.rtx(|idx| idx.save_graph().unwrap());
+    drop(st);
+
+    // truncated blob: load fails, init rebuilds from the committed rows
+    let len = std::fs::metadata(&graph).unwrap().len();
+    let f = std::fs::OpenOptions::new()
+        .write(true)
+        .open(&graph)
+        .unwrap();
+    f.set_len(len / 2).unwrap();
+    drop(f);
+    let st = Stream::new(&path, Sink::new("vecs", L2, 7).with_graph_snapshot(&graph));
+    st.rtx(|idx| {
+        assert_eq!(idx.len(), n as usize);
+        for i in [0u32, 17, 63, 119] {
+            assert_eq!(ids(&idx.search(&dv(i)))[0], i);
+        }
+    });
+    st.rtx(|idx| idx.save_graph().unwrap());
+    drop(st);
+
+    // corrupted header: same fallback
+    let mut blob = std::fs::read(&graph).unwrap();
+    blob[3] ^= 0xFF;
+    std::fs::write(&graph, &blob).unwrap();
+    let st = Stream::new(&path, Sink::new("vecs", L2, 7).with_graph_snapshot(&graph));
+    st.rtx(|idx| {
+        assert_eq!(idx.len(), n as usize);
+        assert_eq!(ids(&idx.search(&dv(63)))[0], 63);
+    });
+}
+
+#[test]
+fn hnsw_graph_snapshot_stale_rejected() {
+    let path = fresh_db("hnsw_snap_stale.db");
+    let graph = path.join("hnsw.graph");
+
+    let mut st = Stream::new(&path, Sink::new("vecs", L2, 3).with_graph_snapshot(&graph));
+    st.wtx(|tx| {
+        for i in 0..50u32 {
+            tx.insert(&Keyed::new(i, dv(i)));
+        }
+    });
+    st.rtx(|idx| idx.save_graph().unwrap());
+    // more committed rows leave the blob behind; drop without re-saving
+    st.wtx(|tx| {
+        for i in 50..80u32 {
+            tx.insert(&Keyed::new(i, dv(i)));
+        }
+    });
+    drop(st);
+
+    // validation sees 80 rows vs 50 blob entries and rebuilds instead
+    let st = Stream::new(&path, Sink::new("vecs", L2, 3).with_graph_snapshot(&graph));
+    st.rtx(|idx| {
+        assert_eq!(idx.len(), 80);
+        assert_eq!(ids(&idx.search(&dv(70)))[0], 70);
+        assert_eq!(ids(&idx.search(&dv(10)))[0], 10);
     });
 }
