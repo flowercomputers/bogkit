@@ -3,6 +3,10 @@ use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::mem::MaybeUninit;
 
+// child of this module so it can reach Hnsw's private fields
+#[path = "serial.rs"]
+mod serial;
+
 const fn const_ln(x: f64) -> f64 {
     let (mut m, mut k) = (x, 0i32);
     while m >= 2.0 {
