@@ -1069,6 +1069,7 @@ dependencies = [
  "flume",
  "log",
  "lsm-tree",
+ "lz4_flex",
  "tempfile",
  "xxhash-rust",
 ]
@@ -1782,6 +1783,7 @@ dependencies = [
  "enum_dispatch",
  "interval-heap",
  "log",
+ "lz4_flex",
  "quick_cache",
  "rustc-hash",
  "self_cell",
@@ -2157,6 +2159,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1e1c390732d15f1d48471625cd92d154e66db2c56645e29a9cd26f4699f72dc"
 dependencies = [
  "num-traits",
+]
+
+[[package]]
+name = "ouija"
+version = "0.0.0"
+dependencies = [
+ "anny",
+ "ese",
+ "fold",
+ "serde",
 ]
 
 [[package]]
@@ -2630,6 +2642,20 @@ name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
+
+[[package]]
+name = "seance"
+version = "0.0.0"
+dependencies = [
+ "anny",
+ "axum",
+ "ese",
+ "fjall",
+ "fold",
+ "serde",
+ "serde_json",
+ "tokio",
+]
 
 [[package]]
 name = "search"
