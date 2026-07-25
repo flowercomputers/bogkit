@@ -1,0 +1,3287 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>MUDGarden · Field Console</title>
+  <style>
+    :root {
+      --paper: #f4f1e7;
+      --paper-deep: #e8e3d5;
+      --surface: #fffdf7;
+      --ink: #1e2b23;
+      --muted: #657168;
+      --line: #d8d3c5;
+      --moss: #345a43;
+      --moss-soft: #d9e4d7;
+      --acid: #d6eb78;
+      --plum: #67516f;
+      --clay: #bd714c;
+      --gold: #c49a38;
+      --danger: #a54c43;
+      --shadow: 0 14px 38px rgba(35, 45, 36, .08);
+      --mono: "SFMono-Regular", "Cascadia Code", "Roboto Mono", monospace;
+      --serif: "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+      --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body { min-height: 100%; }
+
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at 7% 10%, rgba(214, 235, 120, .22), transparent 24rem),
+        linear-gradient(90deg, rgba(52, 90, 67, .025) 1px, transparent 1px),
+        linear-gradient(rgba(52, 90, 67, .025) 1px, transparent 1px),
+        var(--paper);
+      background-size: auto, 28px 28px, 28px 28px, auto;
+      color: var(--ink);
+      font-family: var(--sans);
+      font-size: 14px;
+    }
+
+    button, input, select { font: inherit; }
+
+    button {
+      color: inherit;
+      cursor: pointer;
+    }
+
+    .app {
+      min-height: 100vh;
+      display: grid;
+      grid-template-rows: auto auto 1fr;
+    }
+
+    header {
+      min-height: 76px;
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(244, 241, 231, .86);
+      backdrop-filter: blur(16px);
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      position: sticky;
+      top: 0;
+      z-index: 20;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      min-width: 228px;
+      gap: 12px;
+    }
+
+    .brand-mark {
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--ink);
+      border-radius: 50% 50% 47% 53%;
+      background: var(--acid);
+      font-family: var(--serif);
+      font-size: 22px;
+      transform: rotate(-4deg);
+      box-shadow: 3px 3px 0 var(--ink);
+    }
+
+    .brand h1 {
+      margin: 0;
+      font: 600 20px/1 var(--serif);
+      letter-spacing: -.02em;
+    }
+
+    .eyebrow {
+      margin-bottom: 5px;
+      color: var(--muted);
+      font: 700 9px/1 var(--mono);
+      letter-spacing: .15em;
+      text-transform: uppercase;
+    }
+
+    .header-metrics {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(92px, 1fr));
+      gap: 8px;
+      flex: 1;
+    }
+
+    .metric {
+      min-height: 46px;
+      padding: 8px 12px;
+      border-left: 1px solid var(--line);
+    }
+
+    .metric strong {
+      display: block;
+      font: 600 19px/1.1 var(--serif);
+    }
+
+    .metric span {
+      color: var(--muted);
+      font: 700 9px/1.2 var(--mono);
+      text-transform: uppercase;
+      letter-spacing: .08em;
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 9px;
+      min-width: 248px;
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      background: var(--surface);
+      font: 700 10px/1 var(--mono);
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--moss);
+      box-shadow: 0 0 0 4px rgba(52, 90, 67, .12);
+    }
+
+    .status-pill.error .status-dot {
+      background: var(--danger);
+      box-shadow: 0 0 0 4px rgba(165, 76, 67, .12);
+    }
+
+    .icon-button {
+      width: 36px;
+      height: 36px;
+      border: 1px solid var(--line);
+      background: var(--surface);
+      display: grid;
+      place-items: center;
+      transition: .16s ease;
+    }
+
+    .icon-button:hover {
+      border-color: var(--moss);
+      background: var(--moss-soft);
+      transform: translateY(-1px);
+    }
+
+    .refreshing svg { animation: spin .8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .clock-bar {
+      min-height: 48px;
+      padding: 7px 20px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255, 253, 247, .88);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .clock-label {
+      color: var(--muted);
+      font: 700 9px/1 var(--mono);
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    .clock-button,
+    .clock-speed {
+      min-height: 32px;
+      border: 1px solid var(--line);
+      background: var(--surface);
+      font: 700 10px/1 var(--mono);
+    }
+
+    .clock-button {
+      padding: 0 12px;
+      transition: .16s ease;
+    }
+
+    .clock-button:hover:not(:disabled) {
+      border-color: var(--moss);
+      background: var(--moss-soft);
+      transform: translateY(-1px);
+    }
+
+    .clock-button.primary { min-width: 78px; background: var(--acid); }
+    .clock-button:disabled { cursor: wait; opacity: .5; }
+
+    .clock-speed {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding-left: 10px;
+      color: var(--muted);
+    }
+
+    .clock-speed select {
+      height: 30px;
+      padding: 0 24px 0 8px;
+      border: 0;
+      border-left: 1px solid var(--line);
+      border-radius: 0;
+      background: var(--surface);
+      color: var(--ink);
+      font: 700 10px/1 var(--mono);
+    }
+
+    .clock-message {
+      margin-left: auto;
+      color: var(--muted);
+      font: 10px/1.2 var(--mono);
+    }
+
+    .clock-message.error { color: var(--danger); }
+
+    main {
+      min-height: 0;
+      padding: 16px;
+      display: grid;
+      grid-template-columns: 244px minmax(500px, 1fr) 350px;
+      gap: 12px;
+    }
+
+    .column {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .card {
+      border: 1px solid var(--line);
+      background: rgba(255, 253, 247, .92);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .card-head {
+      min-height: 46px;
+      padding: 10px 13px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .card-title {
+      font: 700 10px/1 var(--mono);
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    .card-note {
+      color: var(--muted);
+      font: 10px/1.2 var(--mono);
+    }
+
+    .search-wrap {
+      position: relative;
+    }
+
+    .search-wrap svg {
+      position: absolute;
+      left: 11px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--muted);
+      pointer-events: none;
+    }
+
+    #search {
+      width: 100%;
+      height: 42px;
+      padding: 0 34px 0 35px;
+      border: 1px solid var(--line);
+      outline: 0;
+      background: var(--surface);
+      color: var(--ink);
+    }
+
+    #search:focus {
+      border-color: var(--moss);
+      box-shadow: 0 0 0 3px rgba(52, 90, 67, .09);
+    }
+
+    .keycap {
+      position: absolute;
+      right: 9px;
+      top: 9px;
+      padding: 4px 6px;
+      border: 1px solid var(--line);
+      color: var(--muted);
+      background: var(--paper);
+      font: 9px/1 var(--mono);
+    }
+
+    .section {
+      padding: 12px;
+    }
+
+    .filter-list, .layer-list {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .filter-button, .layer-button {
+      width: 100%;
+      border: 0;
+      background: transparent;
+      padding: 9px 8px;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      text-align: left;
+    }
+
+    .filter-button:hover, .layer-button:hover { background: var(--paper); }
+
+    .filter-button.active {
+      background: var(--moss);
+      color: white;
+    }
+
+    .filter-icon {
+      width: 22px;
+      height: 22px;
+      display: grid;
+      place-items: center;
+      border: 1px solid currentColor;
+      font: 10px/1 var(--mono);
+    }
+
+    .filter-button span:nth-child(2), .layer-button span:nth-child(2) {
+      flex: 1;
+      font-weight: 650;
+    }
+
+    .count {
+      font: 10px/1 var(--mono);
+      opacity: .72;
+    }
+
+    .toggle {
+      width: 26px;
+      height: 15px;
+      padding: 2px;
+      border-radius: 20px;
+      background: var(--line);
+      transition: .18s;
+    }
+
+    .toggle::after {
+      content: "";
+      display: block;
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      background: var(--surface);
+      transition: .18s;
+    }
+
+    .layer-button.active .toggle { background: var(--moss); }
+    .layer-button.active .toggle::after { transform: translateX(11px); }
+
+    .pipeline {
+      padding: 13px;
+      position: relative;
+    }
+
+    .pipeline-row {
+      min-height: 36px;
+      padding: 7px 9px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border: 1px solid var(--line);
+      background: var(--surface);
+      font: 10px/1.2 var(--mono);
+      position: relative;
+      z-index: 1;
+    }
+
+    .pipeline-row + .pipeline-arrow {
+      height: 15px;
+      margin-left: 18px;
+      border-left: 1px dashed var(--moss);
+    }
+
+    .pipeline-row.derived {
+      margin-left: 13px;
+      border-left: 3px solid var(--plum);
+    }
+
+    .pipeline-value {
+      padding: 3px 5px;
+      background: var(--paper-deep);
+      color: var(--moss);
+    }
+
+    .map-card {
+      min-height: 520px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .view-tabs {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      padding: 3px;
+      background: var(--paper-deep);
+    }
+
+    .view-tab {
+      border: 0;
+      padding: 6px 10px;
+      background: transparent;
+      color: var(--muted);
+      font: 700 9px/1 var(--mono);
+      text-transform: uppercase;
+      letter-spacing: .06em;
+    }
+
+    .view-tab.active {
+      background: var(--surface);
+      color: var(--ink);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, .08);
+    }
+
+    .garden-picker {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 32px;
+      padding-left: 9px;
+      border: 1px solid var(--line);
+      background: var(--surface);
+      color: var(--muted);
+      font: 700 9px/1 var(--mono);
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+
+    .garden-picker[hidden] { display: none; }
+
+    .garden-picker select {
+      align-self: stretch;
+      min-width: 150px;
+      max-width: 220px;
+      padding: 0 26px 0 8px;
+      border: 0;
+      border-left: 1px solid var(--line);
+      border-radius: 0;
+      background: var(--surface);
+      color: var(--ink);
+      font: 700 10px/1 var(--mono);
+    }
+
+    .map-tools {
+      display: flex;
+      gap: 4px;
+    }
+
+    .map-tools button {
+      width: 28px;
+      height: 28px;
+      border: 1px solid var(--line);
+      background: var(--surface);
+      font: 13px/1 var(--mono);
+    }
+
+    .map-stage {
+      height: clamp(450px, 56vh, 570px);
+      min-height: 450px;
+      flex: 0 0 auto;
+      position: relative;
+      overflow: hidden;
+      background:
+        radial-gradient(circle, rgba(52, 90, 67, .15) 1px, transparent 1.4px),
+        linear-gradient(135deg, rgba(214, 235, 120, .10), transparent 48%);
+      background-size: 24px 24px, auto;
+    }
+
+    #ecosystem-map {
+      width: 100%;
+      height: 100%;
+      min-height: 450px;
+      display: block;
+      user-select: none;
+    }
+
+    .edge {
+      stroke: #a8afa5;
+      stroke-width: 2;
+      stroke-dasharray: 4 5;
+      vector-effect: non-scaling-stroke;
+    }
+
+    .edge.active {
+      stroke: var(--moss);
+      stroke-width: 3;
+      stroke-dasharray: none;
+    }
+
+    .edge-label {
+      fill: var(--muted);
+      font: 9px var(--mono);
+      text-anchor: middle;
+      paint-order: stroke;
+      stroke: var(--paper);
+      stroke-width: 4;
+    }
+
+    .room-node { cursor: pointer; transition: opacity .18s; }
+    .room-node.dimmed { opacity: .17; }
+
+    .room-shell {
+      fill: rgba(255, 253, 247, .95);
+      stroke: #78827a;
+      stroke-width: 1.5;
+      vector-effect: non-scaling-stroke;
+      filter: drop-shadow(0 5px 8px rgba(33, 45, 36, .10));
+      transition: .16s;
+    }
+
+    .room-node:hover .room-shell {
+      stroke: var(--moss);
+      stroke-width: 2.5;
+    }
+
+    .room-node.selected .room-shell {
+      stroke: var(--ink);
+      stroke-width: 3;
+      fill: #faffdf;
+    }
+
+    .room-accent { fill: var(--moss); }
+    .room-accent.home { fill: var(--plum); }
+    .room-title { fill: var(--ink); font: 700 13px var(--sans); }
+    .room-sub { fill: var(--muted); font: 9px var(--mono); }
+
+    .plant-dot {
+      stroke: var(--surface);
+      stroke-width: 2;
+      cursor: pointer;
+      vector-effect: non-scaling-stroke;
+    }
+
+    .plant-dot:hover, .plant-dot.selected {
+      stroke: var(--ink);
+      stroke-width: 3;
+    }
+
+    .actor-dot {
+      fill: var(--acid);
+      stroke: var(--ink);
+      stroke-width: 1.5;
+      cursor: pointer;
+      vector-effect: non-scaling-stroke;
+    }
+
+    .actor-dot.human { fill: #f4b07f; }
+    .actor-dot.selected { stroke-width: 3; }
+    .actor-initial { fill: var(--ink); font: 700 8px var(--mono); text-anchor: middle; pointer-events: none; }
+
+    .world-room-cell {
+      cursor: pointer;
+      transition: opacity .12s;
+    }
+
+    .world-cell-shell {
+      stroke: rgba(30, 43, 35, .2);
+      stroke-width: 1;
+      vector-effect: non-scaling-stroke;
+    }
+
+    .world-room-cell:hover .world-cell-shell,
+    .world-room-cell.selected .world-cell-shell {
+      stroke: var(--ink);
+      stroke-width: 2.5;
+    }
+
+    .world-room-cell.dimmed { opacity: .14; }
+
+    .world-cell-title {
+      fill: var(--ink);
+      font: 700 10px var(--sans);
+      text-anchor: middle;
+      pointer-events: none;
+    }
+
+    .world-cell-sub {
+      fill: var(--ink-soft);
+      font: 9px var(--mono);
+      text-anchor: middle;
+      pointer-events: none;
+    }
+
+    .world-cell-badge {
+      fill: rgba(255, 253, 247, .86);
+      stroke: rgba(30, 43, 35, .22);
+      stroke-width: 1;
+      vector-effect: non-scaling-stroke;
+      pointer-events: none;
+    }
+
+    .world-cell-badge-text {
+      fill: var(--ink);
+      font: 700 8px var(--mono);
+      text-anchor: middle;
+      pointer-events: none;
+    }
+
+    .garden-frame {
+      fill: rgba(255, 253, 247, .94);
+      stroke: var(--line);
+      stroke-width: 1.5;
+      vector-effect: non-scaling-stroke;
+      filter: drop-shadow(0 12px 18px rgba(33, 45, 36, .10));
+    }
+
+    .garden-title {
+      fill: var(--ink);
+      font: 600 28px var(--serif);
+    }
+
+    .garden-meta {
+      fill: var(--muted);
+      font: 10px var(--mono);
+      letter-spacing: .05em;
+      text-transform: uppercase;
+    }
+
+    .garden-axis {
+      fill: var(--muted);
+      font: 700 10px var(--mono);
+      text-anchor: middle;
+    }
+
+    .garden-plot {
+      cursor: default;
+    }
+
+    .garden-plot rect {
+      fill: #e7dfca;
+      stroke: rgba(64, 70, 55, .28);
+      stroke-width: 1;
+      vector-effect: non-scaling-stroke;
+      transition: .14s ease;
+    }
+
+    .garden-plot:nth-child(even) rect { fill: #ece5d4; }
+    .garden-plot.occupied { cursor: pointer; }
+    .garden-plot.dimmed { opacity: .15; }
+    .garden-plot.occupied:hover rect,
+    .garden-plot.selected rect {
+      stroke: var(--ink);
+      stroke-width: 3;
+      filter: brightness(1.06);
+    }
+
+    .garden-plot.plant rect { fill: #dce7d4; }
+    .garden-plot.thirsty rect { fill: #ead9bd; }
+    .garden-plot.struggling rect { fill: #ead0c9; }
+    .garden-plot.decoration rect { fill: #ddd5e4; }
+
+    .garden-plot-symbol {
+      fill: var(--moss);
+      font: 700 22px var(--mono);
+      text-anchor: middle;
+      pointer-events: none;
+    }
+
+    .garden-plot.struggling .garden-plot-symbol { fill: var(--danger); }
+    .garden-plot.thirsty .garden-plot-symbol { fill: #966d21; }
+    .garden-plot.decoration .garden-plot-symbol { fill: var(--plum); }
+
+    .garden-plot-coordinate {
+      fill: rgba(30, 43, 35, .46);
+      font: 7px var(--mono);
+      pointer-events: none;
+    }
+
+    .garden-summary-rule {
+      stroke: var(--line);
+      stroke-width: 1;
+      vector-effect: non-scaling-stroke;
+    }
+
+    .garden-summary-label {
+      fill: var(--muted);
+      font: 700 9px var(--mono);
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .garden-summary-value {
+      fill: var(--ink);
+      font: 600 20px var(--serif);
+    }
+
+    .garden-key {
+      fill: var(--muted);
+      font: 9px var(--mono);
+    }
+
+    .garden-resident {
+      cursor: pointer;
+    }
+
+    .garden-resident circle {
+      fill: var(--acid);
+      stroke: var(--ink);
+      stroke-width: 1.5;
+      vector-effect: non-scaling-stroke;
+    }
+
+    .garden-resident text {
+      fill: var(--ink);
+      font: 700 9px var(--mono);
+      text-anchor: middle;
+      pointer-events: none;
+    }
+
+    .graph-legend {
+      position: absolute;
+      left: 12px;
+      bottom: 12px;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      background: rgba(255, 253, 247, .93);
+      display: flex;
+      gap: 12px;
+      color: var(--muted);
+      font: 9px/1 var(--mono);
+      pointer-events: none;
+    }
+
+    .legend-key { display: flex; align-items: center; gap: 5px; }
+    .legend-swatch { width: 8px; height: 8px; border-radius: 50%; background: var(--moss); }
+    .legend-swatch.actor { background: var(--acid); border: 1px solid var(--ink); }
+    .schedule-card { min-height: 150px; }
+
+    .schedule-strip {
+      padding: 12px;
+      overflow-x: auto;
+      display: flex;
+      align-items: stretch;
+      gap: 8px;
+    }
+
+    .schedule-now {
+      min-width: 70px;
+      padding: 10px 8px;
+      background: var(--ink);
+      color: var(--surface);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+
+    .schedule-now strong { font: 600 18px/1 var(--serif); }
+    .schedule-now span { margin-top: 5px; font: 8px/1 var(--mono); text-transform: uppercase; letter-spacing: .08em; }
+
+    .schedule-entry {
+      min-width: 128px;
+      max-width: 170px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      background: var(--surface);
+      text-align: left;
+      position: relative;
+    }
+
+    .schedule-entry::before {
+      content: "";
+      position: absolute;
+      top: -4px;
+      left: 10px;
+      width: 8px;
+      height: 8px;
+      background: var(--moss);
+      transform: rotate(45deg);
+    }
+
+    .schedule-entry.agent::before { background: var(--plum); }
+    .schedule-entry.overdue { border-color: var(--danger); }
+    .schedule-entry strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+    .schedule-entry span { color: var(--muted); font: 9px/1.5 var(--mono); }
+
+    .inspector-card {
+      flex: 1;
+      min-height: 360px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .inspector-tabs {
+      display: flex;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .inspector-tab {
+      flex: 1;
+      border: 0;
+      border-right: 1px solid var(--line);
+      background: var(--paper);
+      padding: 10px;
+      color: var(--muted);
+      font: 700 9px/1 var(--mono);
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .inspector-tab:last-child { border-right: 0; }
+    .inspector-tab.active { background: var(--surface); color: var(--ink); }
+
+    #inspector-content {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      padding: 14px;
+    }
+
+    .inspector-kicker {
+      color: var(--moss);
+      font: 700 9px/1 var(--mono);
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    .inspector-title {
+      margin: 6px 0 5px;
+      font: 600 28px/1.05 var(--serif);
+      letter-spacing: -.02em;
+    }
+
+    .inspector-description {
+      margin: 0 0 16px;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    .detail-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      border-top: 1px solid var(--line);
+      border-left: 1px solid var(--line);
+      margin-bottom: 14px;
+    }
+
+    .detail {
+      min-height: 54px;
+      padding: 9px;
+      border-right: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .detail span {
+      display: block;
+      margin-bottom: 5px;
+      color: var(--muted);
+      font: 8px/1 var(--mono);
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .detail strong { font-size: 12px; }
+
+    .section-label {
+      margin: 16px 0 8px;
+      color: var(--muted);
+      font: 700 9px/1 var(--mono);
+      letter-spacing: .1em;
+      text-transform: uppercase;
+    }
+
+    .inspector-garden {
+      margin: 8px 0 14px;
+      padding: 11px;
+      border: 1px solid var(--line);
+      background: var(--paper);
+    }
+
+    .inspector-garden-head {
+      margin-bottom: 9px;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .inspector-garden-head strong {
+      display: block;
+      font: 600 17px/1.1 var(--serif);
+    }
+
+    .inspector-garden-head span {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font: 8px/1.3 var(--mono);
+      text-transform: uppercase;
+      letter-spacing: .06em;
+    }
+
+    .inspector-garden-open {
+      flex: 0 0 auto;
+      padding: 5px 7px;
+      border: 1px solid var(--line);
+      background: var(--surface);
+      font: 8px/1 var(--mono);
+      text-transform: uppercase;
+    }
+
+    .inspector-garden-open:hover {
+      border-color: var(--moss);
+      background: var(--moss-soft);
+    }
+
+    .inspector-garden-grid {
+      display: grid;
+      grid-template-columns: 14px repeat(8, minmax(0, 1fr));
+      gap: 2px;
+      align-items: center;
+    }
+
+    .inspector-garden-axis {
+      color: var(--muted);
+      text-align: center;
+      font: 7px/1 var(--mono);
+    }
+
+    .inspector-garden-cell {
+      min-width: 0;
+      aspect-ratio: 1;
+      padding: 0;
+      border: 1px solid rgba(64, 70, 55, .25);
+      border-radius: 2px;
+      background: #e7dfca;
+      display: grid;
+      place-items: center;
+      color: rgba(30, 43, 35, .38);
+      font: 700 12px/1 var(--mono);
+    }
+
+    button.inspector-garden-cell {
+      background: #dce7d4;
+      color: var(--moss);
+    }
+
+    button.inspector-garden-cell:hover,
+    button.inspector-garden-cell.selected {
+      border: 2px solid var(--ink);
+      background: #faffdf;
+    }
+
+    .inspector-garden-cell.thirsty { background: #ead9bd; color: #966d21; }
+    .inspector-garden-cell.struggling { background: #ead0c9; color: var(--danger); }
+    .inspector-garden-cell.decoration { background: #ddd5e4; color: var(--plum); }
+
+    .inspector-garden-stats {
+      margin-top: 9px;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      border-top: 1px solid var(--line);
+      border-left: 1px solid var(--line);
+    }
+
+    .inspector-garden-stat {
+      padding: 7px 6px;
+      border-right: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .inspector-garden-stat span {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--muted);
+      font: 7px/1 var(--mono);
+      text-transform: uppercase;
+    }
+
+    .inspector-garden-stat strong { font-size: 10px; }
+
+    .profile-copy {
+      margin: 7px 0;
+      padding: 9px 10px;
+      border-left: 3px solid var(--moss);
+      background: var(--paper);
+      color: var(--ink);
+      font-size: 11px;
+      line-height: 1.5;
+    }
+
+    .profile-copy.voice { border-left-color: var(--plum); }
+
+    .profile-list {
+      margin: 7px 0 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .profile-list li {
+      padding: 6px 8px;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface);
+      font-size: 10px;
+      line-height: 1.4;
+    }
+
+    .profile-list li::before {
+      content: "—";
+      margin-right: 6px;
+      color: var(--moss);
+    }
+
+    .profile-line {
+      margin: 6px 0;
+      padding-left: 10px;
+      border-left: 2px solid var(--gold);
+      color: var(--muted);
+      font: italic 11px/1.5 var(--serif);
+    }
+
+    .trace-step {
+      margin-bottom: 8px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-left: 3px solid var(--plum);
+      background: var(--paper);
+    }
+
+    .trace-step.world_query { border-left-color: var(--moss); }
+    .trace-step.action { border-left-color: var(--gold); }
+    .trace-step.execution { border-left-color: var(--clay); }
+    .trace-step-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 6px;
+      font: 700 9px/1.3 var(--mono);
+      text-transform: uppercase;
+    }
+    .trace-step-head span { color: var(--muted); }
+    .trace-step p { margin: 6px 0 0; font-size: 11px; line-height: 1.5; }
+    .trace-step code {
+      display: block;
+      margin-top: 6px;
+      padding: 7px;
+      background: var(--surface);
+      overflow-wrap: anywhere;
+      white-space: pre-wrap;
+      font: 10px/1.45 var(--mono);
+    }
+    .trace-disclosure { margin-top: 8px; border: 1px solid var(--line); }
+    .trace-disclosure summary {
+      padding: 9px 10px;
+      cursor: pointer;
+      background: var(--paper);
+      font: 700 9px/1.2 var(--mono);
+      text-transform: uppercase;
+    }
+    .trace-disclosure pre { min-height: 0; }
+
+    .meter-row {
+      display: grid;
+      grid-template-columns: 72px 1fr 30px;
+      gap: 8px;
+      align-items: center;
+      margin: 8px 0;
+      font: 10px/1 var(--mono);
+    }
+
+    .meter {
+      height: 7px;
+      background: var(--paper-deep);
+      overflow: hidden;
+    }
+
+    .meter > i {
+      display: block;
+      height: 100%;
+      background: var(--moss);
+    }
+
+    .meter > i.warn { background: var(--clay); }
+    .meter > i.bad { background: var(--danger); }
+
+    .tag-list { display: flex; flex-wrap: wrap; gap: 5px; }
+
+    .tag {
+      padding: 5px 7px;
+      border: 1px solid var(--line);
+      background: var(--paper);
+      font: 9px/1 var(--mono);
+    }
+
+    .entity-link {
+      width: 100%;
+      padding: 8px 9px;
+      margin-bottom: 5px;
+      border: 1px solid var(--line);
+      background: var(--surface);
+      display: flex;
+      justify-content: space-between;
+      text-align: left;
+      font-size: 11px;
+    }
+
+    .entity-link:hover { border-color: var(--moss); background: var(--moss-soft); }
+    .entity-link code { color: var(--muted); font: 9px var(--mono); }
+
+    pre {
+      margin: 0;
+      color: #dfe8df;
+      background: #17221b;
+      padding: 13px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font: 10px/1.55 var(--mono);
+      min-height: 100%;
+    }
+
+    .copy-button {
+      border: 1px solid var(--line);
+      background: var(--surface);
+      padding: 6px 8px;
+      font: 9px/1 var(--mono);
+    }
+
+    .events-card {
+      height: 320px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .observability-tabs {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .observability-tab {
+      min-height: 38px;
+      border: 0;
+      border-right: 1px solid var(--line);
+      background: var(--paper);
+      color: var(--muted);
+      font: 700 9px/1 var(--mono);
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .observability-tab:last-child { border-right: 0; }
+    .observability-tab.active { background: var(--surface); color: var(--ink); }
+    .observability-panel {
+      min-height: 0;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+    .observability-panel[hidden] { display: none; }
+    .observability-panel .pipeline { overflow: auto; }
+
+    .event-filters { display: flex; gap: 4px; }
+
+    .event-filter {
+      width: 22px;
+      height: 22px;
+      border: 1px solid var(--line);
+      border-radius: 50%;
+      background: var(--surface);
+      font-size: 9px;
+    }
+
+    .event-filter.active { background: var(--ink); color: white; border-color: var(--ink); }
+
+    #event-list { overflow: auto; }
+
+    .event {
+      display: grid;
+      grid-template-columns: 38px 1fr;
+      gap: 9px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      cursor: pointer;
+    }
+
+    .event:hover { background: var(--paper); }
+
+    .event-time {
+      color: var(--muted);
+      font: 9px/1.35 var(--mono);
+    }
+
+    .event-body { min-width: 0; }
+    .event-kind { margin-bottom: 4px; color: var(--plum); font: 700 8px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+    .event-message { font-size: 11px; line-height: 1.4; }
+
+    .empty {
+      padding: 26px 16px;
+      color: var(--muted);
+      text-align: center;
+      font: 10px/1.6 var(--mono);
+    }
+
+    .error-screen {
+      position: absolute;
+      inset: 0;
+      z-index: 10;
+      background: rgba(244, 241, 231, .92);
+      display: none;
+      place-items: center;
+      text-align: center;
+      padding: 30px;
+    }
+
+    .error-screen.visible { display: grid; }
+    .error-screen strong { display: block; margin-bottom: 7px; font: 600 25px var(--serif); }
+    .error-screen span { display: block; max-width: 400px; color: var(--muted); line-height: 1.5; }
+    .error-screen button { margin-top: 14px; padding: 8px 13px; border: 1px solid var(--ink); background: var(--acid); }
+
+    .tooltip {
+      position: fixed;
+      z-index: 30;
+      max-width: 220px;
+      padding: 7px 9px;
+      background: var(--ink);
+      color: white;
+      font: 9px/1.4 var(--mono);
+      pointer-events: none;
+      opacity: 0;
+      transform: translate(10px, 10px);
+      transition: opacity .1s;
+    }
+
+    .tooltip.visible { opacity: 1; }
+
+    .edit-copy-button {
+      height: 36px;
+      padding: 0 12px;
+      border: 1px solid var(--ink);
+      background: var(--acid);
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      font: 700 10px/1 var(--mono);
+      letter-spacing: .05em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .edit-copy-button:hover { box-shadow: 3px 3px 0 var(--ink); transform: translate(-1px, -1px); }
+
+    .copy-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      padding: 22px;
+      background: rgba(24, 34, 27, .72);
+      backdrop-filter: blur(8px);
+      display: none;
+    }
+
+    .copy-modal.open { display: grid; place-items: center; }
+
+    .copy-shell {
+      width: min(1120px, 100%);
+      height: min(820px, calc(100vh - 44px));
+      border: 1px solid var(--ink);
+      background: var(--paper);
+      box-shadow: 12px 12px 0 rgba(20, 31, 23, .35);
+      display: grid;
+      grid-template-columns: 220px minmax(0, 1fr);
+      grid-template-rows: auto 1fr auto;
+      overflow: hidden;
+    }
+
+    .copy-top {
+      grid-column: 1 / -1;
+      min-height: 72px;
+      padding: 13px 16px;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface);
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .copy-top h2 {
+      margin: 2px 0 0;
+      font: 600 25px/1 var(--serif);
+    }
+
+    .copy-top-copy { flex: 1; }
+
+    .copy-path {
+      margin-top: 6px;
+      color: var(--muted);
+      font: 9px/1.2 var(--mono);
+    }
+
+    .restart-badge {
+      padding: 7px 9px;
+      border: 1px solid var(--clay);
+      background: #fff1e8;
+      color: #834529;
+      font: 700 9px/1 var(--mono);
+      letter-spacing: .05em;
+      text-transform: uppercase;
+      display: none;
+    }
+
+    .restart-badge.visible { display: block; }
+
+    .copy-close {
+      width: 38px;
+      height: 38px;
+      border: 1px solid var(--line);
+      background: var(--paper);
+      font-size: 20px;
+    }
+
+    .copy-nav {
+      padding: 12px;
+      border-right: 1px solid var(--line);
+      background: var(--paper-deep);
+      overflow: auto;
+    }
+
+    .copy-nav-button {
+      width: 100%;
+      min-height: 42px;
+      padding: 8px 10px;
+      border: 0;
+      background: transparent;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      text-align: left;
+      font-weight: 650;
+    }
+
+    .copy-nav-button:hover { background: rgba(255, 253, 247, .7); }
+    .copy-nav-button.active { background: var(--moss); color: white; }
+    .copy-nav-button small { font: 9px/1 var(--mono); opacity: .65; }
+
+    .copy-main {
+      padding: 20px 22px 40px;
+      overflow: auto;
+      background:
+        linear-gradient(90deg, rgba(52, 90, 67, .025) 1px, transparent 1px),
+        var(--surface);
+      background-size: 28px 28px, auto;
+    }
+
+    .copy-section-head {
+      margin-bottom: 18px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .copy-section-head h3 { margin: 4px 0 5px; font: 600 30px/1 var(--serif); }
+    .copy-section-head p { margin: 0; color: var(--muted); line-height: 1.5; }
+
+    .copy-group {
+      margin: 0 0 16px;
+      padding: 15px;
+      border: 1px solid var(--line);
+      background: rgba(255, 253, 247, .94);
+    }
+
+    .copy-group-title {
+      margin: 0 0 12px;
+      color: var(--moss);
+      font: 700 10px/1 var(--mono);
+      letter-spacing: .1em;
+      text-transform: uppercase;
+    }
+
+    .copy-field { display: block; margin: 0 0 12px; }
+    .copy-field:last-child { margin-bottom: 0; }
+
+    .copy-field-label {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 6px;
+      font-weight: 700;
+      font-size: 11px;
+    }
+
+    .copy-field-label code { color: var(--muted); font: 8px/1 var(--mono); }
+
+    .copy-field input, .copy-field textarea, .copy-field select {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 0;
+      outline: 0;
+      background: white;
+      color: var(--ink);
+      padding: 10px 11px;
+      line-height: 1.45;
+      resize: vertical;
+    }
+
+    .copy-field textarea { min-height: 76px; }
+    .copy-field select { min-height: 42px; }
+    .copy-field input:focus, .copy-field textarea:focus, .copy-field select:focus {
+      border-color: var(--moss);
+      box-shadow: 0 0 0 3px rgba(52, 90, 67, .09);
+    }
+
+    .copy-footer {
+      grid-column: 1 / -1;
+      min-height: 66px;
+      padding: 11px 16px;
+      border-top: 1px solid var(--line);
+      background: var(--surface);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .copy-message {
+      flex: 1;
+      color: var(--muted);
+      font: 10px/1.4 var(--mono);
+    }
+
+    .copy-message.error { color: var(--danger); }
+    .copy-message.success { color: var(--moss); }
+
+    .copy-action {
+      min-height: 38px;
+      padding: 0 13px;
+      border: 1px solid var(--ink);
+      background: var(--surface);
+      font: 700 10px/1 var(--mono);
+      text-transform: uppercase;
+      letter-spacing: .05em;
+    }
+
+    .copy-action.primary { background: var(--acid); }
+    .copy-action:disabled { opacity: .4; cursor: default; }
+
+    .copy-loading {
+      min-height: 280px;
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+      font: 10px/1 var(--mono);
+    }
+
+    @media (max-width: 1180px) {
+      main { grid-template-columns: 220px minmax(480px, 1fr); }
+      .right-column { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; }
+      .events-card { height: auto; min-height: 360px; }
+    }
+
+    @media (max-width: 820px) {
+      header { position: static; flex-wrap: wrap; }
+      .brand { min-width: 0; flex: 1; }
+      .header-metrics { order: 3; flex-basis: 100%; }
+      .header-actions { min-width: 0; }
+      .clock-bar { flex-wrap: wrap; }
+      .clock-message { width: 100%; margin: 0; }
+      main { grid-template-columns: 1fr; }
+      .left-column { display: grid; grid-template-columns: 1fr 1fr; }
+      .search-wrap { grid-column: 1 / -1; }
+      .right-column { grid-column: auto; grid-template-columns: 1fr; }
+      .copy-shell { grid-template-columns: 160px minmax(0, 1fr); }
+    }
+
+    @media (max-width: 540px) {
+      .header-metrics { grid-template-columns: 1fr 1fr; }
+      .header-actions .status-pill { display: none; }
+      .left-column { display: flex; }
+      main { padding: 8px; }
+      .map-card { min-height: 450px; }
+      .card-head { align-items: flex-start; }
+      .edit-copy-button { width: 36px; padding: 0; justify-content: center; font-size: 0; }
+      .edit-copy-button span { font-size: 14px; }
+      .copy-modal { padding: 0; }
+      .copy-shell { width: 100%; height: 100vh; grid-template-columns: 1fr; grid-template-rows: auto auto 1fr auto; }
+      .copy-nav { border-right: 0; border-bottom: 1px solid var(--line); display: flex; gap: 4px; overflow-x: auto; }
+      .copy-nav-button { min-width: max-content; width: auto; }
+      .copy-main { padding: 16px 13px 32px; }
+      .copy-top { min-height: 64px; }
+      .restart-badge { display: none !important; }
+      .clock-bar { padding: 7px 8px; }
+      .clock-label { width: 100%; }
+      .clock-button { flex: 1; }
+      .clock-speed { flex: 1; }
+      .clock-speed select { flex: 1; min-width: 0; }
+      .garden-picker { width: 100%; }
+      .garden-picker select { flex: 1; min-width: 0; max-width: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div class="brand">
+        <div class="brand-mark">µ</div>
+        <div>
+          <div class="eyebrow">Backend observatory</div>
+          <h1>MUDGarden · Field Console</h1>
+        </div>
+      </div>
+
+      <div class="header-metrics">
+        <div class="metric"><strong id="metric-time">—</strong><span>World time</span></div>
+        <div class="metric"><strong id="metric-weather">—</strong><span>Conditions</span></div>
+        <div class="metric"><strong id="metric-entities">—</strong><span>Live records</span></div>
+      </div>
+
+      <div class="header-actions">
+        <div class="status-pill" id="status-pill">
+          <i class="status-dot"></i>
+          <span id="status-text">Connecting</span>
+        </div>
+        <button class="edit-copy-button" title="Open multiplayer session lab" onclick="location.href='/sessions'">
+          <span>⌘</span> Sessions
+        </button>
+        <button class="edit-copy-button" id="edit-copy" title="Edit game copy">
+          <span>✎</span> Edit copy
+        </button>
+        <button class="icon-button" id="auto-refresh" title="Toggle auto-refresh" aria-label="Toggle auto-refresh">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <path d="M8 7h11l2 3-2 3H8a4 4 0 0 1 0-8h1"/>
+            <circle cx="8" cy="10" r="2" fill="currentColor" stroke="none"/>
+          </svg>
+        </button>
+        <button class="icon-button" id="refresh" title="Refresh snapshot (R)" aria-label="Refresh snapshot">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <path d="M20 6v5h-5M4 18v-5h5"/>
+            <path d="M18.2 9A7 7 0 0 0 6.5 6.5L4 11M5.8 15A7 7 0 0 0 17.5 17.5L20 13"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <section class="clock-bar" aria-label="World clock controls">
+      <span class="clock-label">World clock</span>
+      <button class="clock-button primary" id="clock-toggle" disabled>Pause</button>
+      <button class="clock-button" id="clock-step" disabled>+1 hour</button>
+      <label class="clock-speed">
+        <span>Rate</span>
+        <select id="clock-speed" aria-label="Real seconds per world hour" disabled>
+          <option value="1">1 sec / hour</option>
+          <option value="2">2 sec / hour</option>
+          <option value="5">5 sec / hour</option>
+          <option value="10">10 sec / hour</option>
+          <option value="20">20 sec / hour</option>
+          <option value="30">30 sec / hour</option>
+          <option value="60">1 min / hour</option>
+          <option value="300">5 min / hour</option>
+          <option value="3600">1 hr / hour</option>
+        </select>
+      </label>
+      <span class="clock-message" id="clock-message">Loading clock controls…</span>
+    </section>
+
+    <main>
+      <aside class="column left-column">
+        <div class="search-wrap">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>
+          </svg>
+          <input id="search" type="search" placeholder="Find entity, ID, species…">
+          <span class="keycap">/</span>
+        </div>
+
+        <section class="card">
+          <div class="card-head"><span class="card-title">Entity lens</span></div>
+          <div class="section filter-list" id="entity-filters">
+            <button class="filter-button active" data-filter="all">
+              <span class="filter-icon">∴</span><span>Whole world</span><span class="count" id="count-all">—</span>
+            </button>
+            <button class="filter-button" data-filter="room">
+              <span class="filter-icon">◇</span><span>Rooms</span><span class="count" id="count-room">—</span>
+            </button>
+            <button class="filter-button" data-filter="garden">
+              <span class="filter-icon">▦</span><span>Gardens</span><span class="count" id="count-garden">—</span>
+            </button>
+            <button class="filter-button" data-filter="actor">
+              <span class="filter-icon">●</span><span>Residents</span><span class="count" id="count-actor">—</span>
+            </button>
+            <button class="filter-button" data-filter="plant">
+              <span class="filter-icon">↟</span><span>Plants</span><span class="count" id="count-plant">—</span>
+            </button>
+          </div>
+          <div class="card-head"><span class="card-title">Map layers</span></div>
+          <div class="section layer-list" id="layer-buttons">
+            <button class="layer-button active" data-layer="paths"><span>╱</span><span>Paths</span><i class="toggle"></i></button>
+            <button class="layer-button active" data-layer="actors"><span>●</span><span>Residents</span><i class="toggle"></i></button>
+            <button class="layer-button active" data-layer="plants"><span>↟</span><span>Plants</span><i class="toggle"></i></button>
+          </div>
+        </section>
+      </aside>
+
+      <section class="column center-column">
+        <div class="card map-card">
+          <div class="card-head">
+            <div>
+              <div class="card-title">World simulation</div>
+              <div class="card-note" id="map-subtitle">authoritative room graph</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px">
+              <div class="view-tabs">
+                <button class="view-tab active" data-view="topology">Rooms</button>
+                <button class="view-tab" data-view="gardens">Gardens</button>
+                <button class="view-tab" data-view="world">World grid</button>
+              </div>
+              <label class="garden-picker" id="garden-picker" hidden>
+                <span>Garden</span>
+                <select id="garden-select" aria-label="Garden to visualize"></select>
+              </label>
+              <div class="map-tools">
+                <button id="zoom-out" title="Zoom out">−</button>
+                <button id="zoom-reset" title="Reset zoom">⌾</button>
+                <button id="zoom-in" title="Zoom in">+</button>
+              </div>
+            </div>
+          </div>
+          <div class="map-stage">
+            <svg id="ecosystem-map" viewBox="0 0 1000 620" role="img" aria-label="Interactive ecosystem map"></svg>
+            <div class="graph-legend" id="graph-legend">
+              <span class="legend-key"><i class="legend-swatch actor"></i> resident</span>
+              <span class="legend-key"><i class="legend-swatch"></i> healthy life</span>
+            </div>
+            <div class="error-screen" id="error-screen">
+              <div>
+                <strong>The garden is out of view.</strong>
+                <span id="error-message">The snapshot endpoint did not answer.</span>
+                <button id="retry">Try again</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <section class="card schedule-card">
+          <div class="card-head">
+            <span class="card-title">Reactive schedule</span>
+            <span class="card-note">next Fold transitions</span>
+          </div>
+          <div class="schedule-strip" id="schedule-strip"></div>
+        </section>
+      </section>
+
+      <aside class="column right-column">
+        <section class="card inspector-card">
+          <div class="card-head">
+            <div>
+              <div class="card-title">Record inspector</div>
+              <div class="card-note" id="inspector-path">world://current</div>
+            </div>
+            <button class="copy-button" id="copy-json">Copy JSON</button>
+          </div>
+          <div class="inspector-tabs">
+            <button class="inspector-tab active" data-tab="summary">Summary</button>
+            <button class="inspector-tab" data-tab="json">Raw record</button>
+          </div>
+          <div id="inspector-content"></div>
+        </section>
+
+        <section class="card events-card">
+          <div class="observability-tabs" role="tablist" aria-label="Observability panels">
+            <button class="observability-tab active" id="events-tab" data-observability-tab="events" role="tab" aria-controls="events-panel" aria-selected="true">Event stream</button>
+            <button class="observability-tab" id="pipeline-tab" data-observability-tab="pipeline" role="tab" aria-controls="pipeline-panel" aria-selected="false">Data pipeline</button>
+          </div>
+          <section class="observability-panel" id="events-panel" role="tabpanel" aria-labelledby="events-tab">
+            <div class="card-head">
+              <div>
+                <div class="card-title">Event stream</div>
+                <div class="card-note" id="event-note">latest records</div>
+              </div>
+              <div class="event-filters">
+                <button class="event-filter active" data-events="all" title="All events">∴</button>
+                <button class="event-filter" data-events="agent" title="Agent action traces">A</button>
+                <button class="event-filter" data-events="plant" title="Plant events">P</button>
+                <button class="event-filter" data-events="world" title="World events">W</button>
+              </div>
+            </div>
+            <div id="event-list"></div>
+          </section>
+          <section class="observability-panel" id="pipeline-panel" role="tabpanel" aria-labelledby="pipeline-tab" hidden>
+            <div class="card-head">
+              <div>
+                <div class="card-title">Data pipeline</div>
+                <div class="card-note">Fold materialized views</div>
+              </div>
+            </div>
+            <div class="pipeline" id="pipeline"></div>
+          </section>
+        </section>
+      </aside>
+    </main>
+  </div>
+  <div class="copy-modal" id="copy-modal" aria-hidden="true">
+    <div class="copy-shell" role="dialog" aria-modal="true" aria-labelledby="copy-editor-title">
+      <div class="copy-top">
+        <div class="copy-top-copy">
+          <div class="eyebrow">Content configuration</div>
+          <h2 id="copy-editor-title">Edit world copy</h2>
+          <div class="copy-path" id="copy-path">Loading content…</div>
+        </div>
+        <div class="restart-badge" id="copy-restart-badge">Restart required</div>
+        <button class="copy-close" id="copy-close" aria-label="Close copy editor">×</button>
+      </div>
+      <nav class="copy-nav" id="copy-nav" aria-label="Copy sections"></nav>
+      <section class="copy-main" id="copy-main">
+        <div class="copy-loading">Loading copy configuration…</div>
+      </section>
+      <footer class="copy-footer">
+        <div class="copy-message" id="copy-message">Changes are validated before they are saved.</div>
+        <button class="copy-action" id="copy-discard">Close</button>
+        <button class="copy-action primary" id="copy-save" disabled>Save copy</button>
+      </footer>
+    </div>
+  </div>
+  <div class="tooltip" id="tooltip"></div>
+
+  <script>
+    const state = {
+      snapshot: null,
+      selected: null,
+      filter: "all",
+      layers: new Set(["paths", "actors", "plants"]),
+      view: "topology",
+      inspectorTab: "summary",
+      observabilityTab: "events",
+      eventFilter: "all",
+      search: "",
+      zoom: 1,
+      autoRefresh: true,
+      liveStream: null,
+      streamConnected: false,
+      refreshTimer: null,
+      lastError: null,
+      copyDocument: null,
+      copyOriginal: null,
+      copySection: "game",
+      copyDirty: false,
+      copySaving: false,
+      clockControl: null,
+      clockSaving: false,
+      gardenId: null,
+      profileContent: null
+    };
+
+    const $ = (selector, root = document) => root.querySelector(selector);
+    const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+    const esc = value => String(value ?? "")
+      .replaceAll("&", "&amp;").replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+    const enumWords = value => String(value ?? "—")
+      .replace(/([a-z])([A-Z])/g, "$1 $2").replaceAll("_", " ").toLowerCase();
+    const titleWords = value => enumWords(value).replace(/\b\w/g, letter => letter.toUpperCase());
+    const worldRegionLabel = room => {
+      const compact = String(room?.name || "")
+        .replace(/'s Garden Gate$/i, " gate")
+        .replace(/'s Garden$/i, " garden");
+      return compact.length > 12 ? `${compact.slice(0, 11)}…` : compact;
+    };
+    const idOf = entity => typeof entity?.id === "number" ? entity.id : Number(entity?.id ?? -1);
+    const now = () => state.snapshot?.clock?.now ?? 0;
+
+    function worldTime(value = now()) {
+      const day = Math.floor(value / 24) + 1;
+      const hour = value % 24;
+      return `D${day} · ${String(hour).padStart(2, "0")}:00`;
+    }
+
+    function wallTime(value) {
+      return new Date(Number(value)).toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit"
+      });
+    }
+
+    function queryMatches(...values) {
+      if (!state.search) return true;
+      const haystack = values.flat().filter(Boolean).join(" ").toLowerCase();
+      return haystack.includes(state.search.toLowerCase());
+    }
+
+    function selected(type, id) {
+      return state.selected?.type === type && state.selected?.id === Number(id);
+    }
+
+    function selectEntity(type, id) {
+      state.selected = type ? { type, id: Number(id) } : null;
+      if (type === "garden") state.gardenId = Number(id);
+      state.inspectorTab = "summary";
+      $$(".inspector-tab").forEach(button =>
+        button.classList.toggle("active", button.dataset.tab === "summary"));
+      renderGardenPicker();
+      renderMap();
+      renderInspector();
+    }
+
+    function entityRecord(selection = state.selected) {
+      if (!state.snapshot || !selection) return state.snapshot;
+      const plural = {
+        room: "rooms", actor: "actors", plant: "plants", garden: "gardens", event: "events",
+        world_cell: "world_cells", organism: "organisms", agent_action: "agent_actions"
+      }[selection.type];
+      return state.snapshot[plural]?.find(item => idOf(item) === selection.id) ?? state.snapshot;
+    }
+
+    function roomById(id) { return state.snapshot.rooms.find(room => idOf(room) === Number(id)); }
+    function actorById(id) { return state.snapshot.actors.find(actor => idOf(actor) === Number(id)); }
+    function gardenById(id) { return state.snapshot.gardens.find(garden => idOf(garden) === Number(id)); }
+    function plantById(id) { return state.snapshot.plants.find(plant => idOf(plant) === Number(id)); }
+    function worldCellById(id) { return state.snapshot.world_cells?.find(cell => idOf(cell) === Number(id)); }
+    function organismById(id) { return state.snapshot.organisms?.find(organism => idOf(organism) === Number(id)); }
+
+    function orderedGardens() {
+      return [...(state.snapshot?.gardens || [])].sort((left, right) => {
+        const leftOwner = actorById(left.owner_actor_id);
+        const rightOwner = actorById(right.owner_actor_id);
+        const leftAgent = Boolean(leftOwner?.agent);
+        const rightAgent = Boolean(rightOwner?.agent);
+        if (leftAgent !== rightAgent) return leftAgent ? -1 : 1;
+        if (leftAgent && rightAgent) return leftOwner.name.localeCompare(rightOwner.name);
+        return idOf(left) - idOf(right);
+      });
+    }
+
+    function gardenForView() {
+      const s = state.snapshot;
+      if (!s?.gardens.length) return null;
+      const contextualId = state.selected?.type === "garden" ? state.selected.id
+        : state.selected?.type === "plant" ? plantById(state.selected.id)?.garden_id
+        : state.selected?.type === "room" ? roomById(state.selected.id)?.garden_id
+        : state.selected?.type === "actor" ? actorById(state.selected.id)?.home_garden_id
+        : null;
+      const garden = gardenById(contextualId ?? state.gardenId) || orderedGardens()[0];
+      state.gardenId = idOf(garden);
+      return garden;
+    }
+
+    function gardenOwnerLabel(garden) {
+      return actorById(garden.owner_actor_id)?.name
+        || (garden.kind === "Common" ? "Shared tending" : `actor ${garden.owner_actor_id}`);
+    }
+
+    function configuredProfileForActor(actor) {
+      const entries = Object.entries(state.profileContent?.npcs || {});
+      const match = entries.find(([, profile]) =>
+        String(profile.name).toLowerCase() === String(actor.name).toLowerCase());
+      return match ? { id: match[0], ...match[1] } : null;
+    }
+
+    function applySnapshot(snapshot) {
+      if (
+        state.selected?.type === "agent_action"
+        && !(snapshot.agent_actions || []).some(action => idOf(action) === state.selected.id)
+      ) {
+        state.selected = null;
+      }
+      state.snapshot = snapshot;
+      state.lastError = null;
+      $("#error-screen").classList.remove("visible");
+      setStatus(true);
+      renderAll();
+    }
+
+    function applyClockControl(control) {
+      state.clockControl = control;
+      state.clockSaving = false;
+      const toggle = $("#clock-toggle");
+      const step = $("#clock-step");
+      const speed = $("#clock-speed");
+      toggle.disabled = false;
+      step.disabled = false;
+      speed.disabled = false;
+      toggle.textContent = control.paused ? "Resume" : "Pause";
+      toggle.setAttribute("aria-label", control.paused ? "Resume world clock" : "Pause world clock");
+      if (![...speed.options].some(option => Number(option.value) === Number(control.tick_seconds))) {
+        speed.add(new Option(`${control.tick_seconds} sec / hour`, control.tick_seconds));
+      }
+      speed.value = String(control.tick_seconds);
+      $("#clock-message").classList.remove("error");
+      $("#clock-message").textContent = control.paused
+        ? `Paused at ${worldTime()} · step remains available`
+        : `Running · one world hour every ${control.tick_seconds} second${control.tick_seconds === 1 ? "" : "s"}`;
+    }
+
+    async function refresh() {
+      const button = $("#refresh");
+      button.classList.add("refreshing");
+      try {
+        const [snapshotResponse, clockResponse] = await Promise.all([
+          fetch("/api/debug/snapshot", { cache: "no-store" }),
+          fetch("/api/debug/clock", { cache: "no-store" })
+        ]);
+        if (!snapshotResponse.ok) throw new Error(`${snapshotResponse.status} ${await snapshotResponse.text()}`);
+        if (!clockResponse.ok) throw new Error(`${clockResponse.status} ${await clockResponse.text()}`);
+        applySnapshot(await snapshotResponse.json());
+        applyClockControl(await clockResponse.json());
+      } catch (error) {
+        state.lastError = error;
+        setStatus(false);
+        $("#error-message").textContent = error.message || "The snapshot endpoint did not answer.";
+        $("#error-screen").classList.add("visible");
+      } finally {
+        button.classList.remove("refreshing");
+      }
+    }
+
+    async function loadProfileContent() {
+      try {
+        const response = await fetch("/api/debug/content", { cache: "no-store" });
+        const document = await response.json();
+        if (!response.ok) throw new Error(document.error || `HTTP ${response.status}`);
+        state.profileContent = document.content;
+        if (state.snapshot && state.selected?.type === "actor") renderInspector();
+      } catch {
+        state.profileContent = null;
+      }
+    }
+
+    async function updateClock(update) {
+      if (!state.clockControl || state.clockSaving) return;
+      state.clockSaving = true;
+      $("#clock-toggle").disabled = true;
+      $("#clock-step").disabled = true;
+      $("#clock-speed").disabled = true;
+      $("#clock-message").textContent = "Updating world clock…";
+      try {
+        const response = await fetch("/api/debug/clock", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(update)
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+        applyClockControl(result);
+      } catch (error) {
+        state.clockSaving = false;
+        $("#clock-toggle").disabled = false;
+        $("#clock-step").disabled = false;
+        $("#clock-speed").disabled = false;
+        $("#clock-message").classList.add("error");
+        $("#clock-message").textContent = error.message;
+      }
+    }
+
+    async function stepClock() {
+      if (!state.clockControl || state.clockSaving) return;
+      state.clockSaving = true;
+      $("#clock-step").disabled = true;
+      $("#clock-message").textContent = "Advancing one world hour…";
+      try {
+        const response = await fetch("/api/debug/clock/step", { method: "POST" });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+        applySnapshot(result.snapshot);
+        applyClockControl(result.clock);
+      } catch (error) {
+        state.clockSaving = false;
+        $("#clock-step").disabled = false;
+        $("#clock-message").classList.add("error");
+        $("#clock-message").textContent = error.message;
+      }
+    }
+
+    function setStatus(ok) {
+      $("#status-pill").classList.toggle("error", !ok);
+      if (!ok) {
+        $("#status-text").textContent = "Backend offline";
+      } else if (!state.autoRefresh) {
+        $("#status-text").textContent = "Live · paused";
+      } else if (state.streamConnected) {
+        $("#status-text").textContent = "Live · realtime";
+      } else if (state.refreshTimer) {
+        $("#status-text").textContent = "Live · fallback";
+      } else {
+        $("#status-text").textContent = "Live · connecting";
+      }
+    }
+
+    function renderAll() {
+      if (!state.snapshot) return;
+      renderHeader();
+      renderFilters();
+      renderPipeline();
+      renderGardenPicker();
+      renderMap();
+      renderSchedule();
+      renderInspector();
+      renderObservabilityTabs();
+      renderEvents();
+    }
+
+    function renderObservabilityTabs() {
+      $$(".observability-tab").forEach(button => {
+        const active = button.dataset.observabilityTab === state.observabilityTab;
+        button.classList.toggle("active", active);
+        button.setAttribute("aria-selected", String(active));
+      });
+      $("#events-panel").hidden = state.observabilityTab !== "events";
+      $("#pipeline-panel").hidden = state.observabilityTab !== "pipeline";
+    }
+
+    function renderHeader() {
+      const s = state.snapshot;
+      if (!s) return;
+      const worldCells = s.world_cells?.length || 0;
+      const organisms = s.organisms?.length || 0;
+      const total = s.actors.length + s.rooms.length + s.gardens.length + s.plants.length + s.events.length + worldCells + organisms + 2;
+      $("#metric-time").textContent = worldTime();
+      $("#metric-weather").textContent = `${titleWords(s.clock.weather)} · ${s.clock.temperature_c}°`;
+      $("#metric-entities").textContent = total.toLocaleString();
+      $("#count-room").textContent = s.rooms.length;
+      $("#count-garden").textContent = s.gardens.length;
+      $("#count-actor").textContent = s.actors.length;
+      $("#count-plant").textContent = s.plants.length;
+      $("#count-all").textContent = s.rooms.length + s.gardens.length + s.actors.length + s.plants.length;
+      const captured = new Date(Number(s.captured_at_unix_ms));
+      const scope = state.view === "world" ? "room-scale substrate"
+        : state.view === "gardens" ? "addressable 8×8 beds"
+        : "room graph";
+      $("#map-subtitle").textContent = `${scope} · ${captured.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
+    }
+
+    function renderGardenPicker() {
+      const picker = $("#garden-picker");
+      picker.hidden = state.view !== "gardens";
+      if (picker.hidden || !state.snapshot) return;
+      const garden = gardenForView();
+      $("#garden-select").innerHTML = orderedGardens().map(candidate => {
+        const owner = actorById(candidate.owner_actor_id);
+        const label = owner ? `${candidate.name} · ${owner.name}` : candidate.name;
+        return `<option value="${idOf(candidate)}">${esc(label)}</option>`;
+      }).join("");
+      if (garden) $("#garden-select").value = String(idOf(garden));
+    }
+
+    function renderFilters() {
+      $$(".filter-button").forEach(button =>
+        button.classList.toggle("active", button.dataset.filter === state.filter));
+      $$(".layer-button").forEach(button =>
+        button.classList.toggle("active", state.layers.has(button.dataset.layer)));
+    }
+
+    function renderPipeline() {
+      const s = state.snapshot;
+      const entityCount = s.actors.length + s.gardens.length + s.rooms.length + s.plants.length + s.events.length
+        + (s.world_cells?.length || 0) + (s.organisms?.length || 0) + 2;
+      const rows = [
+        ["Keyed source", `${entityCount} rows`, false],
+        ["Current tables", `${s.actors.length + s.gardens.length + s.rooms.length + s.plants.length}`, false],
+        ["Event ranking", `${s.events.length} shown`, true],
+        ["Plant schedule", `${s.views.plant_schedule.length} queued`, true],
+        ["Agent schedule", `${s.views.agent_schedule.length} queued`, true],
+        ["Ecology schedule", `${(s.views.cell_schedule?.length || 0) + (s.views.organism_schedule?.length || 0)} queued`, true]
+      ];
+      $("#pipeline").innerHTML = rows.map((row, index) => `
+        <div class="pipeline-row ${row[2] ? "derived" : ""}">
+          <span>${esc(row[0])}</span><span class="pipeline-value">${esc(row[1])}</span>
+        </div>${index < rows.length - 1 ? '<div class="pipeline-arrow"></div>' : ""}
+      `).join("");
+    }
+
+    function topologyLayout() {
+      const rooms = state.snapshot.rooms;
+      const base = {
+        Gate: [500, 380], CommonPath: [500, 255], Glasshouse: [500, 85],
+        MoonBed: [800, 245], Pond: [200, 245], Compost: [800, 80], WildEdge: [200, 80]
+      };
+      const positions = new Map();
+      const homes = [];
+      const gardenGates = new Map();
+      rooms.forEach(room => {
+        if (room.kind === "HomeGarden") homes.push(room);
+        else if (room.kind === "GardenGate") gardenGates.set(idOf(room), room);
+        else positions.set(idOf(room), base[room.kind] || [500, 310]);
+      });
+      homes.sort((a, b) => idOf(a) - idOf(b));
+      const assignedGates = new Set();
+      const columns = Math.min(5, Math.max(1, homes.length));
+      const columnGap = columns === 1 ? 0 : Math.min(200, 800 / (columns - 1));
+      const startX = 500 - columnGap * (columns - 1) / 2;
+      homes.forEach((room, index) => {
+        const row = Math.floor(index / columns);
+        const col = index % columns;
+        const x = startX + col * columnGap;
+        const gateId = Number(room.exits?.out);
+        positions.set(idOf(room), [x, 590 + row * 210]);
+        if (gardenGates.has(gateId)) {
+          positions.set(gateId, [x, 475 + row * 210]);
+          assignedGates.add(gateId);
+        }
+      });
+      [...gardenGates.values()]
+        .filter(room => !assignedGates.has(idOf(room)))
+        .forEach((room, index, unpaired) => {
+          const gap = unpaired.length === 1 ? 0 : Math.min(200, 800 / (unpaired.length - 1));
+          positions.set(idOf(room), [500 - gap * (unpaired.length - 1) / 2 + index * gap, 475]);
+        });
+      const rows = Math.max(1, Math.ceil(homes.length / columns));
+      return { positions, height: 650 + (rows - 1) * 210 };
+    }
+
+    function healthColor(plant) {
+      if (plant.health < 45 || plant.moisture < 20) return "#a54c43";
+      if (plant.health < 70 || plant.moisture < 35) return "#c49a38";
+      return "#477d59";
+    }
+
+    function renderMap() {
+      if (!state.snapshot) return;
+      const svg = $("#ecosystem-map");
+      const canvasHeight = state.view === "gardens" ? 620 : topologyLayout().height;
+      const width = 1000 / state.zoom;
+      const height = canvasHeight / state.zoom;
+      const offsetX = (1000 - width) / 2;
+      const offsetY = (canvasHeight - height) / 2;
+      svg.setAttribute("viewBox", `${offsetX} ${offsetY} ${width} ${height}`);
+      svg.innerHTML = state.view === "world" ? renderWorldGrid()
+        : state.view === "gardens" ? renderGardenBoard()
+        : renderTopology();
+      $("#graph-legend").innerHTML = state.view === "world"
+        ? '<span class="legend-key"><i class="legend-swatch"></i> room cell</span><span class="legend-key"><i class="legend-swatch actor"></i> residents</span><span class="legend-key">↟ plants</span>'
+        : state.view === "gardens"
+        ? '<span class="legend-key">s seed</span><span class="legend-key">+ sprout</span><span class="legend-key">g growing</span><span class="legend-key">* flowering</span><span class="legend-key">o fruiting</span><span class="legend-key">d dormant</span>'
+        : '<span class="legend-key"><i class="legend-swatch actor"></i> resident</span><span class="legend-key"><i class="legend-swatch"></i> plant</span>';
+      $$("[data-entity]", svg).forEach(node => {
+        node.addEventListener("click", event => {
+          event.stopPropagation();
+          selectEntity(node.dataset.type, node.dataset.id);
+        });
+        node.addEventListener("mousemove", showTooltip);
+        node.addEventListener("mouseleave", hideTooltip);
+      });
+      svg.onclick = () => selectEntity(null);
+    }
+
+    function renderGardenBoard() {
+      const garden = gardenForView();
+      if (!garden) {
+        return '<text class="garden-title" x="500" y="290" text-anchor="middle">No gardens are present.</text>';
+      }
+      const plants = state.snapshot.plants.filter(plant => Number(plant.garden_id) === idOf(garden));
+      const decorations = garden.decorations || [];
+      const owner = actorById(garden.owner_actor_id);
+      const caretaker = gardenOwnerLabel(garden);
+      const room = roomById(garden.room_id);
+      const residents = state.snapshot.actors.filter(actor => Number(actor.current_room_id) === Number(garden.room_id));
+      const plantsByPosition = new Map(plants.map(plant => [String(plant.position).toUpperCase(), plant]));
+      const decorationsByPosition = new Map(decorations.map(decoration => [String(decoration.position).toUpperCase(), decoration]));
+      const stageSymbols = {
+        Seed: "s", Sprout: "+", Growing: "g", Flowering: "*", Fruiting: "o", Dormant: "d"
+      };
+      const originX = 104, originY = 105, cell = 54, gap = 4;
+      const gardenMatches = queryMatches(garden.name, garden.kind, owner?.name, room?.name);
+      const plots = [];
+      for (let rank = 7; rank >= 0; rank -= 1) {
+        for (let file = 0; file < 8; file += 1) {
+          const coordinate = `${String.fromCharCode(65 + file)}${rank + 1}`;
+          const plant = plantsByPosition.get(coordinate);
+          const decoration = decorationsByPosition.get(coordinate);
+          const occupied = plant || decoration;
+          const x = originX + file * (cell + gap);
+          const y = originY + (7 - rank) * (cell + gap);
+          const matches = gardenMatches || queryMatches(
+            coordinate,
+            plant?.name,
+            plant?.species,
+            plant?.stage,
+            decoration?.name,
+            decoration?.description
+          );
+          const filterMatches = state.filter === "all" || state.filter === "garden" || state.filter === "room"
+            || (state.filter === "plant" && plant)
+            || (state.filter === "actor" && plant && actorById(plant.owner_actor_id));
+          const condition = plant?.health < 45 ? "struggling" : plant?.moisture < 35 ? "thirsty" : "";
+          const classes = [
+            "garden-plot",
+            occupied ? "occupied" : "",
+            plant ? "plant" : "",
+            decoration ? "decoration" : "",
+            condition,
+            selected("plant", idOf(plant)) ? "selected" : "",
+            matches && filterMatches ? "" : "dimmed"
+          ].filter(Boolean).join(" ");
+          const type = plant ? "plant" : decoration ? "garden" : "";
+          const entity = occupied ? `data-entity data-type="${type}" data-id="${plant ? idOf(plant) : idOf(garden)}"` : "";
+          const tooltip = plant
+            ? `${coordinate} · ${plant.name} · ${titleWords(plant.stage)} · H${plant.health} M${plant.moisture}`
+            : decoration
+            ? `${coordinate} · ${decoration.name} · decoration`
+            : `${coordinate} · open plot`;
+          const symbol = plant ? stageSymbols[plant.stage] || "?" : decoration?.symbol || "";
+          plots.push(`<g class="${classes}" ${entity} data-tip="${esc(tooltip)}">
+            <rect x="${x}" y="${y}" width="${cell}" height="${cell}" rx="3"/>
+            ${symbol ? `<text class="garden-plot-symbol" x="${x + cell / 2}" y="${y + 34}">${esc(symbol)}</text>` : ""}
+            <text class="garden-plot-coordinate" x="${x + 5}" y="${y + 11}">${coordinate}</text>
+          </g>`);
+        }
+      }
+      const axes = Array.from({ length: 8 }, (_, index) => {
+        const x = originX + index * (cell + gap) + cell / 2;
+        const y = originY + index * (cell + gap) + cell / 2 + 3;
+        return `<text class="garden-axis" x="${x}" y="${originY - 13}">${String.fromCharCode(65 + index)}</text>
+          <text class="garden-axis" x="${originX - 18}" y="${y}">${8 - index}</text>`;
+      }).join("");
+      const average = field => plants.length
+        ? Math.round(plants.reduce((sum, plant) => sum + Number(plant[field] || 0), 0) / plants.length)
+        : null;
+      const occupied = plants.length + decorations.length;
+      const stats = [
+        ["Occupied", `${occupied} / 64`],
+        ["Open plots", 64 - occupied],
+        ["Avg health", plants.length ? `${average("health")}%` : "—"],
+        ["Avg moisture", plants.length ? `${average("moisture")}%` : "—"]
+      ];
+      const residentNodes = residents.slice(0, 8).map((actor, index) => {
+        const x = 690 + (index % 4) * 52;
+        const y = 420 + Math.floor(index / 4) * 46;
+        return `<g class="garden-resident" data-entity data-type="actor" data-id="${idOf(actor)}" data-tip="${esc(`${actor.name} · ${titleWords(actor.kind)}`)}">
+          <circle cx="${x}" cy="${y}" r="16"/>
+          <text x="${x}" y="${y + 3}">${esc(actor.name.slice(0, 1).toUpperCase())}</text>
+        </g>`;
+      }).join("");
+      return `
+        <rect class="garden-frame" x="54" y="36" width="892" height="548" rx="7"/>
+        <text class="garden-title" x="82" y="72">${esc(garden.name)}</text>
+        <text class="garden-meta" x="82" y="91">${esc(titleWords(garden.kind))} · garden ${idOf(garden)} · ${esc(room?.name || `room ${garden.room_id}`)}</text>
+        ${axes}${plots.join("")}
+        <line class="garden-summary-rule" x1="628" y1="104" x2="628" y2="548"/>
+        <text class="garden-summary-label" x="664" y="128">Caretaker</text>
+        <text class="garden-summary-value" x="664" y="154">${esc(caretaker)}</text>
+        ${stats.map(([label, value], index) => {
+          const x = 664 + (index % 2) * 142;
+          const y = 216 + Math.floor(index / 2) * 82;
+          return `<text class="garden-summary-label" x="${x}" y="${y}">${esc(label)}</text>
+            <text class="garden-summary-value" x="${x}" y="${y + 27}">${esc(value)}</text>`;
+        }).join("")}
+        <line class="garden-summary-rule" x1="664" y1="365" x2="910" y2="365"/>
+        <text class="garden-summary-label" x="664" y="392">Residents present · ${residents.length}</text>
+        ${residentNodes || '<text class="garden-key" x="664" y="424">No residents are in this garden.</text>'}
+        <text class="garden-key" x="664" y="524">${plants.length} plant${plants.length === 1 ? "" : "s"} · ${decorations.length} decoration${decorations.length === 1 ? "" : "s"}</text>
+        <text class="garden-key" x="664" y="544">Select a plot to inspect its live record.</text>`;
+    }
+
+    function renderTopology() {
+      const s = state.snapshot;
+      const { positions: pos } = topologyLayout();
+      const edgeSet = new Set();
+      const edges = [];
+      s.rooms.forEach(room => Object.entries(room.exits || {}).forEach(([direction, target]) => {
+        const key = [idOf(room), Number(target)].sort((a, b) => a - b).join("-");
+        if (!edgeSet.has(key) && pos.has(Number(target))) {
+          edgeSet.add(key);
+          edges.push({ from: idOf(room), to: Number(target), direction });
+        }
+      }));
+      const selectedRoom = state.selected?.type === "room" ? state.selected.id
+        : state.selected?.type === "actor" ? actorById(state.selected.id)?.current_room_id
+        : state.selected?.type === "plant" ? plantById(state.selected.id)?.room_id : null;
+      const paths = state.layers.has("paths") ? edges.map(edge => {
+        const [x1, y1] = pos.get(edge.from), [x2, y2] = pos.get(edge.to);
+        const active = selectedRoom && (edge.from === Number(selectedRoom) || edge.to === Number(selectedRoom));
+        return `<g><line class="edge ${active ? "active" : ""}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/>
+          <text class="edge-label" x="${(x1 + x2) / 2}" y="${(y1 + y2) / 2 - 6}">${esc(edge.direction)}</text></g>`;
+      }).join("") : "";
+      const nodes = s.rooms.map(room => {
+        const [x, y] = pos.get(idOf(room));
+        const plants = s.plants.filter(plant => Number(plant.room_id) === idOf(room));
+        const actors = s.actors.filter(actor => Number(actor.current_room_id) === idOf(room));
+        const match = queryMatches(room.name, room.kind, idOf(room),
+          plants.map(plant => `${plant.name} ${plant.species}`), actors.map(actor => actor.name));
+        const filterMatch = state.filter === "all" || state.filter === "room"
+          || (state.filter === "garden" && room.garden_id != null)
+          || (state.filter === "plant" && plants.length) || (state.filter === "actor" && actors.length);
+        const plantDots = state.layers.has("plants") ? plants.slice(0, 12).map((plant, index) => {
+          const px = x - 49 + (index % 6) * 18;
+          const py = y + 38 + Math.floor(index / 6) * 16;
+          return `<circle class="plant-dot ${selected("plant", idOf(plant)) ? "selected" : ""}" data-entity data-type="plant" data-id="${idOf(plant)}"
+            data-tip="${esc(`${plant.name} · ${plant.stage} · H${plant.health} M${plant.moisture}`)}"
+            cx="${px}" cy="${py}" r="6" fill="${healthColor(plant)}"/>`;
+        }).join("") : "";
+        const actorDots = state.layers.has("actors") ? actors.slice(0, 6).map((actor, index) => {
+          const ax = x + 42 - index * 18, ay = y - 36;
+          return `<g data-entity data-type="actor" data-id="${idOf(actor)}" data-tip="${esc(`${actor.name} · ${titleWords(actor.kind)}`)}">
+            <circle class="actor-dot ${actor.kind === "Human" ? "human" : ""} ${selected("actor", idOf(actor)) ? "selected" : ""}" cx="${ax}" cy="${ay}" r="10"/>
+            <text class="actor-initial" x="${ax}" y="${ay + 3}">${esc(actor.name.slice(0, 1).toUpperCase())}</text>
+          </g>`;
+        }).join("") : "";
+        return `<g class="room-node ${selected("room", idOf(room)) ? "selected" : ""} ${match && filterMatch ? "" : "dimmed"}"
+          data-entity data-type="room" data-id="${idOf(room)}" data-tip="${esc(`${room.name} · room:${idOf(room)}`)}">
+          <rect class="room-shell" x="${x - 65}" y="${y - 34}" width="130" height="${plants.length ? 92 : 68}" rx="4"/>
+          <rect class="room-accent ${room.kind === "HomeGarden" ? "home" : ""}" x="${x - 65}" y="${y - 34}" width="6" height="${plants.length ? 92 : 68}"/>
+          <text class="room-title" x="${x - 49}" y="${y - 8}">${esc(room.name.length > 18 ? room.name.slice(0, 17) + "…" : room.name)}</text>
+          <text class="room-sub" x="${x - 49}" y="${y + 9}">${esc(enumWords(room.kind))} · ${actors.length} / ${plants.length}</text>
+          ${plantDots}${actorDots}
+        </g>`;
+      }).join("");
+      return `<defs><filter id="soft"><feDropShadow dx="0" dy="4" stdDeviation="4" flood-opacity=".12"/></filter></defs>${paths}${nodes}`;
+    }
+
+    function renderWorldGrid() {
+      const s = state.snapshot;
+      const cells = s.world_cells || [];
+      const { positions: pos } = topologyLayout();
+      const cellsByRoom = new Map();
+      cells.forEach(cell => {
+        const roomId = Number(cell.room_id);
+        if (!cellsByRoom.has(roomId)) cellsByRoom.set(roomId, []);
+        cellsByRoom.get(roomId).push(cell);
+      });
+      const selectedRoom = state.selected?.type === "room" ? state.selected.id
+        : state.selected?.type === "actor" ? actorById(state.selected.id)?.current_room_id
+        : state.selected?.type === "plant" ? plantById(state.selected.id)?.room_id
+        : state.selected?.type === "world_cell" ? worldCellById(state.selected.id)?.room_id
+        : state.selected?.type === "organism" ? worldCellById(organismById(state.selected.id)?.cell_id)?.room_id
+        : null;
+      const edgeSet = new Set();
+      const paths = state.layers.has("paths") ? s.rooms.flatMap(room =>
+        Object.values(room.exits || {}).flatMap(target => {
+          const key = [idOf(room), Number(target)].sort((a, b) => a - b).join("-");
+          if (edgeSet.has(key) || !pos.has(Number(target))) return [];
+          edgeSet.add(key);
+          const [x1, y1] = pos.get(idOf(room));
+          const [x2, y2] = pos.get(Number(target));
+          return [`<line class="edge" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/>`];
+        })
+      ).join("") : "";
+      const roomCells = s.rooms.map(room => {
+        const [x, y] = pos.get(idOf(room));
+        const substrate = cellsByRoom.get(idOf(room)) || [];
+        const actors = s.actors.filter(actor => Number(actor.current_room_id) === idOf(room));
+        const plants = s.plants.filter(plant => Number(plant.room_id) === idOf(room));
+        const average = field => substrate.length
+          ? substrate.reduce((sum, cell) => sum + Number(cell[field] || 0), 0) / substrate.length
+          : null;
+        const moisture = average("moisture");
+        const ph = average("ph_cent");
+        const matches = queryMatches(
+          room.name, room.kind, idOf(room),
+          actors.map(actor => actor.name),
+          plants.map(plant => `${plant.name} ${plant.species}`)
+        );
+        const filterMatch = state.filter === "all" || state.filter === "room"
+          || (state.filter === "garden" && room.garden_id != null)
+          || (state.filter === "actor" && actors.length)
+          || (state.filter === "plant" && plants.length);
+        const regionMatch = selectedRoom == null || idOf(room) === Number(selectedRoom);
+        const hue = moisture == null ? 95 : 190 - Math.min(100, moisture) * .95;
+        const lightness = moisture == null ? 88 : 77 - Math.min(100, moisture) * .3;
+        const moistureLabel = moisture == null ? "no substrate" : `${Math.round(moisture)}% moisture`;
+        const tooltip = [
+          room.name,
+          moistureLabel,
+          ph == null ? null : `pH ${(ph / 100).toFixed(2)}`,
+          `${actors.length} residents`,
+          `${plants.length} plants`
+        ].filter(Boolean).join(" · ");
+        const actorBadge = state.layers.has("actors") && actors.length
+          ? `<circle class="world-cell-badge" cx="${x - 42}" cy="${y - 32}" r="12"/><text class="world-cell-badge-text" x="${x - 42}" y="${y - 29}">${actors.length}</text>`
+          : "";
+        const plantBadge = state.layers.has("plants") && plants.length
+          ? `<circle class="world-cell-badge" cx="${x + 42}" cy="${y - 32}" r="12"/><text class="world-cell-badge-text" x="${x + 42}" y="${y - 29}">${plants.length}</text>`
+          : "";
+        return `<g class="world-room-cell ${selectedRoom === idOf(room) ? "selected" : ""} ${matches && filterMatch && regionMatch ? "" : "dimmed"}"
+          data-entity data-type="room" data-id="${idOf(room)}" data-tip="${esc(tooltip)}">
+          <rect class="world-cell-shell" x="${x - 62}" y="${y - 46}" width="124" height="92" rx="6" fill="hsl(${hue} 38% ${lightness}%)"/>
+          <text class="world-cell-title" x="${x}" y="${y - 5}">${esc(worldRegionLabel(room))}</text>
+          <text class="world-cell-sub" x="${x}" y="${y + 13}">${esc(moistureLabel)}</text>
+          ${actorBadge}${plantBadge}
+        </g>`;
+      }).join("");
+      return `${paths}${roomCells}`;
+    }
+
+    function renderSchedule() {
+      const entries = [
+        ...state.snapshot.views.plant_schedule.map(entry => ({ ...entry, type: "plant" })),
+        ...state.snapshot.views.agent_schedule.map(entry => ({ ...entry, type: "actor" })),
+        ...(state.snapshot.views.cell_schedule || []).map(entry => ({ ...entry, type: "world_cell" })),
+        ...(state.snapshot.views.organism_schedule || []).map(entry => ({ ...entry, type: "organism" }))
+      ].sort((a, b) => a.at - b.at).slice(0, 18);
+      $("#schedule-strip").innerHTML = `
+        <div class="schedule-now"><strong>${worldTime()}</strong><span>current cursor</span></div>
+        ${entries.length ? entries.map(entry => `
+          <button class="schedule-entry ${entry.type === "actor" ? "agent" : ""} ${entry.at < now() ? "overdue" : ""}"
+            data-type="${entry.type}" data-id="${entry.id}">
+            <strong>${esc(entry.label)}</strong>
+            <span>${entry.at < now() ? `${now() - entry.at}h overdue` : `in ${entry.at - now()}h`} · ${entry.type}</span>
+          </button>`).join("") : '<div class="empty">No scheduled transitions.</div>'}`;
+      $$(".schedule-entry").forEach(button =>
+        button.addEventListener("click", () => selectEntity(button.dataset.type, button.dataset.id)));
+    }
+
+    function renderInspector() {
+      if (!state.snapshot) return;
+      const record = entityRecord();
+      const path = state.selected ? `world://${state.selected.type}/${state.selected.id}` : "world://current";
+      $("#inspector-path").textContent = path;
+      if (state.inspectorTab === "json") {
+        $("#inspector-content").innerHTML = `<pre>${esc(JSON.stringify(record, null, 2))}</pre>`;
+        return;
+      }
+      if (!state.selected) return renderWorldInspector();
+      if (state.selected.type === "room") return renderRoomInspector(record);
+      if (state.selected.type === "garden") return renderGardenInspector(record);
+      if (state.selected.type === "actor") return renderActorInspector(record);
+      if (state.selected.type === "plant") return renderPlantInspector(record);
+      if (state.selected.type === "world_cell") return renderWorldCellInspector(record);
+      if (state.selected.type === "organism") return renderOrganismInspector(record);
+      if (state.selected.type === "event") return renderEventInspector(record);
+      if (state.selected.type === "agent_action") return renderAgentActionInspector(record);
+      $("#inspector-content").innerHTML = `<pre>${esc(JSON.stringify(record, null, 2))}</pre>`;
+    }
+
+    function renderWorldInspector() {
+      const s = state.snapshot;
+      const activeAgents = s.actors.filter(actor => actor.agent?.enabled).length;
+      $("#inspector-content").innerHTML = `
+        <div class="inspector-kicker">World root · live</div>
+        <h2 class="inspector-title">${esc(titleWords(s.clock.season))}, day ${Math.floor(s.clock.now / 24) + 1}</h2>
+        <p class="inspector-description">A read-only view of the current keyed source and every derived view used by the backend.</p>
+        <div class="detail-grid">
+          ${detail("Weather", titleWords(s.clock.weather))}
+          ${detail("Temperature", `${s.clock.temperature_c}°C`)}
+          ${detail("Residents", s.actors.length)}
+          ${detail("Active agents", activeAgents)}
+          ${detail("Gardens", s.gardens.length)}
+          ${detail("Plants", s.plants.length)}
+          ${detail("World cells", s.world_cells?.length || 0)}
+          ${detail("Organisms", s.organisms?.length || 0)}
+          ${detail("Latest event", s.events[0] ? `#${idOf(s.events[0])}` : "none")}
+        </div>
+        <div class="section-label">Storage cursors</div>
+        <div class="tag-list">
+          ${Object.entries(s.meta).map(([key, value]) => `<span class="tag">${esc(key)} · ${esc(value)}</span>`).join("")}
+        </div>`;
+    }
+
+    function inspectorGardenVisualization(garden) {
+      if (!garden) return "";
+      const plants = state.snapshot.plants.filter(plant => Number(plant.garden_id) === idOf(garden));
+      const decorations = garden.decorations || [];
+      const plantsByPosition = new Map(plants.map(plant => [String(plant.position).toUpperCase(), plant]));
+      const decorationsByPosition = new Map(decorations.map(decoration => [String(decoration.position).toUpperCase(), decoration]));
+      const symbols = { Seed: "s", Sprout: "+", Growing: "g", Flowering: "*", Fruiting: "o", Dormant: "d" };
+      const cells = ['<span class="inspector-garden-axis"></span>'];
+      for (let file = 0; file < 8; file += 1) {
+        cells.push(`<span class="inspector-garden-axis">${String.fromCharCode(65 + file)}</span>`);
+      }
+      for (let rank = 7; rank >= 0; rank -= 1) {
+        cells.push(`<span class="inspector-garden-axis">${rank + 1}</span>`);
+        for (let file = 0; file < 8; file += 1) {
+          const coordinate = `${String.fromCharCode(65 + file)}${rank + 1}`;
+          const plant = plantsByPosition.get(coordinate);
+          const decoration = decorationsByPosition.get(coordinate);
+          if (plant) {
+            const condition = plant.health < 45 ? "struggling" : plant.moisture < 35 ? "thirsty" : "";
+            cells.push(`<button class="inspector-garden-cell ${condition} ${selected("plant", idOf(plant)) ? "selected" : ""}"
+              data-type="plant" data-id="${idOf(plant)}"
+              title="${esc(`${coordinate} · ${plant.name} · ${titleWords(plant.stage)} · health ${plant.health} · moisture ${plant.moisture}`)}"
+              aria-label="${esc(`${coordinate}, ${plant.name}, ${titleWords(plant.stage)}`)}">${esc(symbols[plant.stage] || "?")}</button>`);
+          } else if (decoration) {
+            cells.push(`<button class="inspector-garden-cell decoration" data-type="garden" data-id="${idOf(garden)}"
+              title="${esc(`${coordinate} · ${decoration.name} · ${decoration.description}`)}"
+              aria-label="${esc(`${coordinate}, ${decoration.name}, decoration`)}">${esc(decoration.symbol)}</button>`);
+          } else {
+            cells.push(`<span class="inspector-garden-cell" title="${coordinate} · open plot">·</span>`);
+          }
+        }
+      }
+      const average = field => plants.length
+        ? Math.round(plants.reduce((sum, plant) => sum + Number(plant[field] || 0), 0) / plants.length)
+        : null;
+      return `<section class="inspector-garden">
+        <div class="inspector-garden-head">
+          <div><strong>${esc(garden.name)}</strong><span>${esc(titleWords(garden.kind))} · ${esc(gardenOwnerLabel(garden))}</span></div>
+          <button class="inspector-garden-open" data-open-garden="${idOf(garden)}">Open garden</button>
+        </div>
+        <div class="inspector-garden-grid">${cells.join("")}</div>
+        <div class="inspector-garden-stats">
+          <div class="inspector-garden-stat"><span>Occupied</span><strong>${plants.length + decorations.length} / 64</strong></div>
+          <div class="inspector-garden-stat"><span>Health</span><strong>${plants.length ? `${average("health")}%` : "—"}</strong></div>
+          <div class="inspector-garden-stat"><span>Moisture</span><strong>${plants.length ? `${average("moisture")}%` : "—"}</strong></div>
+        </div>
+      </section>`;
+    }
+
+    function actorNames(ids) {
+      return (ids || []).map(id => actorById(id)?.name || `actor ${id}`);
+    }
+
+    function renderRoomInspector(room) {
+      const actors = state.snapshot.actors.filter(actor => Number(actor.current_room_id) === idOf(room));
+      const plants = state.snapshot.plants.filter(plant => Number(plant.room_id) === idOf(room));
+      const worldCells = state.snapshot.world_cells.filter(cell => Number(cell.room_id) === idOf(room));
+      const cellIds = new Set(worldCells.map(cell => idOf(cell)));
+      const organisms = state.snapshot.organisms.filter(organism => cellIds.has(Number(organism.cell_id)));
+      const garden = room.garden_id != null ? gardenById(room.garden_id) : null;
+      $("#inspector-content").innerHTML = `
+        <div class="inspector-kicker">${esc(enumWords(room.kind))} · room ${idOf(room)}</div>
+        <h2 class="inspector-title">${esc(room.name)}</h2>
+        <p class="inspector-description">${esc(room.description)}</p>
+        <div class="detail-grid">
+          ${detail("Garden", garden ? garden.name : "none")}
+          ${detail("Occupancy", `${actors.length} residents`)}
+          ${detail("Plants", plants.length)}
+          ${detail("Simulated cells", worldCells.length)}
+          ${detail("Wild organisms", organisms.length)}
+          ${detail("Exits", Object.keys(room.exits || {}).length)}
+        </div>
+        ${garden ? `<div class="section-label">Garden beds</div>${inspectorGardenVisualization(garden)}` : ""}
+        <div class="section-label">Path edges</div>
+        <div>${Object.entries(room.exits || {}).map(([direction, id]) =>
+          entityLink("room", id, direction, roomById(id)?.name || `room ${id}`)).join("") || '<div class="empty">No physical exits.</div>'}</div>
+        ${actors.length ? `<div class="section-label">Present residents</div>${actors.map(actor =>
+          entityLink("actor", idOf(actor), actor.name, actor.agent
+            ? `${titleWords(actor.agent.strategy)} · ${actor.agent.goal}`
+            : titleWords(actor.kind))).join("")}` : ""}
+        ${plants.length ? `<div class="section-label">Plant records</div>${plants.map(plant =>
+          entityLink("plant", idOf(plant), `${plant.position} · ${plant.name}`, titleWords(plant.stage))).join("")}` : ""}`;
+      bindEntityLinks();
+    }
+
+    function renderGardenInspector(garden) {
+      const owner = actorById(garden.owner_actor_id);
+      const caretaker = gardenOwnerLabel(garden);
+      const room = roomById(garden.room_id);
+      const plants = state.snapshot.plants.filter(plant => Number(plant.garden_id) === idOf(garden));
+      const decorations = garden.decorations || [];
+      const residents = state.snapshot.actors.filter(actor => Number(actor.current_room_id) === Number(garden.room_id));
+      $("#inspector-content").innerHTML = `
+        <div class="inspector-kicker">${esc(enumWords(garden.kind))} · garden ${idOf(garden)}</div>
+        <h2 class="inspector-title">${esc(garden.name)}</h2>
+        <p class="inspector-description">An addressable 8×8 garden with ${64 - plants.length - decorations.length} open plots.</p>
+        <div class="detail-grid">
+          ${detail("Caretaker", caretaker)}
+          ${detail("Room", room?.name || garden.room_id)}
+          ${detail("Plants", plants.length)}
+          ${detail("Decorations", decorations.length)}
+          ${detail("Residents present", residents.length)}
+          ${detail("Open plots", 64 - plants.length - decorations.length)}
+        </div>
+        <div class="section-label">Garden beds</div>
+        ${inspectorGardenVisualization(garden)}
+        ${owner ? `<div class="section-label">Caretaker</div>${entityLink("actor", idOf(owner), owner.name, titleWords(owner.kind))}` : ""}
+        ${room ? `<div class="section-label">Physical room</div>${entityLink("room", idOf(room), room.name, titleWords(room.kind))}` : ""}
+        <div class="section-label">Access</div>
+        <div class="tag-list">
+          <span class="tag">tenders · ${esc(actorNames(garden.allowed_tenders).join(", ") || "owner only")}</span>
+          <span class="tag">harvesters · ${esc(actorNames(garden.allowed_harvesters).join(", ") || "owner only")}</span>
+        </div>
+        <div class="section-label">Plant records</div>
+        <div>${plants.sort((left, right) => String(left.position).localeCompare(String(right.position))).map(plant =>
+          entityLink("plant", idOf(plant), `${plant.position} · ${plant.name}`, `${titleWords(plant.stage)} · H${plant.health} M${plant.moisture}`)).join("")
+          || '<div class="empty">All 64 plots are open.</div>'}</div>
+        ${decorations.length ? `<div class="section-label">Decorations</div><div>${decorations.map(decoration =>
+          `<div class="entity-link"><span>${esc(decoration.position)} · ${esc(decoration.name)}</span><code>${esc(decoration.symbol)}</code></div>`).join("")}</div>` : ""}`;
+      bindEntityLinks();
+    }
+
+    function renderActorInspector(actor) {
+      const room = roomById(actor.current_room_id);
+      const home = gardenById(actor.home_garden_id);
+      const configured = configuredProfileForActor(actor);
+      const homePlants = home
+        ? state.snapshot.plants.filter(plant => Number(plant.garden_id) === idOf(home))
+        : [];
+      const homeDecorations = home?.decorations || [];
+      const agentActions = (state.snapshot.agent_actions || [])
+        .filter(action => Number(action.actor_id) === idOf(actor));
+      const wakeStatus = actor.agent
+        ? actor.agent.next_wake_at < now()
+          ? `${now() - actor.agent.next_wake_at}h overdue`
+          : `in ${actor.agent.next_wake_at - now()}h`
+        : null;
+      $("#inspector-content").innerHTML = `
+        <div class="inspector-kicker">${esc(enumWords(actor.kind))} · actor ${idOf(actor)}</div>
+        <h2 class="inspector-title">${esc(actor.name)}</h2>
+        <p class="inspector-description">${actor.agent ? esc(actor.agent.goal) : "Human-controlled gardener with a persistent SSH identity."}</p>
+        <div class="detail-grid">
+          ${detail("Actor ID", idOf(actor))}
+          ${detail("Kind", titleWords(actor.kind))}
+          ${detail("Current room", room?.name || actor.current_room_id)}
+          ${detail("Home", home?.name || actor.home_garden_id)}
+          ${detail("Inventory", `${actor.inventory.length} items`)}
+          ${detail("Last event", `#${actor.last_seen_event_id}`)}
+          ${actor.agent ? detail("Strategy", titleWords(actor.agent.strategy)) : ""}
+          ${actor.agent ? detail("Agent state", actor.agent.enabled ? "enabled" : "paused") : ""}
+          ${actor.agent ? detail("Next wake", `${worldTime(actor.agent.next_wake_at)} · ${wakeStatus}`) : ""}
+          ${actor.agent ? detail("Action budget", actor.agent.action_budget) : ""}
+        </div>
+        ${room ? `<div class="section-label">Current location</div>${entityLink("room", idOf(room), room.name, titleWords(room.kind))}` : ""}
+        <div class="section-label">Capabilities</div>
+        <div class="tag-list">${actor.capabilities.map(item => `<span class="tag">${esc(enumWords(item))}</span>`).join("") || '<span class="tag">none</span>'}</div>
+        ${actor.agent ? `<div class="section-label">Live agent profile</div>
+          <div class="profile-copy">${esc(actor.agent.goal)}</div>
+          <div class="tag-list">
+            <span class="tag">${esc(titleWords(actor.agent.strategy))}</span>
+            <span class="tag">${actor.agent.enabled ? "enabled" : "paused"}</span>
+            <span class="tag">budget · ${esc(actor.agent.action_budget)}</span>
+            <span class="tag">next wake · ${esc(worldTime(actor.agent.next_wake_at))}</span>
+          </div>` : ""}
+        ${configured ? `<div class="section-label">Configured persona · ${esc(configured.id)}</div>
+          <div class="profile-copy">${esc(configured.dialogue.persona)}</div>
+          <div class="profile-copy voice">${esc(configured.dialogue.voice)}</div>
+          <div class="tag-list">
+            <span class="tag">wake interval · ${esc(configured.wake_interval)}h</span>
+            <span class="tag">configured budget · ${esc(configured.action_budget)}</span>
+            <span class="tag">${esc(titleWords(configured.kind))}</span>
+          </div>
+          <div class="section-label">Interests</div>
+          <div class="tag-list">${configured.dialogue.interests.map(item => `<span class="tag">${esc(item)}</span>`).join("")}</div>
+          <div class="section-label">Boundaries</div>
+          <ul class="profile-list">${configured.dialogue.boundaries.map(item => `<li>${esc(item)}</li>`).join("")}</ul>
+          <div class="section-label">Example voice</div>
+          ${configured.dialogue.example_lines.map(line => `<p class="profile-line">“${esc(line)}”</p>`).join("")}` : actor.agent
+          ? '<div class="section-label">Configured persona</div><div class="empty">Profile copy is unavailable.</div>'
+          : ""}
+        ${home ? `<div class="section-label">Home garden</div>
+          ${inspectorGardenVisualization(home)}
+          <div class="tag-list">
+            <span class="tag">tenders · ${esc(actorNames(home.allowed_tenders).join(", ") || "owner only")}</span>
+            <span class="tag">harvesters · ${esc(actorNames(home.allowed_harvesters).join(", ") || "owner only")}</span>
+          </div>
+          <div class="section-label">Home plant records · ${homePlants.length}</div>
+          <div>${homePlants.sort((left, right) => String(left.position).localeCompare(String(right.position))).map(plant =>
+            entityLink("plant", idOf(plant), `${plant.position} · ${plant.name}`, `${titleWords(plant.stage)} · H${plant.health} M${plant.moisture}`)).join("")
+            || '<div class="empty">The home garden has no plants.</div>'}</div>
+          ${homeDecorations.length ? `<div class="section-label">Home decorations · ${homeDecorations.length}</div>
+            <div>${homeDecorations.map(decoration => `<div class="entity-link"><span>${esc(decoration.position)} · ${esc(decoration.name)}</span><code>${esc(decoration.symbol)}</code></div>`).join("")}</div>` : ""}` : ""}
+        ${actor.agent ? `<div class="section-label">Agent action history · ${agentActions.length}</div>
+          <div>${agentActions.map(action =>
+            entityLink(
+              "agent_action",
+              idOf(action),
+              action.final_command || action.error || "No action selected",
+              `${enumWords(action.status)} · ${wallTime(action.started_at_unix_ms)}`
+            )).join("") || '<div class="empty">No completed agent actions have been recorded during this backend run.</div>'}</div>` : ""}
+        <div class="section-label">Inventory · ${actor.inventory.length}</div>
+        <div>${actor.inventory.map(item => `<div class="entity-link"><span>${esc(item.species)} · ${esc(titleWords(item.kind))}</span><code>item ${idOf(item)}</code></div>`).join("") || '<div class="empty">Inventory is empty.</div>'}</div>`;
+      bindEntityLinks();
+    }
+
+    function renderPlantInspector(plant) {
+      const room = roomById(plant.room_id);
+      const owner = actorById(plant.owner_actor_id);
+      const garden = gardenById(plant.garden_id);
+      $("#inspector-content").innerHTML = `
+        <div class="inspector-kicker">${esc(enumWords(plant.stage))} · plant ${idOf(plant)}</div>
+        <h2 class="inspector-title">${esc(plant.name)}</h2>
+        <p class="inspector-description">${esc(plant.species)} at ${esc(plant.position)} in ${esc(room?.name || `room ${plant.room_id}`)}.</p>
+        <div class="detail-grid">
+          ${detail("Owner", owner?.name || plant.owner_actor_id)}
+          ${detail("Garden", garden?.name || plant.garden_id)}
+          ${detail("Planted", worldTime(plant.planted_at))}
+          ${detail("Next transition", plant.next_transition_at < now() ? "overdue" : `in ${plant.next_transition_at - now()}h`)}
+          ${detail("Position", plant.position)}
+        </div>
+        ${garden ? `<div class="section-label">Garden</div>${entityLink("garden", idOf(garden), garden.name, `${plant.position} · ${titleWords(garden.kind)}`)}` : ""}
+        <div class="section-label">Vitals</div>
+        ${meter("Health", plant.health)}${meter("Moisture", plant.moisture)}${meter("Nutrients", plant.nutrients)}${meter("Growth", plant.growth)}`;
+      bindEntityLinks();
+    }
+
+    function renderEventInspector(event) {
+      $("#inspector-content").innerHTML = `
+        <div class="inspector-kicker">${esc(enumWords(event.kind))} · event ${idOf(event)}</div>
+        <h2 class="inspector-title">${worldTime(event.at)}</h2>
+        <p class="inspector-description">${esc(event.message)}</p>
+        <div class="detail-grid">
+          ${detail("Actor", event.actor_id ?? "system")}
+          ${detail("Room", event.room_id ?? "global")}
+          ${detail("Plant", event.plant_id ?? "none")}
+          ${detail("Recipients", event.recipients.length)}
+        </div>`;
+    }
+
+    function renderAgentActionInspector(action) {
+      const queries = action.steps.filter(step => step.kind === "world_query").length;
+      const duration = action.completed_at_unix_ms
+        ? `${Math.max(0, Number(action.completed_at_unix_ms) - Number(action.started_at_unix_ms))} ms`
+        : "in progress";
+      const steps = action.steps.map((step, index) => `
+        <article class="trace-step ${esc(step.kind)}">
+          <div class="trace-step-head">
+            <strong>${index + 1}. ${esc(step.label)}</strong>
+            <span>${esc(enumWords(step.kind))}${step.response_id ? ` · ${esc(step.response_id)}` : ""}</span>
+          </div>
+          ${step.rationale ? `<p>${esc(step.rationale)}</p>` : ""}
+          ${step.command ? `<code>${esc(step.command)}</code>` : ""}
+          ${step.result ? `<code>${esc(step.result)}</code>` : ""}
+          ${step.input ? `<details class="trace-disclosure"><summary>Full model input</summary><pre>${esc(step.input)}</pre></details>` : ""}
+        </article>`).join("");
+      $("#inspector-content").innerHTML = `
+        <div class="inspector-kicker">Agent action ${idOf(action)} · ${esc(enumWords(action.status))}</div>
+        <h2 class="inspector-title">${esc(action.actor_name)}</h2>
+        <p class="inspector-description">${esc(action.final_intention || action.error || "The resident did not choose an action.")}</p>
+        <div class="detail-grid">
+          ${detail("Final command", action.final_command || "none")}
+          ${detail("Model", action.model)}
+          ${detail("Started", wallTime(action.started_at_unix_ms))}
+          ${detail("Duration", duration)}
+          ${detail("World queries", queries)}
+          ${detail("Response", action.response_id || "none")}
+        </div>
+        <div class="section-label">Decision trace</div>
+        <p class="inspector-description">Model-supplied rationales, live queries, tool results, and execution outcome. Private hidden reasoning is not exposed.</p>
+        ${steps || '<div class="empty">No trace steps were recorded.</div>'}
+        <div class="section-label">Exact supplied material</div>
+        <details class="trace-disclosure">
+          <summary>Full instructions</summary>
+          <pre>${esc(action.instructions)}</pre>
+        </details>
+        <details class="trace-disclosure">
+          <summary>Initial world context</summary>
+          <pre>${esc(JSON.stringify(action.context, null, 2))}</pre>
+        </details>`;
+    }
+
+    function renderWorldCellInspector(cell) {
+      const organisms = state.snapshot.organisms?.filter(organism => Number(organism.cell_id) === idOf(cell)) || [];
+      const room = roomById(cell.room_id);
+      $("#inspector-content").innerHTML = `
+        <div class="inspector-kicker">World cell ${idOf(cell)} · ${cell.x},${cell.y}</div>
+        <h2 class="inspector-title">${cell.moisture}% moisture</h2>
+        <p class="inspector-description">A reactive substrate cell in ${esc(room?.name || `room ${cell.room_id}`)} with ${organisms.length} resident organism${organisms.length === 1 ? "" : "s"}.</p>
+        <div class="detail-grid">
+          ${detail("Room", room?.name || cell.room_id)}
+          ${detail("Water table", `${signed(cell.water_table_mm)} mm`)}
+          ${detail("pH", (cell.ph_cent / 100).toFixed(2))}
+          ${detail("Temperature", `${cell.temperature_c}°C`)}
+          ${detail("Light", `${cell.light}%`)}
+          ${detail("Nutrients", `${cell.nutrients}%`)}
+          ${detail("Peat depth", `${cell.peat_depth_mm} mm`)}
+          ${detail("Shrub cover", `${cell.shrub_cover}%`)}
+          ${detail("Next transition", cell.next_transition_at < now() ? "overdue" : `in ${cell.next_transition_at - now()}h`)}
+        </div>
+        <div class="section-label">Resident organisms</div>
+        ${organisms.map(organism => entityLink("organism", idOf(organism), organism.species, `${enumWords(organism.stage)} · H${organism.health}`)).join("")
+          || '<div class="empty">This cell is unoccupied.</div>'}
+        ${room ? `<div class="section-label">Spatial region</div>${entityLink("room", idOf(room), room.name, enumWords(room.kind))}` : ""}`;
+      bindEntityLinks();
+    }
+
+    function renderOrganismInspector(organism) {
+      const cell = worldCellById(organism.cell_id);
+      const room = cell ? roomById(cell.room_id) : null;
+      const stressed = (state.snapshot.views.stressed_organism_ids || []).map(Number).includes(idOf(organism));
+      $("#inspector-content").innerHTML = `
+        <div class="inspector-kicker">${esc(enumWords(organism.stage))} · organism ${idOf(organism)}</div>
+        <h2 class="inspector-title">${esc(organism.species)}</h2>
+        <p class="inspector-description">${stressed ? "This organism is currently present in the stressed-organism materialized view." : "This organism is within the backend's current stress threshold."}</p>
+        <div class="detail-grid">
+          ${detail("Cell", cell ? `${cell.x},${cell.y}` : organism.cell_id)}
+          ${detail("Room", room?.name || "unknown")}
+          ${detail("Biomass", `${organism.biomass_g} g`)}
+          ${detail("Age", `${organism.age_days} days`)}
+          ${detail("Next transition", organism.next_transition_at < now() ? "overdue" : `in ${organism.next_transition_at - now()}h`)}
+        </div>
+        <div class="section-label">Condition</div>
+        ${meter("Health", organism.health)}
+        ${cell ? `<div class="section-label">Substrate</div>${entityLink("world_cell", idOf(cell), `cell ${cell.x},${cell.y}`, `moisture ${cell.moisture}%`)}` : ""}`;
+      bindEntityLinks();
+    }
+
+    function detail(label, value) {
+      return `<div class="detail"><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`;
+    }
+
+    function meter(label, value) {
+      const level = value < 35 ? "bad" : value < 60 ? "warn" : "";
+      return `<div class="meter-row"><span>${esc(label)}</span><div class="meter"><i class="${level}" style="width:${Math.max(0, Math.min(100, value))}%"></i></div><strong>${esc(value)}</strong></div>`;
+    }
+
+    function signed(value) { return value > 0 ? `+${value}` : String(value); }
+
+    function entityLink(type, id, label, note) {
+      return `<button class="entity-link" data-type="${type}" data-id="${Number(id)}"><span>${esc(label)}</span><code>${esc(note)}</code></button>`;
+    }
+
+    function bindEntityLinks() {
+      $$("[data-type][data-id]", $("#inspector-content")).forEach(button =>
+        button.addEventListener("click", () => selectEntity(button.dataset.type, button.dataset.id)));
+      $$("[data-open-garden]", $("#inspector-content")).forEach(button =>
+        button.addEventListener("click", () => {
+          state.view = "gardens";
+          state.gardenId = Number(button.dataset.openGarden);
+          $$(".view-tab").forEach(tab =>
+            tab.classList.toggle("active", tab.dataset.view === "gardens"));
+          selectEntity("garden", state.gardenId);
+          renderHeader();
+        }));
+    }
+
+    function renderEvents() {
+      const plantKinds = new Set(["Planting", "Watering", "Pruning", "Harvesting", "Growth", "Flowering"]);
+      const worldKinds = new Set(["Weather", "System", "Arrival", "Departure", "Permission"]);
+      if (state.eventFilter === "agent") {
+        const actions = (state.snapshot.agent_actions || []).filter(action =>
+          queryMatches(
+            action.actor_name,
+            action.status,
+            action.final_command,
+            action.final_intention,
+            action.error
+          ));
+        $("#event-note").textContent = `${actions.length} inspectable agent action${actions.length === 1 ? "" : "s"}`;
+        $("#event-list").innerHTML = actions.length ? actions.map(action => `
+          <article class="event" data-event-type="agent_action" data-id="${idOf(action)}">
+            <div class="event-time">${esc(wallTime(action.started_at_unix_ms))}</div>
+            <div class="event-body">
+              <div class="event-kind">${esc(action.actor_name)} · ${esc(enumWords(action.status))} · #${idOf(action)}</div>
+              <div class="event-message">${esc(action.final_command || action.error || "No action selected")}</div>
+            </div>
+          </article>`).join("") : '<div class="empty">No agent action traces match this lens.</div>';
+        $$(".event[data-event-type]").forEach(node =>
+          node.addEventListener("click", () => selectEntity(node.dataset.eventType, node.dataset.id)));
+        return;
+      }
+      const events = state.snapshot.events.filter(event => {
+        if (state.eventFilter === "plant") return plantKinds.has(event.kind);
+        if (state.eventFilter === "world") return worldKinds.has(event.kind);
+        return true;
+      }).filter(event => queryMatches(event.message, event.kind, idOf(event)));
+      $("#event-note").textContent = `${events.length} of ${state.snapshot.events.length} records`;
+      $("#event-list").innerHTML = events.length ? events.slice(0, 80).map(event => `
+        <article class="event" data-event-type="event" data-id="${idOf(event)}">
+          <div class="event-time">${worldTime(event.at).split(" · ").map(esc).join("<br>")}</div>
+          <div class="event-body">
+            <div class="event-kind">${esc(enumWords(event.kind))} · #${idOf(event)}</div>
+            <div class="event-message">${esc(event.message)}</div>
+          </div>
+        </article>`).join("") : '<div class="empty">No events match this lens.</div>';
+      $$(".event[data-event-type]").forEach(node =>
+        node.addEventListener("click", () => selectEntity(node.dataset.eventType, node.dataset.id)));
+    }
+
+    const copySections = [
+      { id: "game", label: "Game identity", note: "title, banner, board" },
+      { id: "rooms", label: "Places", note: "rooms and gardens" },
+      { id: "homes", label: "Home gardens", note: "owner descriptions" },
+      { id: "residents", label: "Residents", note: "goals and voices" },
+      { id: "merchant", label: "Garden shop", note: "merchant and decorations" },
+      { id: "interface", label: "Interface text", note: "commands and events" },
+      { id: "dialogue", label: "Dialogue policy", note: "shared model copy" }
+    ];
+
+    function copyPathToken(path) {
+      return encodeURIComponent(JSON.stringify(path));
+    }
+
+    function copyField(label, path, value, options = {}) {
+      const isList = options.list === true;
+      const rendered = isList ? (value || []).join("\n") : String(value ?? "");
+      const rows = options.rows || (rendered.length > 90 || rendered.includes("\n") ? 3 : 1);
+      const control = options.type === "number"
+        ? `<input type="number" value="${esc(rendered)}" min="${esc(options.min ?? 0)}" max="${esc(options.max ?? "")}" step="${esc(options.step ?? 1)}" data-copy-path="${copyPathToken(path)}" data-copy-number="true">`
+        : rows > 1
+        ? `<textarea rows="${rows}" data-copy-path="${copyPathToken(path)}" data-copy-list="${isList}">${esc(rendered)}</textarea>`
+        : `<input type="text" value="${esc(rendered)}" data-copy-path="${copyPathToken(path)}" data-copy-list="${isList}">`;
+      return `<label class="copy-field">
+        <span class="copy-field-label"><span>${esc(label)}</span><code>${esc(options.hint || path.join("."))}</code></span>
+        ${control}
+      </label>`;
+    }
+
+    function copySelect(label, path, value, options) {
+      return `<label class="copy-field">
+        <span class="copy-field-label"><span>${esc(label)}</span><code>${esc(path.join("."))}</code></span>
+        <select data-copy-path="${copyPathToken(path)}">
+          ${options.map(option => `<option value="${esc(option)}" ${option === value ? "selected" : ""}>${esc(titleWords(option))}</option>`).join("")}
+        </select>
+      </label>`;
+    }
+
+    function copyGroup(title, fields) {
+      return `<section class="copy-group"><h4 class="copy-group-title">${esc(title)}</h4>${fields}</section>`;
+    }
+
+    function setCopyValue(path, value) {
+      let target = state.copyDocument.content;
+      for (let index = 0; index < path.length - 1; index++) target = target[path[index]];
+      target[path[path.length - 1]] = value;
+      state.copyDirty = JSON.stringify(state.copyDocument.content) !== state.copyOriginal;
+      $("#copy-save").disabled = !state.copyDirty || state.copySaving;
+      $("#copy-discard").textContent = state.copyDirty ? "Discard & close" : "Close";
+      setCopyMessage(state.copyDirty ? "Unsaved copy changes." : "Changes are validated before they are saved.");
+    }
+
+    function setCopyMessage(message, kind = "") {
+      const node = $("#copy-message");
+      node.textContent = message;
+      node.className = `copy-message ${kind}`.trim();
+    }
+
+    function renderCopyNav() {
+      const content = state.copyDocument.content;
+      const counts = {
+        game: 8,
+        rooms: content.world.rooms.length + content.world.gardens.length,
+        homes: Object.keys(content.world.home_descriptions).length,
+        residents: Object.keys(content.npcs).length,
+        merchant: content.merchant.catalog.length + 2,
+        interface: Object.keys(content.text).length + content.command_help.length,
+        dialogue: content.dialogue.shared_rules.length + 4
+      };
+      $("#copy-nav").innerHTML = copySections.map(section => `
+        <button class="copy-nav-button ${state.copySection === section.id ? "active" : ""}" data-copy-section="${section.id}">
+          <span>${esc(section.label)}</span><small>${counts[section.id]}</small>
+        </button>`).join("");
+      $$(".copy-nav-button").forEach(button => button.addEventListener("click", () => {
+        state.copySection = button.dataset.copySection;
+        renderCopyNav();
+        renderCopyFields();
+      }));
+    }
+
+    function renderCopyFields() {
+      const content = state.copyDocument.content;
+      const section = copySections.find(candidate => candidate.id === state.copySection);
+      let groups = "";
+      if (state.copySection === "game") {
+        groups += copyGroup("Identity",
+          copyField("Title", ["game", "title"], content.game.title) +
+          copyField("Tagline", ["game", "tagline"], content.game.tagline, { rows: 2 }) +
+          copyField("Local introduction", ["game", "local_intro"], content.game.local_intro, { rows: 2 }));
+        groups += copyGroup("Opening banner",
+          copyField("Banner lines", ["game", "opening_banner"], content.game.opening_banner, {
+            list: true, rows: 12, hint: "exactly 20 lines"
+          }));
+        groups += copyGroup("Garden vocabulary",
+          copyField("Board header", ["world", "board_header"], content.world.board_header) +
+          copyField("Board border", ["world", "board_border"], content.world.board_border) +
+          copyField("Board legend", ["world", "board_legend"], content.world.board_legend, { rows: 2 }));
+      } else if (state.copySection === "rooms") {
+        groups += content.world.rooms.map((room, index) => copyGroup(titleWords(room.kind),
+          copyField("Room name", ["world", "rooms", index, "name"], room.name) +
+          copyField("Description", ["world", "rooms", index, "description"], room.description, { rows: 3 })
+        )).join("");
+        groups += copyGroup("Garden names", content.world.gardens.map((garden, index) =>
+          copyField(titleWords(garden.room), ["world", "gardens", index, "name"], garden.name)
+        ).join(""));
+      } else if (state.copySection === "homes") {
+        groups += copyGroup("Home descriptions", Object.entries(content.world.home_descriptions).map(([kind, description]) =>
+          copyField(titleWords(kind), ["world", "home_descriptions", kind], description, { rows: 3 })
+        ).join(""));
+      } else if (state.copySection === "residents") {
+        groups += Object.entries(content.npcs).map(([npcId, npc]) => copyGroup(`${npc.name} · ${npcId}`,
+          `<div class="copy-field"><label>Display name</label><code>npcs.${esc(npcId)}.name · read-only identity</code><div>${esc(npc.name)}</div></div>` +
+          copySelect("Actor kind", ["npcs", npcId, "kind"], npc.kind, ["GardenerAgent", "Helper", "Spirit", "God"]) +
+          copySelect("Agent strategy", ["npcs", npcId, "strategy"], npc.strategy, ["Gardener", "Helper", "Spirit", "WeatherGod"]) +
+          copyField("Persistent goal", ["npcs", npcId, "goal"], npc.goal, { rows: 2 }) +
+          copyField("Wake interval (world hours)", ["npcs", npcId, "wake_interval"], npc.wake_interval, { type: "number", min: 1, max: 720 }) +
+          copyField("Action budget", ["npcs", npcId, "action_budget"], npc.action_budget, { type: "number", min: 0, max: 100 }) +
+          copyField("Persona", ["npcs", npcId, "dialogue", "persona"], npc.dialogue.persona, { rows: 3 }) +
+          copyField("Voice", ["npcs", npcId, "dialogue", "voice"], npc.dialogue.voice, { rows: 3 }) +
+          copyField("Interests", ["npcs", npcId, "dialogue", "interests"], npc.dialogue.interests, { list: true, rows: 4, hint: "one per line" }) +
+          copyField("Boundaries", ["npcs", npcId, "dialogue", "boundaries"], npc.dialogue.boundaries, { list: true, rows: 4, hint: "one per line" }) +
+          copyField("Example lines", ["npcs", npcId, "dialogue", "example_lines"], npc.dialogue.example_lines, { list: true, rows: 5, hint: "one per line" })
+        )).join("");
+      } else if (state.copySection === "merchant") {
+        groups += copyGroup("Merchant",
+          `<div class="copy-field"><label>Display name</label><code>merchant.name · read-only identity</code><div>${esc(content.merchant.name)}</div></div>` +
+          copySelect("Shop location", ["merchant", "room"], content.merchant.room,
+            ["Gate", "CommonPath", "Glasshouse", "MoonBed", "Pond", "Compost", "WildEdge"]) +
+          copyField("Greeting", ["merchant", "greeting"], content.merchant.greeting, { rows: 3 }));
+        groups += content.merchant.catalog.map((decoration, index) => copyGroup(decoration.name,
+          copyField("Name", ["merchant", "catalog", index, "name"], decoration.name) +
+          copyField("Description", ["merchant", "catalog", index, "description"], decoration.description, { rows: 3 }) +
+          copyField("Board symbol", ["merchant", "catalog", index, "symbol"], decoration.symbol, { hint: "one visible character" }) +
+          copyField("Fruit cost", ["merchant", "catalog", index, "fruit_cost"], decoration.fruit_cost, { type: "number", min: 1, max: 99 })
+        )).join("");
+      } else if (state.copySection === "interface") {
+        groups += copyGroup("Player command help",
+          copyField("Help lines", ["command_help"], content.command_help, { list: true, rows: 14, hint: "one per line" }) +
+          copyField("Resident command forms", ["resident_commands"], content.resident_commands, { list: true, rows: 10, hint: "one per line" }));
+        groups += copyGroup("Interface, output, and event strings", Object.entries(content.text).sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) =>
+          copyField(key, ["text", key], value, { rows: value.length > 70 ? 3 : 2, hint: key })
+        ).join(""));
+      } else if (state.copySection === "dialogue") {
+        groups += copyGroup("Resident instructions",
+          copyField("Instruction template", ["dialogue", "instruction_template"], content.dialogue.instruction_template, { rows: 14 }) +
+          copyField("Shared rules", ["dialogue", "shared_rules"], content.dialogue.shared_rules, { list: true, rows: 9, hint: "one per line" }));
+        groups += copyGroup("Model tool copy",
+          copyField("Tool description", ["dialogue", "tool_description"], content.dialogue.tool_description, { rows: 3 }) +
+          copyField("Command field", ["dialogue", "command_description"], content.dialogue.command_description, { rows: 3 }) +
+          copyField("Intention field", ["dialogue", "intention_description"], content.dialogue.intention_description, { rows: 3 }));
+      }
+      const description = state.copySection === "residents"
+        ? "Edit each resident's runtime definition and model-facing voice. Stable IDs remain fixed."
+        : state.copySection === "merchant"
+        ? "Edit Sorrel's stall, decoration catalog, and fruit prices."
+        : "Edit the exact language used by the world, residents, and command interface.";
+      $("#copy-main").innerHTML = `
+        <div class="copy-section-head">
+          <div class="eyebrow">${esc(section.note)}</div>
+          <h3>${esc(section.label)}</h3>
+          <p>${esc(description)}</p>
+        </div>${groups}`;
+      $$("[data-copy-path]", $("#copy-main")).forEach(control => control.addEventListener("input", event => {
+        const path = JSON.parse(decodeURIComponent(event.currentTarget.dataset.copyPath));
+        const value = event.currentTarget.dataset.copyNumber === "true"
+          ? Number(event.currentTarget.value)
+          : event.currentTarget.dataset.copyList === "true"
+          ? event.currentTarget.value.replaceAll("\r", "").split("\n")
+          : event.currentTarget.value;
+        setCopyValue(path, value);
+      }));
+      $("#copy-main").scrollTop = 0;
+    }
+
+    async function openCopyEditor() {
+      const modal = $("#copy-modal");
+      modal.classList.add("open");
+      modal.setAttribute("aria-hidden", "false");
+      document.body.style.overflow = "hidden";
+      $("#copy-main").innerHTML = '<div class="copy-loading">Loading copy configuration…</div>';
+      $("#copy-save").disabled = true;
+      setCopyMessage("Loading content configuration…");
+      try {
+        const response = await fetch("/api/debug/content", { cache: "no-store" });
+        const document = await response.json();
+        if (!response.ok) throw new Error(document.error || `HTTP ${response.status}`);
+        state.copyDocument = document;
+        state.copyOriginal = JSON.stringify(document.content);
+        state.copyDirty = false;
+        state.copySection = "game";
+        $("#copy-path").textContent = `Saves to ${document.path}`;
+        $("#copy-restart-badge").classList.toggle("visible", document.restart_required);
+        $("#copy-discard").textContent = "Close";
+        setCopyMessage(document.restart_required
+          ? "Saved copy is waiting for a backend restart."
+          : "Changes are validated before they are saved.");
+        renderCopyNav();
+        renderCopyFields();
+      } catch (error) {
+        state.copyDocument = null;
+        $("#copy-main").innerHTML = `<div class="copy-loading">${esc(error.message)}</div>`;
+        setCopyMessage("Could not load editable copy.", "error");
+      }
+    }
+
+    function closeCopyEditor() {
+      $("#copy-modal").classList.remove("open");
+      $("#copy-modal").setAttribute("aria-hidden", "true");
+      document.body.style.overflow = "";
+      state.copyDocument = null;
+      state.copyDirty = false;
+    }
+
+    async function saveCopy() {
+      if (!state.copyDocument || !state.copyDirty || state.copySaving) return;
+      state.copySaving = true;
+      $("#copy-save").disabled = true;
+      $("#copy-save").textContent = "Saving…";
+      setCopyMessage("Validating and saving copy…");
+      try {
+        const response = await fetch("/api/debug/content", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content: state.copyDocument.content })
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+        state.copyOriginal = JSON.stringify(state.copyDocument.content);
+        state.copyDirty = false;
+        state.copyDocument.restart_required = true;
+        state.profileContent = structuredClone(state.copyDocument.content);
+        $("#copy-restart-badge").classList.add("visible");
+        $("#copy-discard").textContent = "Close";
+        setCopyMessage("Saved. Restart MUDGarden to apply this copy to the live world.", "success");
+      } catch (error) {
+        setCopyMessage(error.message, "error");
+      } finally {
+        state.copySaving = false;
+        $("#copy-save").textContent = "Save copy";
+        $("#copy-save").disabled = !state.copyDirty;
+      }
+    }
+
+    function showTooltip(event) {
+      const tooltip = $("#tooltip");
+      tooltip.textContent = event.currentTarget.dataset.tip || "";
+      tooltip.style.left = `${event.clientX}px`;
+      tooltip.style.top = `${event.clientY}px`;
+      tooltip.classList.add("visible");
+    }
+
+    function hideTooltip() { $("#tooltip").classList.remove("visible"); }
+
+    function stopFallbackRefresh() {
+      clearInterval(state.refreshTimer);
+      state.refreshTimer = null;
+    }
+
+    function startFallbackRefresh() {
+      if (!state.autoRefresh || state.refreshTimer) return;
+      refresh();
+      state.refreshTimer = setInterval(refresh, 3000);
+    }
+
+    function connectLiveStream() {
+      if (!state.autoRefresh || state.liveStream) return;
+      const stream = new EventSource("/api/debug/stream");
+      state.liveStream = stream;
+      stream.onopen = () => {
+        if (state.liveStream !== stream) return;
+        state.streamConnected = true;
+        stopFallbackRefresh();
+        setStatus(Boolean(state.snapshot));
+      };
+      stream.addEventListener("snapshot", event => {
+        if (state.liveStream !== stream) return;
+        try {
+          const payload = JSON.parse(event.data);
+          state.streamConnected = true;
+          stopFallbackRefresh();
+          applySnapshot(payload.snapshot);
+          applyClockControl(payload.clock);
+        } catch (error) {
+          state.lastError = error;
+          startFallbackRefresh();
+        }
+      });
+      stream.addEventListener("snapshot-error", event => {
+        if (state.liveStream !== stream) return;
+        state.lastError = new Error(event.data || "The snapshot stream failed.");
+        startFallbackRefresh();
+      });
+      stream.onerror = () => {
+        if (state.liveStream !== stream) return;
+        state.streamConnected = false;
+        startFallbackRefresh();
+        setStatus(Boolean(state.snapshot));
+      };
+    }
+
+    function setAutoRefresh(enabled) {
+      state.autoRefresh = enabled;
+      $("#auto-refresh").style.background = enabled ? "var(--acid)" : "var(--surface)";
+      stopFallbackRefresh();
+      state.liveStream?.close();
+      state.liveStream = null;
+      state.streamConnected = false;
+      if (enabled) connectLiveStream();
+      setStatus(!state.lastError);
+    }
+
+    $("#refresh").addEventListener("click", refresh);
+    $("#retry").addEventListener("click", refresh);
+    $("#clock-toggle").addEventListener("click", () =>
+      updateClock({ paused: !state.clockControl.paused }));
+    $("#clock-step").addEventListener("click", stepClock);
+    $("#clock-speed").addEventListener("change", event =>
+      updateClock({ tick_seconds: Number(event.currentTarget.value) }));
+    $("#edit-copy").addEventListener("click", openCopyEditor);
+    $("#copy-close").addEventListener("click", closeCopyEditor);
+    $("#copy-discard").addEventListener("click", closeCopyEditor);
+    $("#copy-save").addEventListener("click", saveCopy);
+    $("#copy-modal").addEventListener("click", event => {
+      if (event.target === event.currentTarget) closeCopyEditor();
+    });
+    $("#auto-refresh").addEventListener("click", () => setAutoRefresh(!state.autoRefresh));
+    $("#search").addEventListener("input", event => {
+      state.search = event.target.value.trim();
+      renderMap();
+      renderEvents();
+    });
+    $$(".filter-button").forEach(button => button.addEventListener("click", () => {
+      state.filter = button.dataset.filter;
+      renderFilters();
+      renderMap();
+    }));
+    $$(".layer-button").forEach(button => button.addEventListener("click", () => {
+      const layer = button.dataset.layer;
+      state.layers.has(layer) ? state.layers.delete(layer) : state.layers.add(layer);
+      renderFilters();
+      renderMap();
+    }));
+    $$(".view-tab").forEach(button => button.addEventListener("click", () => {
+      state.view = button.dataset.view;
+      $$(".view-tab").forEach(item => item.classList.toggle("active", item === button));
+      renderGardenPicker();
+      renderMap();
+      renderHeader();
+    }));
+    $("#garden-select").addEventListener("change", event => {
+      state.gardenId = Number(event.currentTarget.value);
+      selectEntity("garden", state.gardenId);
+    });
+    $$(".inspector-tab").forEach(button => button.addEventListener("click", () => {
+      state.inspectorTab = button.dataset.tab;
+      $$(".inspector-tab").forEach(item => item.classList.toggle("active", item === button));
+      renderInspector();
+    }));
+    $$(".observability-tab").forEach(button => button.addEventListener("click", () => {
+      state.observabilityTab = button.dataset.observabilityTab;
+      renderObservabilityTabs();
+    }));
+    $$(".event-filter").forEach(button => button.addEventListener("click", () => {
+      state.eventFilter = button.dataset.events;
+      $$(".event-filter").forEach(item => item.classList.toggle("active", item === button));
+      renderEvents();
+    }));
+    $("#zoom-in").addEventListener("click", () => { state.zoom = Math.min(1.6, state.zoom + .15); renderMap(); });
+    $("#zoom-out").addEventListener("click", () => { state.zoom = Math.max(.65, state.zoom - .15); renderMap(); });
+    $("#zoom-reset").addEventListener("click", () => { state.zoom = 1; renderMap(); });
+    $("#copy-json").addEventListener("click", async event => {
+      await navigator.clipboard.writeText(JSON.stringify(entityRecord(), null, 2));
+      const original = event.currentTarget.textContent;
+      event.currentTarget.textContent = "Copied";
+      setTimeout(() => event.currentTarget.textContent = original, 1000);
+    });
+    document.addEventListener("keydown", event => {
+      const copyOpen = $("#copy-modal").classList.contains("open");
+      const typing = ["INPUT", "TEXTAREA"].includes(document.activeElement.tagName);
+      if (copyOpen && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        saveCopy();
+      } else if (copyOpen && event.key === "Escape") {
+        closeCopyEditor();
+      } else if (event.key === "/" && !typing && document.activeElement !== $("#search")) {
+        event.preventDefault();
+        $("#search").focus();
+      } else if (event.key.toLowerCase() === "r" && !["INPUT", "TEXTAREA"].includes(document.activeElement.tagName)) {
+        refresh();
+      } else if (!copyOpen && event.key === "Escape") {
+        $("#search").value = "";
+        state.search = "";
+        selectEntity(null);
+        renderEvents();
+      }
+    });
+
+    setAutoRefresh(true);
+    loadProfileContent();
+    refresh();
+  </script>
+</body>
+</html>

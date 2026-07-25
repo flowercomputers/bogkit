@@ -1,0 +1,23 @@
+[package]
+name = "mudgarden"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+anyhow = "1"
+axum = "0.8"
+fold = { path = "../../fold" }
+futures = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+shell-words = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+russh = "0.62.4"
+rand = "0.10"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+[dev-dependencies]
+postcard = { version = "1", features = ["use-std"] }
+tempfile = "3"
