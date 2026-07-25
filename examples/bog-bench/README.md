@@ -63,6 +63,72 @@ retracted 69 calls
 
 Exactly 584,780 tokens removed, the average recomputed, nothing rescanned.
 
+## The benchmark
+
+```console
+$ cargo run -p bog-bench -- bench 800
+```
+
+Two arms, both timed end-to-end (parse *and* fold, because a batch tool really
+does re-read every transcript), and **checked against each other before either
+is reported** — a faster wrong answer is not an answer.
+
+- **incremental** — a new session arrives; fold it into the corpus already on disk.
+- **rescan** — recompute the whole corpus from nothing, as a batch harness must.
+
+| corpus | incremental | rescan | rescan parse | rescan fold |
+|---|---|---|---|---|
+| 51 sessions | 16.7 ms | 417 ms | 46 ms | 372 ms |
+| 201 sessions | 33.8 ms | 550 ms | 183 ms | 367 ms |
+| 801 sessions | 16.0 ms | 630 ms | 266 ms | 364 ms |
+
+Both arms agree on the call count at every size.
+
+The headline ratio (16–40×) is noisy, because the arriving session is whichever
+is newest and its size varies run to run. **The durable result is the shape, not
+the ratio:** incremental cost is flat in corpus size — 16.7 ms across 51
+sessions, 16.0 ms across 801 — while rescan climbs with every session added.
+Rescan's fold time stays near 365 ms regardless of corpus size, so that arm is
+dominated by fixed LSM setup rather than per-call work; the growth is in parsing.
+
+That flatness is the whole argument for putting this on a CI gate. Checking
+whether a change caused agent churn costs the same whether your history is a
+week old or a year old.
+
+## Rolling window
+
+A CI gate does not want "churn since the beginning of time", it wants "churn
+lately". `Retain` gives that as one operator:
+
+```console
+$ cargo run -p bog-bench -- window 24 400     # last 24h, over 400 sessions
+```
+
+```
+replayed 2926 calls spanning 269h · window = last 24h
+1391 calls still inside the window
+```
+
+| horizon | calls in window |
+|---|---|
+| 1 h | 324 |
+| 6 h | 517 |
+| 24 h | 1 392 |
+| 72 h | 1 689 |
+| 336 h | 2 927 (whole corpus — the span is only 269 h) |
+
+**The catch, and the workaround.** `Retain` is *processing-time*: it stamps each
+record with the wall clock of the transaction that commits it and ignores any
+timestamp the record carries. Replaying history through it naively would stamp a
+year of transcripts as all arriving "now", and every window would return
+everything. `Retain::with_clock` is the way out — bog-bench drives a synthetic
+clock from the transcripts' own timestamps and commits in event order, one
+transaction per hour of corpus time, so expiry follows event time.
+
+This runs on its own stream and its own database, deliberately: adding a node to
+the main pipeline changes its keyspaces, and a secondary view is not worth
+risking the primary ones.
+
 ## Why fold
 
 This started as a port of an existing Python harness. Reading that harness

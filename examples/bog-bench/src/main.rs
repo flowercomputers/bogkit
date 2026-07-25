@@ -60,8 +60,11 @@ macro_rules! show {
 /// prior state from disk instead of rebuilding it.
 macro_rules! open {
     () => {
+        open!(db_path())
+    };
+    ($path:expr) => {
         Stream::new(
-            db_path(),
+            $path,
             (
                 terminal::Count::new("calls_total"),
                 KeyBy::new(
@@ -176,6 +179,11 @@ fn main() {
             );
             show!(st);
         }
+        "bench" => bench(args.get(1).and_then(|s| s.parse().ok()).unwrap_or(100)),
+        "window" => window(
+            args.get(1).and_then(|s| s.parse().ok()).unwrap_or(24),
+            args.get(2).and_then(|s| s.parse().ok()).unwrap_or(400),
+        ),
         "demo" => demo(),
         other => {
             eprintln!("unknown command '{other}'");
@@ -185,6 +193,214 @@ fn main() {
             std::process::exit(2);
         }
     }
+}
+
+/// Churn over a rolling window of the last `hours` — the shape a CI gate
+/// actually wants ("has churn risen *lately*", not "since the beginning").
+///
+/// `Retain` is processing-time: it stamps each record with the wall clock of
+/// the transaction that commits it, ignoring any timestamp the record carries.
+/// Replaying history through it verbatim would therefore stamp a year of
+/// transcripts as all arriving "now". `Retain::with_clock` is the way out —
+/// we drive a synthetic clock from the transcripts' own timestamps and commit
+/// in event order, one transaction per hour, so expiry follows event time.
+///
+/// This runs on its own stream and its own database on purpose: adding a node
+/// to the main pipeline changes its keyspaces, and there is no reason to risk
+/// the working views for a secondary view.
+fn window(hours: u64, n: usize) {
+    use fold::pipeline::Retain;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::Duration;
+
+    let root = corpus_root();
+    let paths = transcript::discover(&root, n);
+    let mut calls: Vec<ToolCall> = paths
+        .iter()
+        .flat_map(|p| transcript::parse_session(p))
+        .filter(|c| c.at_ms > 0)
+        .collect();
+    if calls.is_empty() {
+        eprintln!("no timestamped calls under {}", root.display());
+        std::process::exit(1);
+    }
+    calls.sort_by_key(|c| c.at_ms);
+
+    let span_h = (calls.last().unwrap().at_ms - calls[0].at_ms) / 3_600_000;
+    let clock = Arc::new(AtomicU64::new(calls[0].at_ms));
+    let tick = clock.clone();
+
+    let db = std::env::temp_dir().join("bog-bench-window.db");
+    let _ = std::fs::remove_dir_all(&db);
+
+    let mut st = Stream::new(
+        &db,
+        Retain::with_clock(
+            "window",
+            Duration::from_secs(hours * 3600),
+            move || tick.load(Ordering::Relaxed),
+            (
+                terminal::Count::new("win_total"),
+                KeyBy::new(
+                    |c: &ToolCall| c.tool.clone(),
+                    Aggregate::new("win_by_tool", tool_step, terminal::Table::new("win_tool")),
+                ),
+            ),
+        ),
+    );
+
+    // Replay in event order, one transaction per hour of corpus time. Each
+    // commit advances the clock, which is what lets aged-out records expire.
+    let mut i = 0;
+    while i < calls.len() {
+        let hour = calls[i].at_ms / 3_600_000;
+        let start = i;
+        while i < calls.len() && calls[i].at_ms / 3_600_000 == hour {
+            i += 1;
+        }
+        clock.store(calls[i - 1].at_ms, Ordering::Relaxed);
+        let batch = &calls[start..i];
+        st.wtx(|tx| {
+            for c in batch {
+                tx.insert(c);
+            }
+        });
+    }
+
+    println!(
+        "replayed {} calls spanning {span_h}h · window = last {hours}h\n",
+        calls.len()
+    );
+
+    st.rtx(|(total, by_tool)| {
+        let mut tools: Vec<(String, ToolStats)> = by_tool.iter().collect();
+        tools.sort_by(|a, b| b.1.context_tokens.cmp(&a.1.context_tokens));
+        println!("{} calls still inside the window", total.get());
+        println!();
+        println!("  {:<26}{:>7}{:>7}{:>12}", "TOOL", "CALLS", "FAIL", "TOKENS");
+        for (tool, s) in tools.iter().take(12) {
+            let name = if tool.chars().count() > 25 {
+                let head: String = tool.chars().take(24).collect();
+                format!("{head}…")
+            } else {
+                tool.clone()
+            };
+            println!(
+                "  {:<26}{:>7}{:>7}{:>12}",
+                name, s.calls, s.failures, s.context_tokens
+            );
+        }
+    });
+
+    let _ = std::fs::remove_dir_all(&db);
+}
+
+/// The claim under test: adding one session to an existing corpus costs only
+/// that session, while a batch harness pays for the whole corpus again.
+///
+/// Both arms are timed end-to-end — parse *and* fold — because a batch tool
+/// really does re-read every transcript. And both are checked against each
+/// other first: a faster wrong answer is not an answer.
+fn bench(n: usize) {
+    let root = corpus_root();
+    let paths = transcript::discover(&root, n + 1);
+    if paths.len() < 2 {
+        eprintln!("need at least 2 transcripts under {}", root.display());
+        std::process::exit(1);
+    }
+    // `discover` returns newest first: treat the newest as the arriving
+    // session and the rest as the corpus already on disk.
+    let (arriving, existing) = paths.split_at(1);
+    let arriving = &arriving[0];
+
+    let base_db = std::env::temp_dir().join("bog-bench-inc.db");
+    let full_db = std::env::temp_dir().join("bog-bench-full.db");
+    let _ = std::fs::remove_dir_all(&base_db);
+    let _ = std::fs::remove_dir_all(&full_db);
+
+    // ---- setup (not measured): the corpus a running instance would already
+    // have folded.
+    let existing_calls: Vec<ToolCall> = existing
+        .iter()
+        .flat_map(|p| transcript::parse_session(p))
+        .collect();
+    {
+        let mut st = open!(&base_db);
+        st.wtx(|tx| {
+            for c in &existing_calls {
+                tx.insert(c);
+            }
+        });
+    }
+
+    // ---- arm 1: incremental. Parse and fold only what arrived.
+    let t = Instant::now();
+    let new_calls = transcript::parse_session(arriving);
+    let inc_parse = t.elapsed();
+    let t = Instant::now();
+    let inc_total = {
+        let mut st = open!(&base_db);
+        st.wtx(|tx| {
+            for c in &new_calls {
+                tx.insert(c);
+            }
+        });
+        st.rtx(|(total, _, _, _)| total.get())
+    };
+    let inc_fold = t.elapsed();
+
+    // ---- arm 2: rescan. Parse and fold the entire corpus from nothing.
+    let t = Instant::now();
+    let all_calls: Vec<ToolCall> = paths
+        .iter()
+        .flat_map(|p| transcript::parse_session(p))
+        .collect();
+    let re_parse = t.elapsed();
+    let t = Instant::now();
+    let re_total = {
+        let mut st = open!(&full_db);
+        st.wtx(|tx| {
+            for c in &all_calls {
+                tx.insert(c);
+            }
+        });
+        st.rtx(|(total, _, _, _)| total.get())
+    };
+    let re_fold = t.elapsed();
+
+    // ---- correctness gate
+    println!("corpus: {} sessions, {} tool calls", paths.len(), re_total);
+    println!("arriving session: {} calls\n", new_calls.len());
+    if inc_total != re_total {
+        eprintln!("MISMATCH — incremental {inc_total} vs rescan {re_total}");
+        std::process::exit(1);
+    }
+    println!("both arms agree: {inc_total} calls ✓\n");
+
+    let inc_ms = (inc_parse + inc_fold).as_secs_f64() * 1000.0;
+    let re_ms = (re_parse + re_fold).as_secs_f64() * 1000.0;
+    println!("  {:<14}{:>11}{:>11}{:>11}", "", "PARSE", "FOLD", "TOTAL");
+    println!(
+        "  {:<14}{:>10.1}ms{:>10.1}ms{:>10.1}ms",
+        "incremental",
+        inc_parse.as_secs_f64() * 1000.0,
+        inc_fold.as_secs_f64() * 1000.0,
+        inc_ms
+    );
+    println!(
+        "  {:<14}{:>10.1}ms{:>10.1}ms{:>10.1}ms",
+        "rescan",
+        re_parse.as_secs_f64() * 1000.0,
+        re_fold.as_secs_f64() * 1000.0,
+        re_ms
+    );
+    if inc_ms > 0.0 {
+        println!("\n  {:.0}× cheaper to keep current than to recompute", re_ms / inc_ms);
+    }
+
+    let _ = std::fs::remove_dir_all(&base_db);
+    let _ = std::fs::remove_dir_all(&full_db);
 }
 
 /// The whole story, non-interactively, on one persistent stream.
