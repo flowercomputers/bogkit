@@ -25,6 +25,38 @@ is a delta pushed through a `fold` pipeline into persistent sinks. Ingest a
 session and the numbers move. Retract one and they roll back — exactly, to the
 value they would have had if it never arrived. Nothing is ever recomputed.
 
+## What is being benchmarked
+
+Worth separating up front, because two different subjects live in this repo.
+
+**The workload is agent transcripts.** Claude Code writes a JSONL file per
+session to `~/.claude/projects`. They are append-only, they arrive continuously,
+they never stop growing, and they are messy in the way real data is — 60-character
+MCP tool names, results that are sometimes a string and sometimes a nested
+envelope, occasional invalid UTF-8. That makes them a good stress case, but they
+are the *input*, not the subject.
+
+**The subject is `fold`'s incrementality.** The headline number — 16 ms to fold
+in an arriving session, flat whether the corpus is 51 sessions or 801, against
+417–630 ms and climbing for a full recompute — is a fact about Bog's
+architecture, not about agents. Agent transcripts are simply what it was
+measured on; you cannot measure incrementality without a workload that grows.
+
+So the two findings this repo produces are aimed at different readers. *"`Read`
+costs 5.8M characters and a browser MCP tool fails half its calls"* is a fact
+about agent tooling, and you could produce it in Python. *"Staying current costs
+the same at any history size"* is a fact about `fold`, and you cannot.
+
+**Explicit non-goal: no cross-engine comparison.** Both arms of `bench` are
+`fold` — incremental against from-scratch. There is no SQLite, DuckDB, or
+`HashMap` baseline, and that is deliberate rather than unfinished. A `HashMap`
+would very likely *win* the batch case: no LSM, no persistence, no
+serialization. What `fold` buys is persistence, retraction, and flat incremental
+cost — so the benchmark measures the property the engine actually exists for,
+rather than a throughput contest it was never designed to enter. A cross-engine
+benchmark would be a different and larger piece of work, and it would need to
+hold persistence and retraction constant to mean anything.
+
 ## What "cost" means here, precisely
 
 The leaderboard ranks on **characters of tool-result payload**, because that is
