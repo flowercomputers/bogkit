@@ -1,0 +1,485 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>MUDGarden · Session Lab</title>
+  <style>
+    :root {
+      --paper: #f4f1e7;
+      --surface: #fffdf7;
+      --ink: #1e2b23;
+      --muted: #657168;
+      --line: #d8d3c5;
+      --moss: #345a43;
+      --moss-soft: #d9e4d7;
+      --acid: #d6eb78;
+      --danger: #a54c43;
+      --terminal: #17201b;
+      --terminal-ink: #e8eddf;
+      --mono: "SFMono-Regular", "Cascadia Code", "Roboto Mono", monospace;
+      --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 8% 0%, rgba(214, 235, 120, .22), transparent 25rem),
+        var(--paper);
+      color: var(--ink);
+      font-family: var(--sans);
+    }
+
+    button, input { font: inherit; }
+    button { cursor: pointer; }
+
+    header {
+      min-height: 76px;
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255, 253, 247, .92);
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      backdrop-filter: blur(16px);
+    }
+
+    .brand { display: flex; align-items: center; gap: 12px; min-width: 270px; }
+    .brand-mark {
+      width: 40px;
+      height: 40px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--ink);
+      background: var(--acid);
+      font: 700 20px/1 var(--mono);
+    }
+
+    .eyebrow {
+      color: var(--muted);
+      font: 700 9px/1.2 var(--mono);
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    h1 { margin: 4px 0 0; font-size: 17px; line-height: 1.1; }
+    .header-copy { flex: 1; color: var(--muted); font-size: 12px; }
+    .header-actions { display: flex; gap: 8px; }
+
+    .button {
+      min-height: 38px;
+      padding: 0 13px;
+      border: 1px solid var(--ink);
+      background: var(--surface);
+      color: var(--ink);
+      font: 700 10px/1 var(--mono);
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+
+    .button.primary { background: var(--acid); }
+
+    main { padding: 20px; }
+
+    .create-bar {
+      max-width: 720px;
+      margin: 0 auto 20px;
+      display: flex;
+      gap: 8px;
+    }
+
+    .create-bar input {
+      flex: 1;
+      min-width: 0;
+      min-height: 42px;
+      padding: 0 13px;
+      border: 1px solid var(--line);
+      border-radius: 0;
+      outline: none;
+      background: var(--surface);
+      color: var(--ink);
+    }
+
+    .create-bar input:focus {
+      border-color: var(--moss);
+      box-shadow: 0 0 0 3px rgba(52, 90, 67, .09);
+    }
+
+    .session-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(460px, 100%), 1fr));
+      gap: 16px;
+      align-items: start;
+    }
+
+    .empty {
+      min-height: 420px;
+      border: 1px dashed #b7b3a7;
+      background: rgba(255, 253, 247, .55);
+      display: grid;
+      place-items: center;
+      text-align: center;
+      color: var(--muted);
+    }
+
+    .empty strong { display: block; margin-bottom: 7px; color: var(--ink); }
+
+    .session {
+      min-height: 520px;
+      border: 1px solid var(--line);
+      background: var(--surface);
+      box-shadow: 0 12px 32px rgba(30, 43, 35, .06);
+      display: grid;
+      grid-template-rows: auto 1fr auto auto;
+    }
+
+    .session-head {
+      min-height: 58px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .avatar {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      background: var(--moss-soft);
+      color: var(--moss);
+      font: 800 14px/1 var(--mono);
+    }
+
+    .session-name { flex: 1; min-width: 0; }
+    .session-name strong { display: block; font-size: 13px; }
+    .session-meta { margin-top: 3px; color: var(--muted); font: 9px/1 var(--mono); }
+
+    .connection {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--muted);
+      font: 9px/1 var(--mono);
+    }
+
+    .connection i {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--danger);
+    }
+
+    .connection.live i { background: #6f9b54; box-shadow: 0 0 0 3px rgba(111, 155, 84, .14); }
+
+    .close {
+      width: 30px;
+      height: 30px;
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      font-size: 18px;
+    }
+
+    .transcript {
+      height: 380px;
+      margin: 0;
+      padding: 14px;
+      overflow: auto;
+      background: var(--terminal);
+      color: var(--terminal-ink);
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      font: 11px/1.55 var(--mono);
+    }
+
+    .entry { margin-bottom: 12px; }
+    .entry.command { color: #d6eb78; }
+    .entry.event { color: #a9c8b0; }
+    .entry.error { color: #f2a69e; }
+    .entry .time { opacity: .5; margin-right: 7px; }
+
+    .quick-commands {
+      min-height: 42px;
+      padding: 7px 9px;
+      border-top: 1px solid #263129;
+      background: var(--terminal);
+      display: flex;
+      gap: 6px;
+      overflow-x: auto;
+    }
+
+    .quick-commands button {
+      flex: 0 0 auto;
+      padding: 5px 8px;
+      border: 1px solid #46534a;
+      background: transparent;
+      color: #bec8bb;
+      font: 9px/1 var(--mono);
+    }
+
+    .command-form {
+      min-height: 50px;
+      border-top: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px;
+    }
+
+    .prompt { color: var(--moss); font: 800 15px/1 var(--mono); }
+
+    .command-form input {
+      flex: 1;
+      min-width: 0;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      color: var(--ink);
+      font: 12px/1 var(--mono);
+    }
+
+    .command-form button {
+      min-height: 32px;
+      padding: 0 11px;
+      border: 1px solid var(--ink);
+      background: var(--acid);
+      font: 700 9px/1 var(--mono);
+      text-transform: uppercase;
+    }
+
+    .command-form button:disabled { opacity: .45; cursor: default; }
+
+    @media (max-width: 760px) {
+      header { align-items: flex-start; flex-wrap: wrap; }
+      .header-copy { order: 3; flex-basis: 100%; }
+      main { padding: 12px; }
+      .create-bar { flex-wrap: wrap; }
+      .create-bar input { flex-basis: 100%; }
+      .session-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <div class="brand-mark">⌘</div>
+      <div>
+        <div class="eyebrow">Multiplayer debugger</div>
+        <h1>MUDGarden · Session Lab</h1>
+      </div>
+    </div>
+    <div class="header-copy">Run several human players against the same authoritative world.</div>
+    <div class="header-actions">
+      <button class="button" onclick="location.href='/'">Field console</button>
+      <button class="button" id="meet-path">Meet at path</button>
+      <button class="button primary" id="add-pair">Add Alice + Bob</button>
+    </div>
+  </header>
+
+  <main>
+    <form class="create-bar" id="create-session">
+      <input id="session-name" autocomplete="off" maxlength="24" placeholder="Player name, e.g. Rowan" aria-label="Player name">
+      <button class="button primary" type="submit">Add session</button>
+    </form>
+    <section class="session-grid" id="session-grid">
+      <div class="empty" id="empty">
+        <div>
+          <strong>No browser sessions yet.</strong>
+          Add a player above or start with Alice and Bob.
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const sessions = new Map();
+    const quickCommands = ["look", "who", "out", "gardens", "inventory", "say hello"];
+    const $ = selector => document.querySelector(selector);
+
+    function timeLabel() {
+      return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    }
+
+    function append(session, text, kind = "output") {
+      if (!text) return;
+      const entry = document.createElement("div");
+      entry.className = `entry ${kind}`;
+      const time = document.createElement("span");
+      time.className = "time";
+      time.textContent = timeLabel();
+      entry.append(time, document.createTextNode(text));
+      session.transcript.append(entry);
+      session.transcript.scrollTop = session.transcript.scrollHeight;
+    }
+
+    function setConnected(session, connected) {
+      session.connection.classList.toggle("live", connected);
+      session.connection.lastElementChild.textContent = connected ? "live" : "reconnecting";
+    }
+
+    function connectEvents(session) {
+      session.events?.close();
+      const events = new EventSource(`/api/debug/sessions/${session.actor.id}/stream`);
+      session.events = events;
+      events.onopen = () => setConnected(session, true);
+      events.onerror = () => setConnected(session, false);
+      events.addEventListener("world-event", event => {
+        const worldEvent = JSON.parse(event.data);
+        append(session, worldEvent.message, "event");
+      });
+      events.addEventListener("session-error", event => append(session, event.data, "error"));
+    }
+
+    async function sendCommand(session, command) {
+      const value = command.trim();
+      if (!value || session.sending) return;
+      session.sending = true;
+      session.send.disabled = true;
+      append(session, `> ${value}`, "command");
+      try {
+        const response = await fetch(`/api/debug/sessions/${session.actor.id}/command`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ command: value })
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+        result.lines.forEach(line => append(session, line));
+        if (result.quit) append(session, "Session ended. Enter another command to reconnect.", "event");
+      } catch (error) {
+        append(session, error.message, "error");
+      } finally {
+        session.sending = false;
+        session.send.disabled = false;
+        session.input.focus();
+      }
+    }
+
+    function renderSession(response) {
+      const actor = response.actor;
+      const article = document.createElement("article");
+      article.className = "session";
+      article.dataset.actorId = actor.id;
+      article.innerHTML = `
+        <div class="session-head">
+          <div class="avatar">${actor.name.slice(0, 1).toUpperCase()}</div>
+          <div class="session-name">
+            <strong></strong>
+            <div class="session-meta">actor #${actor.id} · garden #${actor.home_garden_id}</div>
+          </div>
+          <div class="connection"><i></i><span>connecting</span></div>
+          <button class="close" aria-label="Close session">×</button>
+        </div>
+        <div class="transcript" role="log" aria-live="polite"></div>
+        <div class="quick-commands"></div>
+        <form class="command-form">
+          <span class="prompt">›</span>
+          <input autocomplete="off" placeholder="Enter a world command" aria-label="Command for ${actor.name}">
+          <button type="submit">Send</button>
+        </form>`;
+      article.querySelector(".session-name strong").textContent = actor.name;
+      const session = {
+        actor,
+        article,
+        transcript: article.querySelector(".transcript"),
+        connection: article.querySelector(".connection"),
+        input: article.querySelector(".command-form input"),
+        send: article.querySelector(".command-form button"),
+        events: null,
+        sending: false
+      };
+      response.lines.forEach(line => append(session, line));
+      const quick = article.querySelector(".quick-commands");
+      quickCommands.forEach(command => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = command;
+        button.addEventListener("click", () => sendCommand(session, command));
+        quick.append(button);
+      });
+      article.querySelector(".command-form").addEventListener("submit", event => {
+        event.preventDefault();
+        const command = session.input.value;
+        session.input.value = "";
+        sendCommand(session, command);
+      });
+      article.querySelector(".close").addEventListener("click", () => {
+        session.events?.close();
+        sessions.delete(actor.id);
+        article.remove();
+        $("#empty").hidden = sessions.size > 0;
+      });
+      sessions.set(actor.id, session);
+      $("#session-grid").append(article);
+      $("#empty").hidden = true;
+      connectEvents(session);
+      session.input.focus();
+    }
+
+    async function addSession(name) {
+      const response = await fetch("/api/debug/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name })
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+      if (sessions.has(result.actor.id)) {
+        sessions.get(result.actor.id).input.focus();
+        return;
+      }
+      renderSession(result);
+    }
+
+    $("#create-session").addEventListener("submit", async event => {
+      event.preventDefault();
+      const input = $("#session-name");
+      const name = input.value.trim();
+      if (!name) return;
+      input.value = "";
+      try {
+        await addSession(name);
+      } catch (error) {
+        input.value = name;
+        input.setCustomValidity(error.message);
+        input.reportValidity();
+        input.addEventListener("input", () => input.setCustomValidity(""), { once: true });
+      }
+    });
+
+    $("#add-pair").addEventListener("click", async () => {
+      for (const name of ["Alice", "Bob"]) {
+        try {
+          await addSession(name);
+        } catch (error) {
+          const input = $("#session-name");
+          input.setCustomValidity(error.message);
+          input.reportValidity();
+          input.addEventListener("input", () => input.setCustomValidity(""), { once: true });
+          break;
+        }
+      }
+    });
+
+    $("#meet-path").addEventListener("click", async event => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      for (const session of sessions.values()) {
+        for (const command of ["home", "out", "out"]) {
+          await sendCommand(session, command);
+        }
+      }
+      button.disabled = false;
+    });
+  </script>
+</body>
+</html>
