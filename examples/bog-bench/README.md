@@ -91,38 +91,45 @@ $ cargo run -p bog-bench -- show
 $ cargo run -p bog-bench -- retract <transcript>  # views roll back
 ```
 
-Real output, 114 sessions of one author's Claude Code history:
+Output from `demo`, which runs on built-in fixtures so it works on any machine:
 
 ```
-2668 tool calls · 100 failed (3.7%)
+9 tool calls · 3 failed (33.3%)
 
   TOOL                        CALLS   FAIL   FAIL%       CHARS     ~TOK
-  Read                          416      3      1%     5789104  1447276
-  Bash                         1457     68      5%     2138672   534668
-  Agent                          34      0      0%      215664    53916
-  mcp__Claude_Browser__com…      10      5     50%      168884    42221
-  Grep                           88      0      0%      123664    30916
+  Read                            3      0      0%       67600    16900
+  Bash                            4      3     75%        6640     1660
+  Grep                            1      0      0%        3300      825
+  Edit                            1      0      0%         180       45
 
   churn — highest failure rates:
-       50%  mcp__Claude_Browser__computer  (5/10 failed)
-       33%  mcp__blume_improve__search_clusters  (1/3 failed)
-       20%  mcp__Claude_Browser__javascript_tool  (1/5 failed)
+       75%  Bash  (3/4 failed)
 ```
 
-`Bash` is called 3.5× more often than `Read`, but `Read` costs 2.7× more
-context. And a browser MCP tool is failing half the time — the kind of churn
-that is invisible until something counts it.
-
-Then retract the single heaviest session and watch every view roll back:
+Then retract one session and watch every view roll back:
 
 ```
-retracted 69 calls
-2599 tool calls · 97 failed (3.7%)
-  Read      408   3   1%   3449984   862496     ← was 416 / 5789104 / 1447276
+== retracted session-b — every counter rolled back ==
+5 tool calls · 1 failed (20.0%)
+
+  TOOL                        CALLS   FAIL   FAIL%       CHARS     ~TOK
+  Read                            2      0      0%       23600     5900
+  Bash                            2      1     50%        2740      685
+  Edit                            1      0      0%         180       45
 ```
 
-Exactly 2,339,120 characters removed, every derived figure recomputed, nothing
-rescanned.
+`Grep` is gone entirely — it existed only in the retracted session — and every
+other figure is back to exactly what it was, recomputed rather than remembered.
+
+**On a real corpus** the same run over 114 sessions of one author's Claude Code
+history found 2 668 tool calls, 100 of them failed. `Bash` was called 3.5× more
+often than `Read`, but `Read` cost 2.7× more context (5.8M characters against
+2.1M). The most useful finding was a browser-automation MCP tool failing **half
+its calls** — ten invocations, five failures, ~4 200 characters burned on each
+attempt. That is exactly the kind of churn that stays invisible until something
+counts it. Run `recent 200` against your own history to get the equivalent;
+tool names are omitted here because they identify the author's local setup, not
+because the numbers are shy.
 
 ## The benchmark
 
