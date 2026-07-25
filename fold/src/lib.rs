@@ -1,7 +1,7 @@
 //! Incrementally-maintained, persistent dataflow.
 //!
-//! A [`Stream`](stream::Stream) accepts *deltas* — a datum paired with a
-//! signed multiplicity — and pushes them through a statically composed
+//! A [`Stream`](stream::Stream) accepts *deltas*—a datum paired with a
+//! signed multiplicity—and pushes them through a statically composed
 //! [`pipeline`] of operators into persistent sinks (counts, bags, keyed
 //! views, ordered indexes, histograms, full-text search). Every sink is
 //! maintained incrementally: removing a
