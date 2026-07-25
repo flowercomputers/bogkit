@@ -225,6 +225,79 @@ fn incremental_agrees_with_full_recompute() {
     let _ = std::fs::remove_dir_all(&db_b);
 }
 
+/// Re-ingesting a session must be a no-op, and retracting one must make it
+/// ingestable again.
+///
+/// `tx.insert` is a multiset add — inserting the same call twice gives it
+/// multiplicity 2 — so without a guard, running `recent` twice silently
+/// doubles every figure. `main` filters against the `session_stats` keys
+/// before inserting; this asserts the property that filter exists to protect,
+/// including the retracted-then-restored case where a stale guard would
+/// wrongly refuse the re-ingest.
+#[test]
+fn re_ingesting_is_a_no_op_but_retraction_reopens_it() {
+    let db = scratch_db("idempotent");
+    let calls = vec![
+        call("s1", "Read", true, 8_000),
+        call("s1", "Bash", false, 400),
+    ];
+
+    let mut st = test_stream!(&db);
+    st.wtx(|tx| {
+        for c in &calls {
+            tx.insert(c);
+        }
+    });
+
+    // The guard main applies: which sessions are already represented? A macro
+    // rather than a helper for the usual reason — the reader type is opaque
+    // outside the expression that produced it.
+    macro_rules! seen {
+        ($st:expr) => {
+            $st.rtx(|(_, _, _, by_session)| {
+                by_session
+                    .iter()
+                    .filter(|(_, s): &(String, ToolStats)| s.calls != 0)
+                    .map(|(k, _)| k)
+                    .collect::<std::collections::HashSet<String>>()
+            })
+        };
+    }
+
+    assert!(seen!(st).contains("s1"), "s1 should register as ingested");
+    let fresh: Vec<&ToolCall> = {
+        let s = seen!(st);
+        calls.iter().filter(|c| !s.contains(&c.session)).collect()
+    };
+    assert!(fresh.is_empty(), "second pass must find nothing to insert");
+
+    // Unfiltered, the same insert would double — proving the guard earns its
+    // keep rather than defending against an imaginary problem.
+    st.wtx(|tx| {
+        for c in &calls {
+            tx.insert(c);
+        }
+    });
+    st.rtx(|(total, _, _, _)| {
+        assert_eq!(total.get(), 4, "unguarded re-insert should double to 4");
+    });
+
+    // Undo the accidental double, then retract the session outright.
+    st.wtx(|tx| {
+        for c in &calls {
+            tx.remove(c);
+            tx.remove(c);
+        }
+    });
+    st.rtx(|(total, _, _, _)| assert_eq!(total.get(), 0));
+    assert!(
+        !seen!(st).contains("s1"),
+        "a fully retracted session must not count as ingested"
+    );
+
+    let _ = std::fs::remove_dir_all(&db);
+}
+
 /// End-to-end against a real Claude Code transcript, when one is available.
 ///
 /// Skips rather than fails on a machine with no corpus — a judge cloning this

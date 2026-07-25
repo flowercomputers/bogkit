@@ -42,6 +42,25 @@ fn db_path() -> std::path::PathBuf {
 /// type, so nothing outside this crate can name the tuple `rtx` hands back.
 /// bogkit's own `timeseries` example hits the same wall and solves it the
 /// same way.
+/// The set of sessions already folded in, read straight off `session_stats`.
+///
+/// Transcripts are immutable once a session ends, so a session that is already
+/// in the views has nothing new to contribute — and `tx.insert` is a multiset
+/// add, so re-ingesting one would silently double every figure it touched.
+/// This is the guard. A row whose accumulator has fallen to zero calls was
+/// retracted, so it is *not* counted as present and can be ingested again.
+macro_rules! ingested_sessions {
+    ($st:expr) => {
+        $st.rtx(|(_, _, _, by_session)| {
+            by_session
+                .iter()
+                .filter(|(_, s): &(String, ToolStats)| s.calls != 0)
+                .map(|(k, _)| k)
+                .collect::<std::collections::HashSet<String>>()
+        })
+    };
+}
+
 macro_rules! show {
     ($st:expr) => {
         $st.rtx(|(total, by_tool, failures, by_session)| {
@@ -118,14 +137,21 @@ fn main() {
                 eprintln!("no calls found for session '{session}'");
                 std::process::exit(1);
             }
-            let n = calls.len();
             let mut st = open!();
-            st.wtx(|tx| {
-                for call in &calls {
-                    tx.insert(call);
-                }
-            });
-            println!("ingested {n} calls from {session}\n");
+            let seen = ingested_sessions!(st);
+            let fresh: Vec<&ToolCall> =
+                calls.iter().filter(|c| !seen.contains(&c.session)).collect();
+            if fresh.is_empty() {
+                println!("already ingested — nothing to add\n");
+            } else {
+                let n = fresh.len();
+                st.wtx(|tx| {
+                    for call in &fresh {
+                        tx.insert(*call);
+                    }
+                });
+                println!("ingested {n} calls from {session}\n");
+            }
             show!(st);
         }
         "retract" => {
@@ -168,17 +194,27 @@ fn main() {
 
             let fold_at = Instant::now();
             let mut st = open!();
+            let seen = ingested_sessions!(st);
+            let fresh: Vec<&ToolCall> =
+                calls.iter().filter(|c| !seen.contains(&c.session)).collect();
             st.wtx(|tx| {
-                for call in &calls {
-                    tx.insert(call);
+                for call in &fresh {
+                    tx.insert(*call);
                 }
             });
             let fold_ms = fold_at.elapsed().as_millis();
 
+            let skipped = calls.len() - fresh.len();
             println!(
-                "{} sessions discovered in {discovered_ms}ms · {} calls parsed in {parse_ms}ms · folded in {fold_ms}ms\n",
+                "{} sessions discovered in {discovered_ms}ms · {} calls parsed in {parse_ms}ms · {} folded in {fold_ms}ms{}\n",
                 paths.len(),
-                calls.len()
+                calls.len(),
+                fresh.len(),
+                if skipped > 0 {
+                    format!(" · {skipped} already ingested, skipped")
+                } else {
+                    String::new()
+                }
             );
             show!(st);
         }
@@ -189,10 +225,16 @@ fn main() {
         ),
         "demo" => demo(),
         other => {
-            eprintln!("unknown command '{other}'");
-            eprintln!(
-                "usage: bog-bench [reset|recent <n>|ingest <path>|retract <path>|show|demo]"
-            );
+            eprintln!("unknown command '{other}'\n");
+            eprintln!("usage: bog-bench <command>\n");
+            eprintln!("  demo                  the whole story on built-in fixtures — start here");
+            eprintln!("  recent <n>            ingest your n newest Claude sessions");
+            eprintln!("  show                  print the current views");
+            eprintln!("  ingest <path|name>    fold in one transcript");
+            eprintln!("  retract <path|name>   pull one back out; every view rolls back");
+            eprintln!("  bench <n>             incremental vs full rescan, cross-checked");
+            eprintln!("  window <hours> <n>    churn over a rolling window");
+            eprintln!("  reset                 clear the database");
             std::process::exit(2);
         }
     }
