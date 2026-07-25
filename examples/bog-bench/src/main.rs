@@ -43,7 +43,7 @@ macro_rules! show {
     ($st:expr) => {
         $st.rtx(|(total, by_tool, failures, by_session)| {
             let mut tools: Vec<(String, ToolStats)> = by_tool.iter().collect();
-            tools.sort_by(|a, b| b.1.context_tokens.cmp(&a.1.context_tokens));
+            tools.sort_by(|a, b| b.1.result_chars.cmp(&a.1.result_chars));
             let mut sessions: Vec<(String, ToolStats)> = by_session.iter().collect();
             sessions.sort_by(|a, b| a.0.cmp(&b.0));
             print_snapshot(total.get(), failures.get(), &tools, &sessions);
@@ -275,7 +275,7 @@ fn window(hours: u64, n: usize) {
 
     st.rtx(|(total, by_tool)| {
         let mut tools: Vec<(String, ToolStats)> = by_tool.iter().collect();
-        tools.sort_by(|a, b| b.1.context_tokens.cmp(&a.1.context_tokens));
+        tools.sort_by(|a, b| b.1.result_chars.cmp(&a.1.result_chars));
         println!("{} calls still inside the window", total.get());
         println!();
         println!("  {:<26}{:>7}{:>7}{:>12}", "TOOL", "CALLS", "FAIL", "TOKENS");
@@ -288,7 +288,7 @@ fn window(hours: u64, n: usize) {
             };
             println!(
                 "  {:<26}{:>7}{:>7}{:>12}",
-                name, s.calls, s.failures, s.context_tokens
+                name, s.calls, s.failures, s.result_chars
             );
         }
     });
@@ -450,7 +450,7 @@ fn print_snapshot(
     println!();
     println!(
         "  {:<26}{:>7}{:>7}{:>8}{:>12}{:>9}",
-        "TOOL", "CALLS", "FAIL", "FAIL%", "TOKENS", "AVG"
+        "TOOL", "CALLS", "FAIL", "FAIL%", "CHARS", "~TOK"
     );
     for (tool, s) in tools {
         // MCP tool names run to 60+ chars and wreck the columns.
@@ -466,8 +466,8 @@ fn print_snapshot(
             s.calls,
             s.failures,
             s.failure_rate() * 100.0,
-            s.context_tokens,
-            s.avg_tokens()
+            s.result_chars,
+            s.est_tokens()
         );
     }
 
@@ -492,14 +492,14 @@ fn print_snapshot(
 
     if !sessions.is_empty() {
         let mut heaviest: Vec<&(String, ToolStats)> = sessions.iter().collect();
-        heaviest.sort_by(|a, b| b.1.context_tokens.cmp(&a.1.context_tokens));
+        heaviest.sort_by(|a, b| b.1.result_chars.cmp(&a.1.result_chars));
         println!();
         println!(
             "  {} sessions in view — heaviest by context:",
             sessions.len()
         );
         for (name, s) in heaviest.iter().take(5) {
-            println!("    {name}  {} calls, {} tokens", s.calls, s.context_tokens);
+            println!("    {name}  {} calls, {} chars", s.calls, s.result_chars);
         }
     }
 }

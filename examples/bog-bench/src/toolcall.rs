@@ -18,8 +18,9 @@ pub struct ToolCall {
     pub tool: String,
     /// False when the result carried an error flag.
     pub ok: bool,
-    /// Characters in the joined tool result. Context cost is `chars / 4`,
-    /// matching the tool-benchmarks methodology.
+    /// Characters in the joined tool result — the measured quantity, and the
+    /// one we rank on. Counts characters rather than bytes so the estimate
+    /// below stays honest on non-ASCII output.
     pub result_chars: u64,
     /// Wall-clock ms between request and result, 0 when untimed.
     pub duration_ms: u64,
@@ -28,9 +29,10 @@ pub struct ToolCall {
 }
 
 impl ToolCall {
-    /// Context cost in tokens, by the `chars / 4` convention.
-    pub fn context_tokens(&self) -> u64 {
-        self.result_chars / 4
+    /// Characters of tool-result payload — what this call cost the context
+    /// window, in the one unit we can measure exactly for every call.
+    pub fn cost(&self) -> u64 {
+        self.result_chars
     }
 }
 
@@ -40,7 +42,8 @@ impl ToolCall {
 pub struct ToolStats {
     pub calls: i64,
     pub failures: i64,
-    pub context_tokens: i64,
+    /// Measured: characters of tool-result payload.
+    pub result_chars: i64,
     pub duration_ms: i64,
 }
 
@@ -53,12 +56,21 @@ impl ToolStats {
         }
     }
 
-    pub fn avg_tokens(&self) -> f64 {
-        if self.calls == 0 {
-            0.0
-        } else {
-            self.context_tokens as f64 / self.calls as f64
-        }
+    /// Rough token estimate by the `chars / 4` convention.
+    ///
+    /// This is an **estimate, not a measurement**, and deliberately not what
+    /// the leaderboard ranks on — `result_chars` is. Transcripts do carry real
+    /// usage, but it cannot be attributed per call: prompt caching drives
+    /// `input_tokens` to near zero (6, against 25 803 cache-read, in a typical
+    /// turn), so a tool's true marginal cost is only recoverable by diffing
+    /// total context between consecutive turns, and only for turns holding
+    /// exactly one tool call. Characters are what we can honestly measure for
+    /// every call, so characters are what we rank on.
+    ///
+    /// The estimate holds for ASCII-ish code and prose. It undercounts CJK
+    /// (roughly one token per character) and punctuation-dense JSON.
+    pub fn est_tokens(&self) -> i64 {
+        self.result_chars / 4
     }
 }
 
@@ -68,6 +80,6 @@ pub fn tool_step(acc: &mut ToolStats, call: &ToolCall, delta: isize) {
     let d = delta as i64;
     acc.calls += d;
     acc.failures += if call.ok { 0 } else { d };
-    acc.context_tokens += call.context_tokens() as i64 * d;
+    acc.result_chars += call.cost() as i64 * d;
     acc.duration_ms += call.duration_ms as i64 * d;
 }

@@ -1,19 +1,40 @@
 # bog-bench
 
-**Agent tooling churn as a live fold view.**
+**What your agent's tooling actually costs it in context — as a live fold view.**
 
-Category: **agent support**
+Category: **agent context / memory support**
 
-Agents waste an enormous amount of their context on their own tooling — failed
-`Bash` calls, retried edits, `Read`s that dump 40k characters back into the
-window. You can measure that today, but only in batch: point a script at your
-transcripts, wait, get a report, and the report is stale the moment an agent
+An agent's context window is its scarcest resource, and most of what fills it is
+not the user's problem — it is the agent's own tooling. A `Read` that dumps 40k
+characters back. A `Bash` call that fails and gets retried. An MCP tool quietly
+erroring half the time and burning a turn on every attempt.
+
+You can measure that today, but only in batch: point a script at your
+transcripts, wait, get a report — and the report is stale the moment an agent
 makes another call.
 
 bog-bench makes it a **materialized view instead of a report**. Every tool call
 is a delta pushed through a `fold` pipeline into persistent sinks. Ingest a
 session and the numbers move. Retract one and they roll back — exactly, to the
 value they would have had if it never arrived. Nothing is ever recomputed.
+
+## What "cost" means here, precisely
+
+The leaderboard ranks on **characters of tool-result payload**, because that is
+the one quantity measurable exactly for every call. A `~TOK` column shows the
+conventional `chars / 4` estimate beside it, clearly marked as an estimate.
+
+It would be nicer to report real token usage, and the transcripts do carry it —
+but it cannot be attributed per call. Prompt caching drives `input_tokens` to
+near nothing (a typical turn: `input_tokens: 6` against `cache_read: 25803`), so
+a tool's true marginal cost is only recoverable by diffing total context between
+consecutive turns, and only for turns holding exactly one tool call. That covers
+a fraction of calls and would silently bias the ranking toward whichever tools
+happen to get called alone.
+
+So: characters are measured and ranked on, tokens are estimated and labelled.
+The estimate holds for ASCII-ish code and prose; it undercounts CJK (closer to
+one token per character) and punctuation-dense JSON.
 
 ## Run it
 
@@ -36,12 +57,12 @@ Real output, 114 sessions of one author's Claude Code history:
 ```
 2668 tool calls · 100 failed (3.7%)
 
-  TOOL                        CALLS   FAIL   FAIL%      TOKENS      AVG
-  Read                          416      3      1%     1447276     3479
-  Bash                         1457     68      5%      534668      367
-  Agent                          34      0      0%       53916     1586
-  mcp__Claude_Browser__com…      10      5     50%       42221     4222
-  Grep                           88      0      0%       30916      351
+  TOOL                        CALLS   FAIL   FAIL%       CHARS     ~TOK
+  Read                          416      3      1%     5789104  1447276
+  Bash                         1457     68      5%     2138672   534668
+  Agent                          34      0      0%      215664    53916
+  mcp__Claude_Browser__com…      10      5     50%      168884    42221
+  Grep                           88      0      0%      123664    30916
 
   churn — highest failure rates:
        50%  mcp__Claude_Browser__computer  (5/10 failed)
@@ -58,10 +79,11 @@ Then retract the single heaviest session and watch every view roll back:
 ```
 retracted 69 calls
 2599 tool calls · 97 failed (3.7%)
-  Read     408   3   1%   862496   2114      ← was 416 / 1447276 / 3479
+  Read      408   3   1%   3449984   862496     ← was 416 / 5789104 / 1447276
 ```
 
-Exactly 584,780 tokens removed, the average recomputed, nothing rescanned.
+Exactly 2,339,120 characters removed, every derived figure recomputed, nothing
+rescanned.
 
 ## The benchmark
 
@@ -154,7 +176,7 @@ The last two rows are the point. A batch harness cannot do either at any price.
 ## What it measures
 
 Per tool, maintained live: call count, failure count, failure rate, and context
-cost (`result_chars / 4`, the convention the original harness used). Per
+cost in measured characters (plus the labelled token estimate). Per
 session: total calls and total context contributed — which is what makes
 retraction legible, since you can watch one session's whole footprint leave.
 
