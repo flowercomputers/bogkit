@@ -48,6 +48,7 @@ pub mod terminal;
 
 mod ops;
 pub use ops::*;
+use serde::{Deserialize, Serialize};
 
 // contains (A,B,C..) tuples implementing Push for use as tee/tap
 mod tuple;
@@ -134,7 +135,7 @@ impl<D: Clone, T: Push<D>> Push<D> for &mut T {
 /// The currency of keyed operators: [`KeyBy`] produces `Keyed` streams,
 /// [`Aggregate`] consumes and emits them, and [`Unkey`] strips the key back
 /// off.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Keyed<K, V> {
     pub key: K,
     pub val: V,
@@ -165,7 +166,7 @@ impl<K, V> Keyed<K, V> {
 /// back off. Unlike [`Keyed`] keys, scores are ordered — see the
 /// [`Score`] trait. Scoring by event timestamp turns [`TopK`] into a
 /// sliding "most recent k records" window.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Scored<S, V> {
     pub score: S,
     pub val: V,

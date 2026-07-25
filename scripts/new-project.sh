@@ -33,6 +33,7 @@ publish = false
 anny = { path = "../../anny" }
 ese = { path = "../../ese", features = ["dim-512", "quant-8"] }
 fold = { path = "../../fold" }
+serde = { version = "1", features = ["derive"] }
 EOF
 
 cat > "$project_dir/src/main.rs" <<EOF
