@@ -16,6 +16,9 @@
 mod toolcall;
 mod transcript;
 
+#[cfg(test)]
+mod tests;
+
 use fold::pipeline::{Aggregate, Filter, KeyBy, terminal};
 use fold::stream::Stream;
 use std::path::{Path, PathBuf};
