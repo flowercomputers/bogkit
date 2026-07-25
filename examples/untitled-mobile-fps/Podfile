@@ -1,0 +1,12 @@
+platform :ios, '17.0'
+
+project 'UntitledMobileFPS.xcodeproj'
+
+target 'UntitledMobileFPS' do
+  use_frameworks!
+  pod 'MediaPipeTasksVision', '~> 0.10.0'
+
+  target 'UntitledMobileFPSTests' do
+    inherit! :search_paths
+  end
+end

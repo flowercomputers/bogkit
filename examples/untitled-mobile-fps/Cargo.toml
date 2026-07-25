@@ -1,0 +1,23 @@
+[package]
+name = "untitled-mobile-fps"
+version = "0.0.0"
+edition = "2024"
+publish = false
+default-run = "untitled-mobile-fps"
+
+[dependencies]
+anny = { path = "../../anny" }
+axum = { version = "0.8", features = ["ws"] }
+ese = { path = "../../ese", features = ["dim-512", "quant-8"] }
+fjall = { version = "3", default-features = false }
+fold = { path = "../../fold" }
+futures-util = "0.3"
+postcard = { version = "1", features = ["use-std"] }
+rand = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = "0.29"
+uuid = { version = "1", features = ["serde", "v4"] }

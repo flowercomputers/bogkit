@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>FPSDefaultServerName</key>
+    <string>$(FPS_DEFAULT_SERVER_NAME)</string>
+    <key>FPSDefaultServerURL</key>
+    <string>$(FPS_DEFAULT_SERVER_URL)</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Nearby players connect to the local Bogkit match server.</string>
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>Your approximate location is used only when you tap Quick Match to pair you with a nearby player.</string>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_untitledfps._tcp</string>
+    </array>
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsLocalNetworking</key>
+        <true/>
+    </dict>
+</dict>
+</plist>
