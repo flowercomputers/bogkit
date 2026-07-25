@@ -78,11 +78,27 @@ one token per character) and punctuation-dense JSON.
 ## Run it
 
 ```console
-$ cargo run -p bog-bench -- demo          # the whole story, no corpus needed
-$ cargo run -p bog-bench -- recent 200    # against your own Claude transcripts
+$ cargo run -p bog-bench -- demo
 ```
 
+That is the whole story, on built-in fixtures — no corpus, no setup, no env
+vars. Everything else runs against your own Claude Code history in
+`~/.claude/projects`:
+
+| command | what it does |
+|---|---|
+| `demo` | ingest → append → retract, on fixtures. Start here. |
+| `recent <n>` | fold in your *n* newest sessions |
+| `show` | print the current views |
+| `ingest <path>` | fold in one transcript |
+| `retract <path>` | pull one back out; every view rolls back |
+| `bench <n>` | incremental vs full rescan, cross-checked |
+| `window <hours> <n>` | churn over a rolling window |
+| `reset` | clear the database |
+
 Each command is a **separate process**; the state between them lives on disk.
+That is the point — this sequence spans four processes and nothing is
+recomputed between them:
 
 ```console
 $ cargo run -p bog-bench -- reset
@@ -90,6 +106,28 @@ $ cargo run -p bog-bench -- recent 200            # ingest the 200 newest sessio
 $ cargo run -p bog-bench -- show
 $ cargo run -p bog-bench -- retract <transcript>  # views roll back
 ```
+
+**Ingest is idempotent.** Running `recent 200` twice does not double your
+numbers — `ingest` and `recent` read the session keys already in the views and
+skip anything folded in before. (`tx.insert` is a multiset add, so without that
+guard a second run would silently double every figure.) A retracted session
+correctly becomes ingestable again, because the guard keys on sessions with a
+non-zero call count rather than on a key merely existing.
+
+## Tests
+
+```console
+$ cargo test -p bog-bench
+```
+
+Ten tests, no fixtures to download. Five cover the `tool_use`→`tool_result`
+join in `transcript.rs`; five cover the pipeline properties the project rests
+on — that retracting everything returns every view to zero with aggregate keys
+gone rather than lingering, that retracting one session leaves the other exact,
+that incremental folding agrees with a full recompute (the same invariant
+`bench` checks at runtime), that re-ingesting is a no-op while retraction
+reopens it, and one end-to-end run against a real transcript which **skips with
+a printed reason** if there is no corpus, so a fresh clone gets a clean pass.
 
 Output from `demo`, which runs on built-in fixtures so it works on any machine:
 
