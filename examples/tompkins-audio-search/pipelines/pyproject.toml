@@ -1,0 +1,17 @@
+[project]
+name = "tompkins-pipelines"
+version = "0.0.0"
+description = "GPU/MPS inference workers: CLAP acoustic windows, VAD + speech alignment, BirdNET detections."
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "numpy>=1.26,<2.2",
+    "torch>=2.4",
+    "torchaudio>=2.4",
+    "transformers>=4.44",
+    "soundfile>=0.12",
+    "silero-vad>=5.1",
+    "faster-whisper>=1.0",
+    "birdnetlib>=0.17",
+    "librosa>=0.10",
+    "resampy>=0.4",
+]

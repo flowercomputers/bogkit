@@ -1,0 +1,649 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tompkins Square Audio Search</title>
+<style>
+  :root {
+    --bg: #fbfaf7; --fg: #1a1a18; --dim: #6b6a63; --line: #e0ddd4;
+    --card: #ffffff; --accent: #2f6f4f; --warn: #8a5a1a; --chip: #f0eee6;
+    --track: #e8e5da; --track-idx: #2f6f4f; --hit: #c2601f; --play: #1a1a18;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14150f; --fg: #eceade; --dim: #918e80; --line: #2c2d24;
+      --card: #1b1c15; --accent: #7fbf95; --warn: #d3a45f; --chip: #24261c;
+      --track: #2b2d22; --track-idx: #7fbf95; --hit: #e08a44; --play: #eceade;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.55 ui-sans-serif, -apple-system, system-ui, sans-serif; }
+  header { padding: 18px 20px 12px; border-bottom: 1px solid var(--line); }
+  h1 { margin: 0 0 3px; font-size: 18px; font-weight: 620; letter-spacing: -0.01em; }
+  .tagline { color: var(--dim); font-size: 13px; margin: 0; }
+  main { max-width: 1100px; margin: 0 auto; padding: 16px 20px 40px; }
+  .searchbar { display: flex; gap: 8px; margin: 14px 0 9px; }
+  input[type=search], select, input[type=number] {
+    font: inherit; padding: 9px 11px; border: 1px solid var(--line);
+    border-radius: 7px; background: var(--card); color: var(--fg); }
+  input[type=search] { flex: 1; }
+  button { font: inherit; padding: 9px 15px; border: 1px solid var(--accent);
+    background: var(--accent); color: var(--bg); border-radius: 7px; cursor: pointer; }
+  button.ghost { background: transparent; color: var(--fg); border-color: var(--line);
+    padding: 4px 10px; font-size: 12.5px; }
+  .filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+    font-size: 13px; color: var(--dim); }
+  .filters label { display: flex; gap: 5px; align-items: center; }
+  .examples { margin: 10px 0 0; font-size: 13px; color: var(--dim); }
+  .examples button { background: var(--chip); color: var(--fg); border: 1px solid var(--line);
+    padding: 3px 9px; font-size: 12.5px; border-radius: 20px; margin: 3px 4px 0 0; }
+
+  /* master timeline */
+  .tl { margin: 16px 0 0; border: 1px solid var(--line); border-radius: 9px;
+    background: var(--card); overflow: hidden; }
+  .tlhead { display: flex; justify-content: space-between; align-items: center;
+    gap: 10px; padding: 9px 12px; border-bottom: 1px solid var(--line);
+    font-size: 12.5px; color: var(--dim); flex-wrap: wrap; }
+  .tlhead strong { color: var(--fg); font-weight: 600; }
+  .tlctl { display: flex; gap: 5px; align-items: center; }
+  #canvas { display: block; width: 100%; cursor: crosshair; touch-action: none; }
+  #mini { display: block; width: 100%; cursor: pointer; border-top: 1px solid var(--line); }
+  .tlfoot { padding: 7px 12px; font-size: 12px; color: var(--dim);
+    border-top: 1px solid var(--line); display: flex; gap: 14px; flex-wrap: wrap; }
+  .key { display: inline-flex; align-items: center; gap: 5px; }
+  .sw { width: 11px; height: 11px; border-radius: 2px; display: inline-block; }
+
+  .status { margin: 14px 0 0; font-size: 13px; color: var(--dim); }
+  .result { background: var(--card); border: 1px solid var(--line); border-radius: 9px;
+    padding: 12px 14px; margin: 10px 0; }
+  .result.active { border-color: var(--hit); }
+  .rtop { display: flex; justify-content: space-between; gap: 12px;
+    align-items: baseline; flex-wrap: wrap; }
+  .rwhen { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .rutc { color: var(--dim); font-size: 12.5px; font-weight: 400; }
+  .rsrc { color: var(--dim); font-size: 13px; }
+  .chips { margin: 7px 0 0; }
+  .chip { display: inline-block; background: var(--chip); border: 1px solid var(--line);
+    border-radius: 20px; padding: 2px 9px; font-size: 12px; margin: 3px 4px 0 0; }
+  .chip.bird { border-color: var(--accent); }
+  .chip.warnc { border-color: var(--warn); color: var(--warn); }
+  .transcript { margin: 8px 0 0; padding: 7px 11px; border-left: 2px solid var(--line);
+    font-style: italic; }
+  .machine { font-style: normal; font-size: 11.5px; color: var(--warn);
+    display: block; margin-top: 3px; }
+  .ractions { margin: 9px 0 0; display: flex; gap: 8px; align-items: center;
+    flex-wrap: wrap; font-size: 13px; }
+  .precision { color: var(--dim); font-size: 12.5px; }
+  a { color: var(--accent); }
+  details { margin: 7px 0 0; font-size: 12.5px; color: var(--dim); }
+  summary { cursor: pointer; }
+  pre { overflow-x: auto; background: var(--chip); padding: 9px;
+    border-radius: 6px; font-size: 11.5px; }
+  audio { display: none; }               /* engine only; the timeline is the UI */
+  .tlbody { display: flex; align-items: stretch; }
+  .tltransport { flex: 0 0 auto; display: grid; place-items: center;
+    padding: 0 12px; border-right: 1px solid var(--line); }
+  .tlcanvases { flex: 1 1 auto; min-width: 0; }
+  #playpause {
+    width: 46px; height: 46px; border-radius: 50%; padding: 0;
+    font-size: 16px; line-height: 1; display: grid; place-items: center;
+  }
+  #playpause[disabled] { opacity: .35; cursor: default; }
+  .tlnow { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+    padding: 8px 12px; border-top: 1px solid var(--line); }
+  #pclock { font-variant-numeric: tabular-nums; font-weight: 600; font-size: 14px; }
+  .pmeta { font-size: 12.5px; color: var(--dim); margin: 0; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #canvas { cursor: pointer; }
+  .banner { background: var(--chip); border: 1px solid var(--warn); color: var(--warn);
+    padding: 9px 12px; border-radius: 7px; font-size: 13px; margin: 12px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Tompkins Square Audio Search</h1>
+  <p class="tagline">One timeline over the whole archive. Search, then jump to the moment.</p>
+</header>
+
+<main>
+  <div class="searchbar">
+    <input type="search" id="q" placeholder="heavy rain &middot; House Sparrow &middot; a bird while it is raining" autofocus>
+    <button id="go">Search</button>
+  </div>
+
+  <div class="filters">
+    <label>tracks
+      <select id="modality">
+        <option value="">all</option><option value="speech">speech</option>
+        <option value="sound">sounds</option><option value="bird">birds</option>
+      </select>
+    </label>
+    <label>species <input type="search" id="species" placeholder="any" size="10"></label>
+    <label>min conf <input type="number" id="minconf" value="0" min="0" max="1" step="0.05" style="width:5em"></label>
+    <label title="minimum CLAP similarity; a real match sits near 0.25, filler near 0.02">min similarity
+      <input type="number" id="minsim" value="0.15" min="0" max="1" step="0.05" style="width:5em"></label>
+    <label>per source <input type="number" id="maxper" value="3" min="1" max="50" style="width:4em"></label>
+    <label><input type="checkbox" id="conj" checked> require co-occurrence</label>
+    <label>limit <input type="number" id="limit" value="20" min="1" max="100" style="width:4.5em"></label>
+  </div>
+
+  <p class="examples">Try:
+    <button data-q="heavy rain">heavy rain</button>
+    <button data-q="ambulance siren">ambulance siren</button>
+    <button data-q="birdsong">birdsong</button>
+    <button data-q="House Sparrow">House Sparrow</button>
+    <button data-q="dog barking">dog barking</button>
+    <button data-q="music">music</button>
+    <button data-q="a bird while it is raining">a bird while it is raining</button>
+  </p>
+
+  <!-- the master axis: every stream in the corpus on one wall clock -->
+  <div class="tl">
+    <div class="tlhead">
+      <span id="tlrange">loading the archive timeline&hellip;</span>
+      <span class="tlctl">
+        <button class="ghost" id="zoomout">&minus;</button>
+        <button class="ghost" id="zoomin">+</button>
+        <button class="ghost" id="zoomfit">whole archive</button>
+        <button class="ghost" id="zoomplay">playable</button>
+      </span>
+    </div>
+    <div class="tlbody">
+      <div class="tltransport">
+        <button id="playpause" aria-label="play/pause" title="play / pause (space)">&#9654;</button>
+      </div>
+      <div class="tlcanvases">
+        <canvas id="canvas"></canvas>
+        <canvas id="mini"></canvas>
+      </div>
+    </div>
+    <div class="tlfoot">
+      <span class="key"><i class="sw" style="background:var(--track)"></i> recorded, not yet indexed</span>
+      <span class="key"><i class="sw" style="background:var(--track-idx)"></i> indexed &amp; playable</span>
+      <span class="key"><i class="sw" style="background:var(--hit)"></i> search hit</span>
+      <span id="tlnote"></span>
+      <span class="key">click the timeline to scrub &middot; drag to pan &middot; scroll to zoom</span>
+    </div>
+    <div class="tlnow">
+      <span id="pclock">&mdash;</span>
+      <span class="pmeta" id="pmeta">Click the timeline to start listening.</span>
+    </div>
+  </div>
+  <!-- the engine, not the interface: the timeline is the transport -->
+  <audio id="audio" preload="metadata"></audio>
+
+  <div id="banner"></div>
+  <p class="status" id="status"></p>
+  <div id="results"></div>
+</main>
+
+
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"']/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+function hms(ms) {
+  const s = Math.max(0, ms/1000);
+  const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), sec = s%60;
+  return h > 0 ? `${h}:${String(m).padStart(2,'0')}:${sec.toFixed(1).padStart(4,'0')}`
+               : `${m}:${sec.toFixed(1).padStart(4,'0')}`;
+}
+/** Global milliseconds -> a label whose resolution suits the zoom level. */
+function globalLabel(ms, spanMs) {
+  const t = new Date(MASTER.epochMs + ms);
+  const iso = t.toISOString();
+  if (spanMs > 5*86400000) return iso.slice(0,10);
+  if (spanMs > 6*3600000)  return iso.slice(5,16).replace('T',' ');
+  if (spanMs > 120000)     return iso.slice(11,19);
+  return iso.slice(11,23);
+}
+
+// ---------------------------------------------------------------------------
+// master timeline
+// ---------------------------------------------------------------------------
+
+const MASTER = { epochMs: 0, totalMs: 0, placements: [], lanes: 1, coverage: [], loaded: false };
+// viewport over the master axis, in global ms
+const VIEW = { start: 0, span: 1 };
+let HITS = [];          // {globalStart, globalEnd, index}
+let PLAYHEAD = null;    // global ms
+let ACTIVE = -1;        // highlighted result index
+
+const LANE_H = 18, LANE_GAP = 4, AXIS_H = 22, PAD = 10;
+
+function canvasSetup(c, cssHeight) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = c.clientWidth || 900;
+  c.width = Math.round(w*dpr); c.height = Math.round(cssHeight*dpr);
+  c.style.height = cssHeight + 'px';
+  const ctx = c.getContext('2d');
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  return { ctx, w, h: cssHeight };
+}
+const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const xOf = (ms, w) => (ms - VIEW.start) / VIEW.span * w;
+const msOf = (x, w) => VIEW.start + (x / w) * VIEW.span;
+
+function drawMain() {
+  const height = AXIS_H + PAD + MASTER.lanes*(LANE_H+LANE_GAP) + PAD;
+  const { ctx, w, h } = canvasSetup($('canvas'), height);
+  ctx.clearRect(0,0,w,h);
+
+  // time axis: pick a tick step that yields readable spacing at this zoom
+  const steps = [1000,5000,15000,60000,300000,900000,3600000,3*3600000,6*3600000,
+                 12*3600000,86400000,2*86400000,7*86400000];
+  let step = steps[steps.length-1];
+  for (const s of steps) { if (VIEW.span / s <= 12) { step = s; break; } }
+  ctx.strokeStyle = css('--line'); ctx.fillStyle = css('--dim');
+  ctx.font = '10px ui-monospace, monospace'; ctx.lineWidth = 1;
+  const first = Math.ceil(VIEW.start/step)*step;
+  for (let t = first; t < VIEW.start + VIEW.span; t += step) {
+    const x = Math.round(xOf(t,w)) + 0.5;
+    ctx.beginPath(); ctx.moveTo(x, AXIS_H-5); ctx.lineTo(x, h); ctx.stroke();
+    ctx.fillText(globalLabel(t, VIEW.span), x+3, 12);
+  }
+
+  // placements, one bar per stream on its lane
+  for (const p of MASTER.placements) {
+    const x0 = xOf(p.global_start_ms, w), x1 = xOf(p.global_end_ms, w);
+    if (x1 < -2 || x0 > w+2) continue;
+    const y = AXIS_H + PAD + p.lane*(LANE_H+LANE_GAP);
+    ctx.fillStyle = p.indexed ? css('--track-idx') : css('--track');
+    ctx.fillRect(x0, y, Math.max(1.5, x1-x0), LANE_H);
+    // label the bar when there is room for it
+    if (x1-x0 > 70) {
+      ctx.fillStyle = p.indexed ? css('--bg') : css('--dim');
+      ctx.font = '10px ui-sans-serif, system-ui';
+      ctx.save(); ctx.beginPath(); ctx.rect(x0,y,x1-x0,LANE_H); ctx.clip();
+      ctx.fillText(p.stream_name, x0+4, y+11); ctx.restore();
+    }
+  }
+
+  // search hits, drawn over everything so they are never hidden by a bar
+  ctx.fillStyle = css('--hit');
+  for (const hit of HITS) {
+    const x0 = xOf(hit.globalStart, w), x1 = xOf(hit.globalEnd, w);
+    if (x1 < -2 || x0 > w+2) continue;
+    const wid = Math.max(2, x1-x0);
+    ctx.globalAlpha = hit.index === ACTIVE ? 1 : 0.75;
+    ctx.fillRect(x0, AXIS_H+2, wid, h-AXIS_H-4);
+    // a tick on the axis keeps a 3-second hit visible at 53-day zoom
+    ctx.fillRect(x0-0.5, AXIS_H-8, Math.max(2,wid), 7);
+  }
+  ctx.globalAlpha = 1;
+
+  if (PLAYHEAD !== null) {
+    const x = Math.round(xOf(PLAYHEAD,w)) + 0.5;
+    // a halo so the playhead stays findable against a dense bar
+    ctx.strokeStyle = css('--card'); ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.moveTo(x, AXIS_H-10); ctx.lineTo(x, h); ctx.stroke();
+    ctx.strokeStyle = css('--play'); ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(x, AXIS_H-10); ctx.lineTo(x, h); ctx.stroke();
+    ctx.fillStyle = css('--play');
+    ctx.beginPath(); ctx.moveTo(x-5,AXIS_H-11); ctx.lineTo(x+5,AXIS_H-11); ctx.lineTo(x,AXIS_H-3);
+    ctx.closePath(); ctx.fill();
+  }
+
+  const pct = (VIEW.span / MASTER.totalMs) * 100;
+  $('tlrange').innerHTML =
+    `<strong>${globalLabel(VIEW.start, VIEW.span)}</strong> &rarr; ` +
+    `<strong>${globalLabel(VIEW.start+VIEW.span, VIEW.span)}</strong> ` +
+    `&middot; showing ${pct < 0.5 ? pct.toFixed(3) : pct.toFixed(1)}% of ` +
+    `${(MASTER.totalMs/86400000).toFixed(1)} days`;
+}
+
+/** The minimap always shows the whole archive plus the current viewport. */
+function drawMini() {
+  const { ctx, w, h } = canvasSetup($('mini'), 26);
+  ctx.clearRect(0,0,w,h);
+  const sx = (ms) => ms / MASTER.totalMs * w;
+  ctx.fillStyle = css('--track');
+  for (const p of MASTER.placements) {
+    ctx.fillRect(sx(p.global_start_ms), 4 + p.lane*3, Math.max(1, sx(p.global_end_ms-p.global_start_ms)), 2.5);
+  }
+  ctx.fillStyle = css('--track-idx');
+  for (const [a,b] of MASTER.coverage) ctx.fillRect(sx(a), h-7, Math.max(1.5, sx(b-a)), 4);
+  ctx.fillStyle = css('--hit');
+  for (const hit of HITS) ctx.fillRect(sx(hit.globalStart)-0.5, 2, 2, h-4);
+  // viewport window
+  ctx.strokeStyle = css('--play'); ctx.lineWidth = 1;
+  ctx.strokeRect(Math.max(0.5, sx(VIEW.start)), 0.5,
+                 Math.max(2, sx(VIEW.span)), h-1);
+}
+
+function draw() { if (MASTER.loaded) { drawMain(); drawMini(); } }
+
+function clampView() {
+  VIEW.span = Math.min(MASTER.totalMs, Math.max(2000, VIEW.span));
+  VIEW.start = Math.max(0, Math.min(MASTER.totalMs - VIEW.span, VIEW.start));
+}
+function zoomAt(factor, anchorMs) {
+  const rel = (anchorMs - VIEW.start) / VIEW.span;
+  VIEW.span *= factor;
+  clampView();
+  VIEW.start = anchorMs - rel*VIEW.span;
+  clampView();
+  draw();
+}
+
+async function loadMaster() {
+  const m = await (await fetch('/api/master')).json();
+  MASTER.epochMs = Date.parse(m.epoch_utc);
+  MASTER.totalMs = m.total_ms || 1;
+  MASTER.placements = m.placements || [];
+  MASTER.lanes = Math.max(1, m.lane_count || 1);
+  MASTER.coverage = m.coverage || [];
+  MASTER.loaded = true;
+  VIEW.start = 0; VIEW.span = MASTER.totalMs;
+  $('tlnote').innerHTML =
+    `${MASTER.placements.length} streams &middot; ` +
+    `${(m.recorded_ms/3600000).toFixed(0)} h recorded across ` +
+    `${(m.total_ms/86400000).toFixed(1)} days &middot; ` +
+    `<strong>${(m.indexed_ms/3600000).toFixed(2)} h indexed</strong>` +
+    (m.wall_clock_approximate
+      ? ` &middot; positions between streams are approximate (S3-derived), exact within a stream`
+      : '') +
+    (m.unplaceable?.length ? ` &middot; ${m.unplaceable.length} unplaceable` : '');
+  draw();
+}
+
+// interactions -------------------------------------------------------------
+const cv = $('canvas');
+let dragging = false, dragX = 0, dragStart = 0, moved = 0;
+
+cv.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const r = cv.getBoundingClientRect();
+  zoomAt(Math.exp(e.deltaY * 0.0016), msOf(e.clientX - r.left, r.width));
+}, { passive: false });
+
+cv.addEventListener('pointerdown', (e) => {
+  dragging = true; moved = 0; dragX = e.clientX; dragStart = VIEW.start;
+  cv.setPointerCapture(e.pointerId);
+});
+cv.addEventListener('pointermove', (e) => {
+  const r = cv.getBoundingClientRect();
+  if (dragging) {
+    moved += Math.abs(e.clientX - dragX);
+    VIEW.start = dragStart - (e.clientX - dragX) / r.width * VIEW.span;
+    clampView(); draw();
+  } else {
+    cv.title = globalLabel(msOf(e.clientX - r.left, r.width), Math.min(VIEW.span, 60000));
+  }
+});
+cv.addEventListener('pointerup', (e) => {
+  dragging = false;
+  if (moved > 4) return;               // a drag is a pan, not a seek
+  const r = cv.getBoundingClientRect();
+  seekGlobal(msOf(e.clientX - r.left, r.width));
+});
+
+$('mini').addEventListener('pointerdown', (e) => {
+  const r = e.target.getBoundingClientRect();
+  VIEW.start = (e.clientX - r.left)/r.width * MASTER.totalMs - VIEW.span/2;
+  clampView(); draw();
+});
+
+$('zoomin').onclick  = () => zoomAt(0.4, VIEW.start + VIEW.span/2);
+$('zoomout').onclick = () => zoomAt(2.5, VIEW.start + VIEW.span/2);
+$('zoomfit').onclick = () => { VIEW.start = 0; VIEW.span = MASTER.totalMs; draw(); };
+$('zoomplay').onclick = () => {
+  if (!MASTER.coverage.length) return;
+  const a = MASTER.coverage[0][0], b = MASTER.coverage[MASTER.coverage.length-1][1];
+  VIEW.span = (b-a)*1.15; VIEW.start = a - (b-a)*0.075; clampView(); draw();
+};
+window.addEventListener('resize', draw);
+
+// ---------------------------------------------------------------------------
+// playback, anchored to the master axis
+// ---------------------------------------------------------------------------
+
+const audio = $('audio');
+// anchor: the audio element's clock is asset-local, so remember the global
+// position that corresponded to one known currentTime and derive the rest
+let anchor = null;   // { globalMs, audioTime, streamId }
+
+function setPlayerMeta(text) { $('pmeta').innerHTML = text; }
+
+/** The transport is one button; the timeline is the scrubber. */
+function syncTransport() {
+  const btn = $('playpause');
+  const ready = !!audio.src;
+  btn.disabled = !ready;
+  btn.innerHTML = audio.paused ? '&#9654;' : '&#10074;&#10074;';
+  btn.title = (audio.paused ? 'play' : 'pause') + ' (space)';
+}
+
+function setClock(globalMs) {
+  $('pclock').textContent = globalMs == null || !MASTER.loaded
+    ? '\u2014'
+    : new Date(MASTER.epochMs + globalMs).toISOString().replace('T', ' ').slice(0, 19) + 'Z';
+}
+
+/** Seek the master axis: resolve globally, load the asset, jump to the offset. */
+async function seekGlobal(globalMs, opts = {}) {
+  globalMs = Math.max(0, Math.round(globalMs));
+  PLAYHEAD = globalMs; draw();
+  const r = await (await fetch(`/api/master/resolve?t=${(globalMs/1000).toFixed(3)}`)).json();
+
+  if (!r.playback) {
+    const next = r.next_audio_global_ms;
+    setPlayerMeta(
+      `<strong>${esc(r.utc)}</strong> &middot; no indexed audio here` +
+      (r.candidates?.length
+        ? ` &middot; recorded by ${r.candidates.map(c => esc(c.stream_name)).join(', ')} (not yet indexed)`
+        : ' &middot; nothing was recording') +
+      (next != null
+        ? ` &middot; <a href="#" id="jumpnext">jump to the next audio</a>`
+        : ''));
+    if (next != null) $('jumpnext').onclick = (e) => { e.preventDefault(); seekGlobal(next); };
+    audio.pause();
+    setClock(globalMs);
+    syncTransport();
+    return;
+  }
+
+  const pb = r.playback;
+  const preroll = opts.preroll ?? 0;
+  const offset = Math.max(0, (pb.asset_offset_ms - preroll) / 1000);
+  const src = `/assets/${pb.stream_id}/${pb.asset_key}.m4a`;
+  if (!audio.src.endsWith(`${pb.asset_key}.m4a`)) {
+    audio.src = src;
+    await new Promise(res => { audio.addEventListener('loadedmetadata', res, { once:true }); audio.load(); });
+  } else if (audio.readyState < 1) {
+    await new Promise(res => { audio.addEventListener('loadedmetadata', res, { once:true }); audio.load(); });
+  }
+  audio.currentTime = offset;
+  anchor = { globalMs: globalMs - preroll, audioTime: offset, streamId: pb.stream_id };
+  if (opts.play !== false) audio.play().catch(() => {});
+
+  setClock(globalMs);
+  syncTransport();
+  const others = (r.candidates || []).filter(c => c.stream_id !== pb.stream_id);
+  setPlayerMeta(
+    `<strong>${esc(r.utc)}</strong> &middot; ${esc(r.candidates?.[0]?.stream_name || '')} ` +
+    `(stream ${pb.stream_id}) at ${hms(r.stream_ms)} ` +
+    (opts.label ? `&middot; ${esc(opts.label)} ` : '') +
+    (preroll ? `&middot; started ${(preroll/1000).toFixed(1)}s early ` : '') +
+    (others.length ? `&middot; also recording: ${others.map(c => esc(c.stream_name)).join(', ')}` : ''));
+}
+
+// keep the playhead and clock following the audio
+audio.addEventListener('timeupdate', () => {
+  if (!anchor) return;
+  PLAYHEAD = anchor.globalMs + (audio.currentTime - anchor.audioTime) * 1000;
+  setClock(PLAYHEAD);
+  draw();
+});
+for (const ev of ['play', 'pause', 'loadedmetadata', 'emptied']) {
+  audio.addEventListener(ev, syncTransport);
+}
+
+$('playpause').onclick = () => {
+  if (!audio.src) return;
+  if (audio.paused) audio.play().catch(() => {}); else audio.pause();
+};
+
+// space toggles, unless the caret is in a field
+window.addEventListener('keydown', (e) => {
+  if (e.code !== 'Space') return;
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return;
+  e.preventDefault();
+  $('playpause').click();
+});
+// when an asset runs out, continue along the master axis rather than stopping
+audio.addEventListener('ended', () => {
+  if (!anchor) return;
+  seekGlobal(PLAYHEAD + 1, { play: true });
+});
+
+// ---------------------------------------------------------------------------
+// search
+// ---------------------------------------------------------------------------
+
+function evidenceChips(ev) {
+  const d = ev.detail || {}, out = [];
+  if (d.kind === 'bird') {
+    out.push(`<span class="chip bird">${esc(d.common_name)} ${(d.confidence*100).toFixed(0)}%</span>`);
+    if (!d.location_prior_used) out.push(`<span class="chip warnc">no location prior</span>`);
+  } else if (d.kind === 'sound') {
+    for (const t of (d.tags||[]).slice(0,4))
+      out.push(`<span class="chip">${esc(t.label)} z=${t.score.toFixed(1)}</span>`);
+    if (!(d.tags||[]).length) {
+      // an untagged vector hit is only as good as its similarity; showing the
+      // number stops a 0.02 match reading like a 0.4 one
+      const sim = ev.similarity;
+      out.push(sim == null
+        ? `<span class="chip">acoustic match</span>`
+        : `<span class="chip${sim < 0.25 ? ' warnc' : ''}">acoustic match ${sim.toFixed(2)}${sim < 0.25 ? ' (weak)' : ''}</span>`);
+    }
+  }
+  return out.join('');
+}
+
+function render(data) {
+  const results = $('results'); results.innerHTML = '';
+  const d = data.diagnostics || {}, skipped = d.rankers_skipped || [];
+  $('banner').innerHTML = skipped.length
+    ? `<div class="banner">Some rankers did not run, so these results are incomplete:<br>` +
+      skipped.map(s => `<code>${esc(s.ranker)}</code>: ${esc(s.reason)}`).join('<br>') + `</div>` : '';
+
+  const req = d.required_together || [];
+  $('status').innerHTML =
+    `${data.results.length} episode${data.results.length===1?'':'s'} in ${data.elapsed_ms} ms ` +
+    `&middot; searched ${(d.searched_tracks||[]).join(', ')||'nothing'}` +
+    (req.length>1 ? ` &middot; required together: <strong>${req.join(' + ')}</strong>` : '') +
+    ` &middot; ${d.candidates||0} candidates &rarr; ${d.episodes_before_filters||0} episodes` +
+    (d.weak_hits_dropped ? ` &middot; ${d.weak_hits_dropped} too dissimilar to count` : '');
+
+  // highlight every hit on the master timeline
+  HITS = data.results
+    .filter(r => r.global_start_ms != null)
+    .map((r, i) => ({ globalStart: r.global_start_ms, globalEnd: r.global_end_ms, index: i }));
+  ACTIVE = -1;
+  // frame the viewport on the hits so they are visible immediately
+  if (HITS.length) {
+    const lo = Math.min(...HITS.map(h => h.globalStart));
+    const hi = Math.max(...HITS.map(h => h.globalEnd));
+    const pad = Math.max(60000, (hi-lo)*0.15);
+    VIEW.span = (hi-lo) + pad*2; VIEW.start = lo - pad; clampView();
+  }
+  draw();
+
+  if (!data.results.length) {
+    results.innerHTML = `<p class="status">Nothing matched. Try a broader query, turn off co-occurrence, or lower the confidence floor.</p>`;
+    return;
+  }
+
+  data.results.forEach((r, i) => {
+    const el = document.createElement('div');
+    el.className = 'result';
+    const speech = (r.evidence||[]).find(e => (e.detail||{}).kind === 'speech');
+    const utc = r.global_start_ms != null
+      ? new Date(MASTER.epochMs + r.global_start_ms).toISOString().replace('T',' ').slice(0,19) + 'Z'
+      : '';
+    el.innerHTML = `
+      <div class="rtop">
+        <span class="rwhen">${hms(r.best.start_ms)}
+          <span class="rutc">${esc(utc)}</span></span>
+        <span class="rsrc">stream ${r.stream_id} &middot; ${(r.modalities||[]).join(' + ')}</span>
+      </div>
+      <div class="chips">${(r.evidence||[]).map(evidenceChips).join('')}</div>
+      ${speech ? `<div class="transcript">&ldquo;${esc(speech.detail.text)}&rdquo;
+        <span class="machine">machine transcript &middot; confidence
+        ${(speech.detail.transcript_confidence*100).toFixed(0)}% &middot; no-speech
+        ${(speech.detail.no_speech_probability*100).toFixed(0)}%</span></div>` : ''}
+      <div class="ractions">
+        <button class="playbtn">Play</button>
+        <button class="ghost zoombtn">show on timeline</button>
+        <span class="precision">${esc(r.best.precision||'')} &middot; matched by ${(r.rankers||[]).join(', ')}</span>
+        <a href="${r.playback ? r.playback.stable_url : '#'}">share</a>
+      </div>
+      <details><summary>why this matched</summary><pre>${esc(JSON.stringify(r.evidence,null,2))}</pre></details>`;
+
+    el.querySelector('.playbtn').onclick = () => {
+      ACTIVE = i;
+      document.querySelectorAll('.result').forEach(n => n.classList.remove('active'));
+      el.classList.add('active');
+      // seek the master axis, with the preroll the evidence earned
+      seekGlobal(r.global_start_ms, {
+        preroll: r.playback ? r.playback.preroll_ms : 0,
+        label: `${r.best.precision}`,
+      });
+    };
+    el.querySelector('.zoombtn').onclick = () => {
+      ACTIVE = i;
+      const pad = Math.max(30000, (r.global_end_ms - r.global_start_ms) * 4);
+      VIEW.span = (r.global_end_ms - r.global_start_ms) + pad*2;
+      VIEW.start = r.global_start_ms - pad;
+      clampView(); draw();
+    };
+    results.appendChild(el);
+  });
+}
+
+async function search() {
+  const q = $('q').value.trim(); if (!q) return;
+  $('status').textContent = 'searching…';
+  const params = new URLSearchParams({
+    q, limit: $('limit').value, min_confidence: $('minconf').value,
+    max_per_stream: $('maxper').value, min_similarity: $('minsim').value,
+    conjunction: $('conj').checked ? 'true' : 'false' });
+  if ($('modality').value) params.set('modality', $('modality').value);
+  if ($('species').value.trim()) params.set('species', $('species').value.trim());
+  try {
+    const data = await (await fetch(`/api/search?${params}`)).json();
+    if (data.error) { $('status').textContent = `error: ${data.error}`; return; }
+    render(data);
+    history.replaceState(null, '', `/?q=${encodeURIComponent(q)}`);
+  } catch (e) { $('status').textContent = `request failed: ${e}`; }
+}
+
+$('go').onclick = search;
+$('q').addEventListener('keydown', e => { if (e.key === 'Enter') search(); });
+for (const b of document.querySelectorAll('.examples button'))
+  b.onclick = () => { $('q').value = b.dataset.q; search(); };
+
+(async function boot() {
+  syncTransport();
+  await loadMaster();
+  const m = location.pathname.match(/^\/listen\/(\d+)/);
+  const t = new URLSearchParams(location.search).get('t');
+  if (m) {
+    // a shared per-stream link maps onto the master axis
+    const p = MASTER.placements.find(p => p.stream_id === Number(m[1]));
+    if (p) { const g = p.global_start_ms + Number(t||0)*1000; $('zoomplay').click(); seekGlobal(g, {play:false}); }
+    return;
+  }
+  const q = new URLSearchParams(location.search).get('q');
+  if (q) { $('q').value = q; search(); }
+  else $('zoomplay').click();
+})();
+</script>
+</body>
+</html>

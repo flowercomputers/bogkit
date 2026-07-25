@@ -1,0 +1,8 @@
+# generated artifacts: manifests, probes, segment indexes, timelines,
+# cached source segments, compacted assets, model outputs
+data/
+# installed dependencies, not sources
+tools/node_modules/
+pipelines/.venv/
+__pycache__/
+*.pyc
