@@ -1,0 +1,611 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 60;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		AC0C982C8D574EF184F5936C /* Pods_UntitledMobileFPS.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 725C717EA7FEFED6EDF6E52A /* Pods_UntitledMobileFPS.framework */; };
+		B00000000000000000000001 /* UntitledMobileFPSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000001 /* UntitledMobileFPSApp.swift */; };
+		B00000000000000000000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000002 /* ContentView.swift */; };
+		B00000000000000000000003 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000003 /* Models.swift */; };
+		B00000000000000000000004 /* FingerGunClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000004 /* FingerGunClassifier.swift */; };
+		B00000000000000000000005 /* GestureStateMachine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000005 /* GestureStateMachine.swift */; };
+		B00000000000000000000006 /* VisionHandPoseDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000006 /* VisionHandPoseDetector.swift */; };
+		B00000000000000000000007 /* CameraService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000007 /* CameraService.swift */; };
+		B00000000000000000000008 /* CameraPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000008 /* CameraPreview.swift */; };
+		B00000000000000000000009 /* DebugOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000009 /* DebugOverlay.swift */; };
+		B0000000000000000000000A /* PreviewGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000000A /* PreviewGeometry.swift */; };
+		B0000000000000000000000B /* Aiming.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000000B /* Aiming.swift */; };
+		B0000000000000000000000C /* MediaPipeHandTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000000C /* MediaPipeHandTracker.swift */; };
+		B0000000000000000000000D /* LandmarkRecording.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000000D /* LandmarkRecording.swift */; };
+		B0000000000000000000000E /* hand_landmarker.task in Resources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000000E /* hand_landmarker.task */; };
+		B00000000000000000000015 /* MultiplayerModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000015 /* MultiplayerModels.swift */; };
+		B00000000000000000000016 /* AppearanceMatching.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000016 /* AppearanceMatching.swift */; };
+		B00000000000000000000017 /* AppearanceAnalyzer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000017 /* AppearanceAnalyzer.swift */; };
+		B00000000000000000000018 /* PersonTargetingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000018 /* PersonTargetingService.swift */; };
+		B00000000000000000000019 /* RealtimeMatchClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000019 /* RealtimeMatchClient.swift */; };
+		B0000000000000000000001A /* NearbyInteractionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000001A /* NearbyInteractionService.swift */; };
+		B0000000000000000000001B /* GameplayCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000001B /* GameplayCoordinator.swift */; };
+		B0000000000000000000001C /* MultiplayerViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000001C /* MultiplayerViews.swift */; };
+		B00000000000000000000026 /* AppModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000026 /* AppModels.swift */; };
+		B00000000000000000000027 /* CredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000027 /* CredentialStore.swift */; };
+		B00000000000000000000028 /* AppSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000028 /* AppSession.swift */; };
+		B00000000000000000000029 /* AppViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000029 /* AppViews.swift */; };
+		B0000000000000000000002B /* MobileCLIPEmbedder.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000002B /* MobileCLIPEmbedder.swift */; };
+		B0000000000000000000002C /* MobileCLIPImageEncoder.mlpackage in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000002C /* MobileCLIPImageEncoder.mlpackage */; };
+		B0000000000000000000002D /* OutfitZeroShotClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000002D /* OutfitZeroShotClassifier.swift */; };
+		B0000000000000000000002E /* OutfitLabels.json in Resources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000002E /* OutfitLabels.json */; };
+		B0000000000000000000002F /* SightsAiming.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000002F /* SightsAiming.swift */; };
+		B00000000000000000000030 /* SightsReticle.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000030 /* SightsReticle.swift */; };
+		B00000000000000000000032 /* ReticleStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000032 /* ReticleStyle.swift */; };
+		B00000000000000000000033 /* SilhouetteSkin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000033 /* SilhouetteSkin.swift */; };
+		B00000000000000000000034 /* SilhouetteSkinRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000034 /* SilhouetteSkinRenderer.swift */; };
+		B00000000000000000000035 /* SilhouetteSkinTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000035 /* SilhouetteSkinTests.swift */; };
+		B00000000000000000000011 /* FingerGunClassifierTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000011 /* FingerGunClassifierTests.swift */; };
+		B00000000000000000000012 /* GestureStateMachineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000012 /* GestureStateMachineTests.swift */; };
+		B00000000000000000000013 /* PreviewGeometryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000013 /* PreviewGeometryTests.swift */; };
+		B00000000000000000000014 /* AimingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000014 /* AimingTests.swift */; };
+		B00000000000000000000025 /* MultiplayerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000025 /* MultiplayerTests.swift */; };
+		B00000000000000000000031 /* SightsAimingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000031 /* SightsAimingTests.swift */; };
+		B0000000000000000000002A /* AppModelsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000002A /* AppModelsTests.swift */; };
+		B7F19133A379F1649DB2B400 /* Pods_UntitledMobileFPSTests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FD3276EE97B8F9B5156BF81B /* Pods_UntitledMobileFPSTests.framework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		D00000000000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E00000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = E00000000000000000000002;
+			remoteInfo = UntitledMobileFPS;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		0784F94647611A89055BF4AB /* Pods-UntitledMobileFPS.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-UntitledMobileFPS.debug.xcconfig"; path = "Target Support Files/Pods-UntitledMobileFPS/Pods-UntitledMobileFPS.debug.xcconfig"; sourceTree = "<group>"; };
+		095A6551DC7B9D14705E800E /* Pods-UntitledMobileFPS.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-UntitledMobileFPS.release.xcconfig"; path = "Target Support Files/Pods-UntitledMobileFPS/Pods-UntitledMobileFPS.release.xcconfig"; sourceTree = "<group>"; };
+		725C717EA7FEFED6EDF6E52A /* Pods_UntitledMobileFPS.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_UntitledMobileFPS.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		A00000000000000000000001 /* UntitledMobileFPSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UntitledMobileFPSApp.swift; sourceTree = "<group>"; };
+		A00000000000000000000002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		A00000000000000000000003 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		A00000000000000000000004 /* FingerGunClassifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FingerGunClassifier.swift; sourceTree = "<group>"; };
+		A00000000000000000000005 /* GestureStateMachine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GestureStateMachine.swift; sourceTree = "<group>"; };
+		A00000000000000000000006 /* VisionHandPoseDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisionHandPoseDetector.swift; sourceTree = "<group>"; };
+		A00000000000000000000007 /* CameraService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraService.swift; sourceTree = "<group>"; };
+		A00000000000000000000008 /* CameraPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraPreview.swift; sourceTree = "<group>"; };
+		A00000000000000000000009 /* DebugOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugOverlay.swift; sourceTree = "<group>"; };
+		A0000000000000000000000A /* PreviewGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewGeometry.swift; sourceTree = "<group>"; };
+		A0000000000000000000000B /* Aiming.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Aiming.swift; sourceTree = "<group>"; };
+		A0000000000000000000000C /* MediaPipeHandTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaPipeHandTracker.swift; sourceTree = "<group>"; };
+		A0000000000000000000000D /* LandmarkRecording.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LandmarkRecording.swift; sourceTree = "<group>"; };
+		A0000000000000000000000E /* hand_landmarker.task */ = {isa = PBXFileReference; lastKnownFileType = file; path = hand_landmarker.task; sourceTree = "<group>"; };
+		A00000000000000000000015 /* MultiplayerModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MultiplayerModels.swift; sourceTree = "<group>"; };
+		A00000000000000000000016 /* AppearanceMatching.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppearanceMatching.swift; sourceTree = "<group>"; };
+		A00000000000000000000017 /* AppearanceAnalyzer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppearanceAnalyzer.swift; sourceTree = "<group>"; };
+		A00000000000000000000018 /* PersonTargetingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonTargetingService.swift; sourceTree = "<group>"; };
+		A00000000000000000000019 /* RealtimeMatchClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeMatchClient.swift; sourceTree = "<group>"; };
+		A0000000000000000000001A /* NearbyInteractionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NearbyInteractionService.swift; sourceTree = "<group>"; };
+		A0000000000000000000001B /* GameplayCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameplayCoordinator.swift; sourceTree = "<group>"; };
+		A0000000000000000000001C /* MultiplayerViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MultiplayerViews.swift; sourceTree = "<group>"; };
+		A0000000000000000000001D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A00000000000000000000026 /* AppModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModels.swift; sourceTree = "<group>"; };
+		A00000000000000000000027 /* CredentialStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialStore.swift; sourceTree = "<group>"; };
+		A00000000000000000000028 /* AppSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSession.swift; sourceTree = "<group>"; };
+		A00000000000000000000029 /* AppViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppViews.swift; sourceTree = "<group>"; };
+		A0000000000000000000002B /* MobileCLIPEmbedder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileCLIPEmbedder.swift; sourceTree = "<group>"; };
+		A0000000000000000000002C /* MobileCLIPImageEncoder.mlpackage */ = {isa = PBXFileReference; lastKnownFileType = folder.mlpackage; path = MobileCLIPImageEncoder.mlpackage; sourceTree = "<group>"; };
+		A0000000000000000000002D /* OutfitZeroShotClassifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutfitZeroShotClassifier.swift; sourceTree = "<group>"; };
+		A0000000000000000000002E /* OutfitLabels.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = OutfitLabels.json; sourceTree = "<group>"; };
+		A0000000000000000000002F /* SightsAiming.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SightsAiming.swift; sourceTree = "<group>"; };
+		A00000000000000000000030 /* SightsReticle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SightsReticle.swift; sourceTree = "<group>"; };
+		A00000000000000000000032 /* ReticleStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReticleStyle.swift; sourceTree = "<group>"; };
+		A00000000000000000000033 /* SilhouetteSkin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SilhouetteSkin.swift; sourceTree = "<group>"; };
+		A00000000000000000000034 /* SilhouetteSkinRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SilhouetteSkinRenderer.swift; sourceTree = "<group>"; };
+		A00000000000000000000035 /* SilhouetteSkinTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SilhouetteSkinTests.swift; sourceTree = "<group>"; };
+		A00000000000000000000011 /* FingerGunClassifierTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FingerGunClassifierTests.swift; sourceTree = "<group>"; };
+		A00000000000000000000012 /* GestureStateMachineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GestureStateMachineTests.swift; sourceTree = "<group>"; };
+		A00000000000000000000013 /* PreviewGeometryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewGeometryTests.swift; sourceTree = "<group>"; };
+		A00000000000000000000014 /* AimingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AimingTests.swift; sourceTree = "<group>"; };
+		A00000000000000000000025 /* MultiplayerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MultiplayerTests.swift; sourceTree = "<group>"; };
+		A0000000000000000000002A /* AppModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelsTests.swift; sourceTree = "<group>"; };
+		A00000000000000000000031 /* SightsAimingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SightsAimingTests.swift; sourceTree = "<group>"; };
+		A00000000000000000000020 /* UntitledMobileFPS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = UntitledMobileFPS.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A00000000000000000000021 /* UntitledMobileFPSTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = UntitledMobileFPSTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		C76A7153C7B828D86ED9927A /* Pods-UntitledMobileFPSTests.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-UntitledMobileFPSTests.release.xcconfig"; path = "Target Support Files/Pods-UntitledMobileFPSTests/Pods-UntitledMobileFPSTests.release.xcconfig"; sourceTree = "<group>"; };
+		F7B95284F42149EC570B0C09 /* Pods-UntitledMobileFPSTests.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-UntitledMobileFPSTests.debug.xcconfig"; path = "Target Support Files/Pods-UntitledMobileFPSTests/Pods-UntitledMobileFPSTests.debug.xcconfig"; sourceTree = "<group>"; };
+		FD3276EE97B8F9B5156BF81B /* Pods_UntitledMobileFPSTests.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_UntitledMobileFPSTests.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		E00000000000000000000010 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AC0C982C8D574EF184F5936C /* Pods_UntitledMobileFPS.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E00000000000000000000011 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B7F19133A379F1649DB2B400 /* Pods_UntitledMobileFPSTests.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		39D06CF4662D09E316B000F3 /* Pods */ = {
+			isa = PBXGroup;
+			children = (
+				0784F94647611A89055BF4AB /* Pods-UntitledMobileFPS.debug.xcconfig */,
+				095A6551DC7B9D14705E800E /* Pods-UntitledMobileFPS.release.xcconfig */,
+				F7B95284F42149EC570B0C09 /* Pods-UntitledMobileFPSTests.debug.xcconfig */,
+				C76A7153C7B828D86ED9927A /* Pods-UntitledMobileFPSTests.release.xcconfig */,
+			);
+			name = Pods;
+			path = Pods;
+			sourceTree = "<group>";
+		};
+		E00000000000000000000020 = {
+			isa = PBXGroup;
+			children = (
+				E00000000000000000000021 /* UntitledMobileFPS */,
+				E00000000000000000000022 /* UntitledMobileFPSTests */,
+				E00000000000000000000023 /* Products */,
+				39D06CF4662D09E316B000F3 /* Pods */,
+				FB6C969A7F0DB340A2C5EC1F /* Frameworks */,
+			);
+			sourceTree = "<group>";
+		};
+		E00000000000000000000021 /* UntitledMobileFPS */ = {
+			isa = PBXGroup;
+			children = (
+				A00000000000000000000001 /* UntitledMobileFPSApp.swift */,
+				A00000000000000000000002 /* ContentView.swift */,
+				A00000000000000000000003 /* Models.swift */,
+				A00000000000000000000004 /* FingerGunClassifier.swift */,
+				A00000000000000000000005 /* GestureStateMachine.swift */,
+				A00000000000000000000006 /* VisionHandPoseDetector.swift */,
+				A00000000000000000000007 /* CameraService.swift */,
+				A00000000000000000000008 /* CameraPreview.swift */,
+				A00000000000000000000009 /* DebugOverlay.swift */,
+				A0000000000000000000000A /* PreviewGeometry.swift */,
+				A0000000000000000000000B /* Aiming.swift */,
+				A0000000000000000000000C /* MediaPipeHandTracker.swift */,
+				A0000000000000000000000D /* LandmarkRecording.swift */,
+				A0000000000000000000000E /* hand_landmarker.task */,
+				A00000000000000000000015 /* MultiplayerModels.swift */,
+				A00000000000000000000016 /* AppearanceMatching.swift */,
+				A00000000000000000000017 /* AppearanceAnalyzer.swift */,
+				A00000000000000000000018 /* PersonTargetingService.swift */,
+				A00000000000000000000019 /* RealtimeMatchClient.swift */,
+				A0000000000000000000001A /* NearbyInteractionService.swift */,
+				A0000000000000000000001B /* GameplayCoordinator.swift */,
+				A0000000000000000000001C /* MultiplayerViews.swift */,
+				A00000000000000000000026 /* AppModels.swift */,
+				A00000000000000000000027 /* CredentialStore.swift */,
+				A00000000000000000000028 /* AppSession.swift */,
+				A00000000000000000000029 /* AppViews.swift */,
+				A0000000000000000000002B /* MobileCLIPEmbedder.swift */,
+				A0000000000000000000002C /* MobileCLIPImageEncoder.mlpackage */,
+				A0000000000000000000002D /* OutfitZeroShotClassifier.swift */,
+				A0000000000000000000002E /* OutfitLabels.json */,
+				A0000000000000000000002F /* SightsAiming.swift */,
+				A00000000000000000000030 /* SightsReticle.swift */,
+				A00000000000000000000032 /* ReticleStyle.swift */,
+				A00000000000000000000033 /* SilhouetteSkin.swift */,
+				A00000000000000000000034 /* SilhouetteSkinRenderer.swift */,
+				A0000000000000000000001D /* Info.plist */,
+			);
+			path = UntitledMobileFPS;
+			sourceTree = "<group>";
+		};
+		E00000000000000000000022 /* UntitledMobileFPSTests */ = {
+			isa = PBXGroup;
+			children = (
+				A00000000000000000000011 /* FingerGunClassifierTests.swift */,
+				A00000000000000000000012 /* GestureStateMachineTests.swift */,
+				A00000000000000000000013 /* PreviewGeometryTests.swift */,
+				A00000000000000000000014 /* AimingTests.swift */,
+				A00000000000000000000025 /* MultiplayerTests.swift */,
+				A0000000000000000000002A /* AppModelsTests.swift */,
+				A00000000000000000000031 /* SightsAimingTests.swift */,
+				A00000000000000000000035 /* SilhouetteSkinTests.swift */,
+			);
+			path = UntitledMobileFPSTests;
+			sourceTree = "<group>";
+		};
+		E00000000000000000000023 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A00000000000000000000020 /* UntitledMobileFPS.app */,
+				A00000000000000000000021 /* UntitledMobileFPSTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		FB6C969A7F0DB340A2C5EC1F /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				725C717EA7FEFED6EDF6E52A /* Pods_UntitledMobileFPS.framework */,
+				FD3276EE97B8F9B5156BF81B /* Pods_UntitledMobileFPSTests.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		E00000000000000000000002 /* UntitledMobileFPS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F00000000000000000000002 /* Build configuration list for PBXNativeTarget "UntitledMobileFPS" */;
+			buildPhases = (
+				0306B4312963E11D1162CE11 /* [CP] Check Pods Manifest.lock */,
+				E00000000000000000000030 /* Sources */,
+				E00000000000000000000010 /* Frameworks */,
+				E00000000000000000000040 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = UntitledMobileFPS;
+			productName = UntitledMobileFPS;
+			productReference = A00000000000000000000020 /* UntitledMobileFPS.app */;
+			productType = "com.apple.product-type.application";
+		};
+		E00000000000000000000003 /* UntitledMobileFPSTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F00000000000000000000003 /* Build configuration list for PBXNativeTarget "UntitledMobileFPSTests" */;
+			buildPhases = (
+				6C059C58AB64AD2A04DBE9F2 /* [CP] Check Pods Manifest.lock */,
+				E00000000000000000000031 /* Sources */,
+				E00000000000000000000011 /* Frameworks */,
+				E00000000000000000000041 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				D00000000000000000000002 /* PBXTargetDependency */,
+			);
+			name = UntitledMobileFPSTests;
+			productName = UntitledMobileFPSTests;
+			productReference = A00000000000000000000021 /* UntitledMobileFPSTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		E00000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2660;
+				LastUpgradeCheck = 2660;
+				TargetAttributes = {
+					E00000000000000000000002 = {
+						CreatedOnToolsVersion = 26.0;
+					};
+					E00000000000000000000003 = {
+						CreatedOnToolsVersion = 26.0;
+						TestTargetID = E00000000000000000000002;
+					};
+				};
+			};
+			buildConfigurationList = F00000000000000000000001 /* Build configuration list for PBXProject "UntitledMobileFPS" */;
+			compatibilityVersion = "Xcode 15.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = E00000000000000000000020;
+			productRefGroup = E00000000000000000000023 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				E00000000000000000000002 /* UntitledMobileFPS */,
+				E00000000000000000000003 /* UntitledMobileFPSTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		E00000000000000000000040 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B0000000000000000000000E /* hand_landmarker.task in Resources */,
+				B0000000000000000000002E /* OutfitLabels.json in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E00000000000000000000041 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		0306B4312963E11D1162CE11 /* [CP] Check Pods Manifest.lock */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"${PODS_PODFILE_DIR_PATH}/Podfile.lock",
+				"${PODS_ROOT}/Manifest.lock",
+			);
+			name = "[CP] Check Pods Manifest.lock";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/Pods-UntitledMobileFPS-checkManifestLockResult.txt",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
+			showEnvVarsInLog = 0;
+		};
+		6C059C58AB64AD2A04DBE9F2 /* [CP] Check Pods Manifest.lock */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"${PODS_PODFILE_DIR_PATH}/Podfile.lock",
+				"${PODS_ROOT}/Manifest.lock",
+			);
+			name = "[CP] Check Pods Manifest.lock";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/Pods-UntitledMobileFPSTests-checkManifestLockResult.txt",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
+			showEnvVarsInLog = 0;
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		E00000000000000000000030 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B00000000000000000000001 /* UntitledMobileFPSApp.swift in Sources */,
+				B00000000000000000000002 /* ContentView.swift in Sources */,
+				B00000000000000000000003 /* Models.swift in Sources */,
+				B00000000000000000000004 /* FingerGunClassifier.swift in Sources */,
+				B00000000000000000000005 /* GestureStateMachine.swift in Sources */,
+				B00000000000000000000006 /* VisionHandPoseDetector.swift in Sources */,
+				B00000000000000000000007 /* CameraService.swift in Sources */,
+				B00000000000000000000008 /* CameraPreview.swift in Sources */,
+				B00000000000000000000009 /* DebugOverlay.swift in Sources */,
+				B0000000000000000000000A /* PreviewGeometry.swift in Sources */,
+				B0000000000000000000000B /* Aiming.swift in Sources */,
+				B0000000000000000000000C /* MediaPipeHandTracker.swift in Sources */,
+				B0000000000000000000000D /* LandmarkRecording.swift in Sources */,
+				B00000000000000000000015 /* MultiplayerModels.swift in Sources */,
+				B00000000000000000000016 /* AppearanceMatching.swift in Sources */,
+				B00000000000000000000017 /* AppearanceAnalyzer.swift in Sources */,
+				B00000000000000000000018 /* PersonTargetingService.swift in Sources */,
+				B00000000000000000000019 /* RealtimeMatchClient.swift in Sources */,
+				B0000000000000000000001A /* NearbyInteractionService.swift in Sources */,
+				B0000000000000000000001B /* GameplayCoordinator.swift in Sources */,
+				B0000000000000000000001C /* MultiplayerViews.swift in Sources */,
+				B00000000000000000000026 /* AppModels.swift in Sources */,
+				B00000000000000000000027 /* CredentialStore.swift in Sources */,
+				B00000000000000000000028 /* AppSession.swift in Sources */,
+				B00000000000000000000029 /* AppViews.swift in Sources */,
+				B0000000000000000000002B /* MobileCLIPEmbedder.swift in Sources */,
+				B0000000000000000000002C /* MobileCLIPImageEncoder.mlpackage in Sources */,
+				B0000000000000000000002D /* OutfitZeroShotClassifier.swift in Sources */,
+				B0000000000000000000002F /* SightsAiming.swift in Sources */,
+				B00000000000000000000030 /* SightsReticle.swift in Sources */,
+				B00000000000000000000032 /* ReticleStyle.swift in Sources */,
+				B00000000000000000000033 /* SilhouetteSkin.swift in Sources */,
+				B00000000000000000000034 /* SilhouetteSkinRenderer.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E00000000000000000000031 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B00000000000000000000011 /* FingerGunClassifierTests.swift in Sources */,
+				B00000000000000000000012 /* GestureStateMachineTests.swift in Sources */,
+				B00000000000000000000013 /* PreviewGeometryTests.swift in Sources */,
+				B00000000000000000000014 /* AimingTests.swift in Sources */,
+				B00000000000000000000025 /* MultiplayerTests.swift in Sources */,
+				B0000000000000000000002A /* AppModelsTests.swift in Sources */,
+				B00000000000000000000031 /* SightsAimingTests.swift in Sources */,
+				B00000000000000000000035 /* SilhouetteSkinTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		D00000000000000000000002 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = E00000000000000000000002 /* UntitledMobileFPS */;
+			targetProxy = D00000000000000000000001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		F00000000000000000000010 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		F00000000000000000000011 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		F00000000000000000000020 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 0784F94647611A89055BF4AB /* Pods-UntitledMobileFPS.debug.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = GMN5A9UGAS;
+				FPS_DEFAULT_SERVER_NAME = "Bogkit Local";
+				FPS_DEFAULT_SERVER_URL = "http://localhost:3000";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = UntitledMobileFPS/Info.plist;
+				INFOPLIST_KEY_NSCameraUsageDescription = "The camera is used to recognize your finger-gun gesture.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Nearby players connect to the local Bogkit match server.";
+				INFOPLIST_KEY_NSNearbyInteractionUsageDescription = "Ultra-wideband ranging confirms that matched players are close enough to play.";
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.UntitledMobileFPS;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		F00000000000000000000021 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 095A6551DC7B9D14705E800E /* Pods-UntitledMobileFPS.release.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = GMN5A9UGAS;
+				FPS_DEFAULT_SERVER_NAME = "Bogkit Server";
+				FPS_DEFAULT_SERVER_URL = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = UntitledMobileFPS/Info.plist;
+				INFOPLIST_KEY_NSCameraUsageDescription = "The camera is used to recognize your finger-gun gesture.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Nearby players connect to the local Bogkit match server.";
+				INFOPLIST_KEY_NSNearbyInteractionUsageDescription = "Ultra-wideband ranging confirms that matched players are close enough to play.";
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.UntitledMobileFPS;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		F00000000000000000000030 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = F7B95284F42149EC570B0C09 /* Pods-UntitledMobileFPSTests.debug.xcconfig */;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.UntitledMobileFPSTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/UntitledMobileFPS.app/UntitledMobileFPS";
+			};
+			name = Debug;
+		};
+		F00000000000000000000031 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = C76A7153C7B828D86ED9927A /* Pods-UntitledMobileFPSTests.release.xcconfig */;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.UntitledMobileFPSTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/UntitledMobileFPS.app/UntitledMobileFPS";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		F00000000000000000000001 /* Build configuration list for PBXProject "UntitledMobileFPS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F00000000000000000000010 /* Debug */,
+				F00000000000000000000011 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		F00000000000000000000002 /* Build configuration list for PBXNativeTarget "UntitledMobileFPS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F00000000000000000000020 /* Debug */,
+				F00000000000000000000021 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		F00000000000000000000003 /* Build configuration list for PBXNativeTarget "UntitledMobileFPSTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F00000000000000000000030 /* Debug */,
+				F00000000000000000000031 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = E00000000000000000000001 /* Project object */;
+}

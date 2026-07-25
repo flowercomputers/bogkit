@@ -1,0 +1,8 @@
+.DS_Store
+DerivedData/
+.build/
+.swiftpm/
+*.xcuserstate
+xcuserdata/
+Pods/
+.claude/worktrees/
