@@ -4,16 +4,24 @@ This repo contains some of the tooling we've been working on for building Bog st
 
 The best way to create your project is to run this terminal command in the root of this repo:
 
-```bash
-./scripts/new-project.sh [project-name]
+```console
+$ ./scripts/new-project.sh [project-name]
 ``` 
 
-This creates a new binary crate in `examples/[project-name]`, wires it into the workspace, and adds local path dependencies on `fold`, `anny`, and `ese` (you may not necessarily use all of these).
+This creates a new binary crate in `examples/[project-name]`, wires it into the workspace, and adds local path dependencies on `fold`, `anny`, and `ese` (though you may not necessarily use all of these).
 
 Run your project with:
 
-```bash
-cargo run -p [project-name]
+```console
+$ cargo run -p [project-name]
+```
+
+## Documentation
+
+The fold crate is internally documented; to view the doc site, run:
+
+```console
+$ cargo doc --open -pfold 
 ```
 
 ## Hackathon submission
