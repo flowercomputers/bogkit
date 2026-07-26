@@ -323,7 +323,8 @@ fn window(hours: u64, n: usize) {
         tools.sort_by(|a, b| b.1.result_chars.cmp(&a.1.result_chars));
         println!("{} calls still inside the window", total.get());
         println!();
-        println!("  {:<26}{:>7}{:>7}{:>12}", "TOOL", "CALLS", "FAIL", "TOKENS");
+        // Ranks on measured characters, same as the main leaderboard — not tokens.
+        println!("  {:<26}{:>7}{:>7}{:>12}", "TOOL", "CALLS", "FAIL", "CHARS");
         for (tool, s) in tools.iter().take(12) {
             let name = if tool.chars().count() > 25 {
                 let head: String = tool.chars().take(24).collect();
