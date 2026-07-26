@@ -306,35 +306,37 @@ flowchart LR
   style FOLD fill:#f8fafc,stroke:#0ea5e9,stroke-width:2px,color:#075985
 ```
 
-## What "persistent" actually guarantees
+## What "persistent" guarantees
 
-The pipeline ends at a store, so it is worth being exact about what that buys
-and where the ceiling is. All of the following is `fold`'s contract, not
-bog-bench's:
+`fold`'s contract, not bog-bench's:
 
 | property | where |
 |---|---|
 | state lives in an embedded [fjall](https://docs.rs/fjall) LSM store | `fold/src/lib.rs:11` |
 | a commit is crash-safe as soon as it returns | `fold/src/stream/unkeyed.rs:86` |
-| `checkpoint()` fsyncs (`PersistMode::SyncAll`) — *that* is what survives OS / power loss | `fold/src/stream/unkeyed.rs:84-90` |
+| `checkpoint()` fsyncs (`PersistMode::SyncAll`); that is what survives OS / power loss | `fold/src/stream/unkeyed.rs:84-90` |
 | reads observe one consistent snapshot across every sink | `fold/src/lib.rs:12` |
 | each sink gets its own partition, `sink_{name}` | `fold/src/stream/mod.rs:89-102` |
 | the store is a `SingleWriterTxDatabase` | `fold/src/stream/mod.rs:72` |
 
-Two consequences worth stating plainly, because both are limits rather than
-features:
+### Tradeoffs
 
-**bog-bench never calls `checkpoint()`.** Every command relies on the default
-guarantee, which covers the case that actually happens here — the process exits
-and the next one reads its state back. It does not cover OS or power failure, so
-a machine losing power mid-ingest can lose the most recent commits. Re-running
-`recent <n>` repairs that, since ingest is idempotent.
+| choice | buys | costs |
+|---|---|---|
+| commit-level crash safety, no `checkpoint()` call | no fsync on the ingest path | OS / power failure can lose the most recent commits |
+| `SingleWriterTxDatabase` | reads take a consistent snapshot across all sinks; no write coordination | one writer at a time |
+| one partition per sink | sinks are independent; a retract touches only its own keyspaces | adding a node changes the keyspace set |
+| `window` runs on its own stream and database | the primary keyspaces are untouched | the window is a full replay, not maintained state |
 
-**Single writer is the scale ceiling, not the LSM.** Two `bog-bench ingest`
-processes cannot fold concurrently. For this workload that costs nothing —
-transcripts are written by agents on one machine, and readers are unaffected
-because they take snapshots — but it is the constraint that would have to change
-before this ran as a shared service.
+### Limitations
+
+| limitation | detail |
+|---|---|
+| no fsync | bog-bench never calls `checkpoint()`. Repair after power loss: re-run `recent <n>`; ingest is idempotent. |
+| no concurrent ingest | two `bog-bench ingest` processes cannot fold at once. Single-writer binds before the LSM does. |
+| one agent runtime | Claude Code transcripts only. |
+| no latency percentiles | `duration_ms` is parsed and summed per tool but never surfaced; percentiles would want fold's `Histogram` sink. |
+| `Retain` is processing-time | event-time windows need `Retain::with_clock` plus a replay clock, as `window` does. |
 
 ## Why fold
 
@@ -385,8 +387,7 @@ main pipeline is probably the right engine-scale one.
 
 ## Scope
 
-Deliberately small — this was built in a single hackathon session. In: Claude
-Code transcripts, the tool-call join, per-tool and per-session views, ingest /
-retract / show / bench, and the rolling window. Out: other agent runtimes,
-latency percentiles, cross-engine comparison, and anything requiring `anny` or
-`ese`.
+Built in a single hackathon session. In: Claude Code transcripts, the tool-call
+join, per-tool and per-session views, ingest / retract / show / bench, and the
+rolling window. Out: anything requiring `anny` or `ese`, and the rows under
+*Limitations* above.
