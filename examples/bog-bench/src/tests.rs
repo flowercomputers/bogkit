@@ -265,10 +265,7 @@ fn re_ingesting_is_a_no_op_but_retraction_reopens_it() {
     }
 
     assert!(seen!(st).contains("s1"), "s1 should register as ingested");
-    let fresh: Vec<&ToolCall> = {
-        let s = seen!(st);
-        calls.iter().filter(|c| !s.contains(&c.session)).collect()
-    };
+    let fresh = crate::ingestable(&calls, &seen!(st));
     assert!(fresh.is_empty(), "second pass must find nothing to insert");
 
     // Unfiltered, the same insert would double — proving the guard earns its
@@ -386,11 +383,9 @@ fn retracting_an_uningested_session_is_a_no_op() {
         };
     }
 
-    // The guard main applies before removing anything.
-    let present: Vec<&ToolCall> = {
-        let s = seen!(st);
-        stranger.iter().filter(|c| s.contains(&c.session)).collect()
-    };
+    // The guard main applies before removing anything — the real function,
+    // not a copy of it, so deleting it from main.rs fails this test.
+    let present = crate::retractable(&stranger, &seen!(st));
     assert!(
         present.is_empty(),
         "a never-ingested session must present nothing to retract"
@@ -409,12 +404,29 @@ fn retracting_an_uningested_session_is_a_no_op() {
             tx.remove(c);
         }
     });
-    let again: Vec<&ToolCall> = {
-        let s = seen!(st);
-        ingested.iter().filter(|c| s.contains(&c.session)).collect()
-    };
+    let again = crate::retractable(&ingested, &seen!(st));
     assert!(again.is_empty(), "double retract must be a no-op");
     st.rtx(|(total, _, _, _)| assert_eq!(total.get(), 0));
 
     let _ = std::fs::remove_dir_all(&db);
+}
+
+
+/// Why `retractable` exists, pinned as a test.
+///
+/// Handing fold a retraction for a record it never saw drives the aggregate
+/// count below zero. Debug builds abort here; release builds compile the
+/// assert out and take the `count <= 0` branch instead, deleting the key and
+/// discarding whatever other sessions contributed to it. Gated on
+/// `debug_assertions` because the panic genuinely does not happen in release —
+/// the silent corruption does.
+#[test]
+#[cfg(debug_assertions)]
+#[should_panic(expected = "Aggregate record count went negative")]
+fn unguarded_retract_of_an_uningested_call_panics() {
+    let db = scratch_db("repro-panic");
+    let mut st = test_stream!(&db);
+    st.wtx(|tx| {
+        tx.remove(&call("never-ingested", "Read", true, 5_000));
+    });
 }

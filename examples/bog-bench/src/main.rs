@@ -21,9 +21,30 @@ mod tests;
 
 use fold::pipeline::{Aggregate, Filter, KeyBy, terminal};
 use fold::stream::Stream;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 use toolcall::{ToolCall, ToolStats, tool_step};
+
+/// Calls worth inserting: those whose session is not already in the views.
+///
+/// `tx.insert` is a multiset add, so re-ingesting a session would double every
+/// figure it touched.
+fn ingestable<'a>(calls: &'a [ToolCall], seen: &HashSet<String>) -> Vec<&'a ToolCall> {
+    calls.iter().filter(|c| !seen.contains(&c.session)).collect()
+}
+
+/// Calls safe to retract: those whose session is actually in the views.
+///
+/// `tx.remove` is a multiset subtract, so retracting a session that was never
+/// ingested drives the aggregate count below zero — `fold` catches that with a
+/// debug assert in `pipeline::ops::keyed`, and a release build would instead
+/// delete the key, taking other sessions' totals with it. Both filters live
+/// here as named functions rather than inline in `main` so the tests bind to
+/// the code the binary actually runs.
+fn retractable<'a>(calls: &'a [ToolCall], seen: &HashSet<String>) -> Vec<&'a ToolCall> {
+    calls.iter().filter(|c| seen.contains(&c.session)).collect()
+}
 
 /// Where Claude Code keeps its transcripts.
 fn corpus_root() -> PathBuf {
@@ -139,8 +160,7 @@ fn main() {
             }
             let mut st = open!();
             let seen = ingested_sessions!(st);
-            let fresh: Vec<&ToolCall> =
-                calls.iter().filter(|c| !seen.contains(&c.session)).collect();
+            let fresh = ingestable(&calls, &seen);
             if fresh.is_empty() {
                 println!("already ingested — nothing to add\n");
             } else {
@@ -168,13 +188,7 @@ fn main() {
             }
             let mut st = open!();
             let seen = ingested_sessions!(st);
-            // Only retract what is actually in the views. `tx.remove` is a
-            // multiset subtract, so retracting a session that was never
-            // ingested drives aggregate counts negative — which fold catches
-            // with a debug assert, and which in a release build would instead
-            // delete the key and silently take other sessions' totals with it.
-            let present: Vec<&ToolCall> =
-                calls.iter().filter(|c| seen.contains(&c.session)).collect();
+            let present = retractable(&calls, &seen);
             if present.is_empty() {
                 println!("not ingested — nothing to retract\n");
             } else {
@@ -207,8 +221,7 @@ fn main() {
             let fold_at = Instant::now();
             let mut st = open!();
             let seen = ingested_sessions!(st);
-            let fresh: Vec<&ToolCall> =
-                calls.iter().filter(|c| !seen.contains(&c.session)).collect();
+            let fresh = ingestable(&calls, &seen);
             st.wtx(|tx| {
                 for call in &fresh {
                     tx.insert(*call);

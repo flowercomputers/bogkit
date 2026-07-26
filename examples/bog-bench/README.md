@@ -185,14 +185,15 @@ second piece of state to keep in sync with the main views.
 $ cargo test -p bog-bench
 ```
 
-Eleven tests, no fixtures to download. Five cover the `tool_use`→`tool_result`
-join in `transcript.rs`; six cover the pipeline properties the project rests
+Twelve tests, no fixtures to download. Five cover the `tool_use`→`tool_result`
+join in `transcript.rs`; seven cover the pipeline properties the project rests
 on — that retracting everything returns every view to zero with aggregate keys
 gone rather than lingering, that retracting one session leaves the other exact,
 that incremental folding agrees with a full recompute (the same invariant
 `bench` checks at runtime), that re-ingesting is a no-op while retraction
 reopens it, that retracting a never-ingested session is a no-op rather than a
-panic, and one end-to-end run against a real transcript which **skips with a
+panic, that the unguarded retract it protects against really does abort
+(`#[should_panic]`, debug builds only), and one end-to-end run against a real transcript which **skips with a
 printed reason** if there is no corpus, so a fresh clone gets a clean pass.
 
 **On a real corpus** the same run over 114 sessions of one author's Claude Code
