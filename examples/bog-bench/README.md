@@ -306,6 +306,36 @@ flowchart LR
   style FOLD fill:#f8fafc,stroke:#0ea5e9,stroke-width:2px,color:#075985
 ```
 
+## What "persistent" actually guarantees
+
+The pipeline ends at a store, so it is worth being exact about what that buys
+and where the ceiling is. All of the following is `fold`'s contract, not
+bog-bench's:
+
+| property | where |
+|---|---|
+| state lives in an embedded [fjall](https://docs.rs/fjall) LSM store | `fold/src/lib.rs:11` |
+| a commit is crash-safe as soon as it returns | `fold/src/stream/unkeyed.rs:86` |
+| `checkpoint()` fsyncs (`PersistMode::SyncAll`) — *that* is what survives OS / power loss | `fold/src/stream/unkeyed.rs:84-90` |
+| reads observe one consistent snapshot across every sink | `fold/src/lib.rs:12` |
+| each sink gets its own partition, `sink_{name}` | `fold/src/stream/mod.rs:89-102` |
+| the store is a `SingleWriterTxDatabase` | `fold/src/stream/mod.rs:72` |
+
+Two consequences worth stating plainly, because both are limits rather than
+features:
+
+**bog-bench never calls `checkpoint()`.** Every command relies on the default
+guarantee, which covers the case that actually happens here — the process exits
+and the next one reads its state back. It does not cover OS or power failure, so
+a machine losing power mid-ingest can lose the most recent commits. Re-running
+`recent <n>` repairs that, since ingest is idempotent.
+
+**Single writer is the scale ceiling, not the LSM.** Two `bog-bench ingest`
+processes cannot fold concurrently. For this workload that costs nothing —
+transcripts are written by agents on one machine, and readers are unaffected
+because they take snapshots — but it is the constraint that would have to change
+before this ran as a shared service.
+
 ## Why fold
 
 This started as a port of an existing Python harness. Reading that harness
