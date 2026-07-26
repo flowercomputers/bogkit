@@ -106,6 +106,24 @@ is reported** — a faster wrong answer is not an answer.
 - **incremental** — a new session arrives; fold it into the corpus already on disk.
 - **rescan** — recompute the whole corpus from nothing, as a batch harness must.
 
+```
+                 0          150        300        450        600 ms
+                 ╞══════════╪══════════╪══════════╪══════════╡
+  51 sessions
+    incremental  █ 16.7 ms
+    rescan       ██████████████████████████████ 417 ms
+
+  201 sessions
+    incremental  ██ 33.8 ms
+    rescan       ████████████████████████████████████████ 550 ms
+
+  801 sessions
+    incremental  █ 16.0 ms
+    rescan       ██████████████████████████████████████████████ 630 ms
+```
+
+The incremental bar does not grow as the corpus does. That is the whole claim.
+
 | corpus | incremental | rescan | rescan parse | rescan fold |
 |---|---|---|---|---|
 | 51 sessions | 16.7 ms | 417 ms | 46 ms | 372 ms |
@@ -237,12 +255,56 @@ cost in measured characters (plus the labelled token estimate). Per
 session: total calls and total context contributed — which is what makes
 retraction legible, since you can watch one session's whole footprint leave.
 
-The pipeline is four branches over the same delta stream:
+The pipeline is four branches over the same delta stream. Everything to the
+right of the deltas is `fold` doing the work; bog-bench only turns transcripts
+into `ToolCall`s:
 
-- `KeyBy(tool) → Aggregate → Table` — per-tool calls, failures, failure rate, context cost
-- `Filter(!ok) → Count` — the churn callout
-- `KeyBy(session) → Aggregate → Table` — per-session totals
-- `Retain::with_clock(...)` — the same view over a rolling time window
+```mermaid
+flowchart LR
+  subgraph BB["bog-bench — what this submission adds"]
+    direction TB
+    T["transcripts<br/>~/.claude/projects"] --> P["parse + join<br/>tool_use → tool_result"]
+    P --> D(["ToolCall deltas<br/>+1 on ingest · −1 on retract"])
+  end
+
+  subgraph FOLD["fold — the engine under it"]
+    direction TB
+    B1["KeyBy(tool) → Aggregate"] --> S1[("Table<br/>per-tool leaderboard")]
+    B2["Filter(!ok) → Count"] --> S2[("Count<br/>churn callout")]
+    B3["KeyBy(session) → Aggregate"] --> S3[("Table<br/>per-session totals")]
+    B4["Retain::with_clock"] --> S4[("Table<br/>rolling window")]
+  end
+
+  D --> B1
+  D --> B2
+  D --> B3
+  D --> B4
+
+  S1 --> DISK[("persistent state on disk<br/>survives the process ·<br/>nothing recomputed")]
+  S2 --> DISK
+  S3 --> DISK
+  S4 --> DISK
+
+  N["<b>retract is not a second code path.</b><br/>It pushes the same ToolCalls back through<br/>the same four branches with weight −1, so every<br/>view returns to exactly the value it would have<br/>had if that session never arrived.<br/>A key whose count reaches zero disappears<br/>rather than lingering at 0."]
+  D -.-> N
+
+  classDef src fill:#f1f5f9,stroke:#475569,stroke-width:1.5px,color:#0f172a
+  classDef delta fill:#ffedd5,stroke:#ea580c,stroke-width:2px,color:#7c2d12
+  classDef op fill:#e0f2fe,stroke:#0284c7,stroke-width:1.5px,color:#0c4a6e
+  classDef sink fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d
+  classDef disk fill:#f3e8ff,stroke:#9333ea,stroke-width:2px,color:#3b0764
+  classDef note fill:#fef9c3,stroke:#ca8a04,stroke-width:1.5px,color:#713f12
+
+  class T,P src
+  class D delta
+  class B1,B2,B3,B4 op
+  class S1,S2,S3,S4 sink
+  class DISK disk
+  class N note
+
+  style BB fill:#ffffff,stroke:#94a3b8,stroke-width:2px,color:#0f172a
+  style FOLD fill:#f8fafc,stroke:#0ea5e9,stroke-width:2px,color:#075985
+```
 
 ## Why fold
 
