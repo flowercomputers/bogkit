@@ -166,14 +166,26 @@ fn main() {
                 eprintln!("no calls found for session '{session}'");
                 std::process::exit(1);
             }
-            let n = calls.len();
             let mut st = open!();
-            st.wtx(|tx| {
-                for call in &calls {
-                    tx.remove(call);
-                }
-            });
-            println!("retracted {n} calls from {session}\n");
+            let seen = ingested_sessions!(st);
+            // Only retract what is actually in the views. `tx.remove` is a
+            // multiset subtract, so retracting a session that was never
+            // ingested drives aggregate counts negative — which fold catches
+            // with a debug assert, and which in a release build would instead
+            // delete the key and silently take other sessions' totals with it.
+            let present: Vec<&ToolCall> =
+                calls.iter().filter(|c| seen.contains(&c.session)).collect();
+            if present.is_empty() {
+                println!("not ingested — nothing to retract\n");
+            } else {
+                let n = present.len();
+                st.wtx(|tx| {
+                    for call in &present {
+                        tx.remove(*call);
+                    }
+                });
+                println!("retracted {n} calls from {session}\n");
+            }
             show!(st);
         }
         "recent" => {

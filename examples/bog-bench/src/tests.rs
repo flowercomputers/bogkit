@@ -346,3 +346,75 @@ fn parses_and_folds_a_real_transcript() {
 
     let _ = std::fs::remove_dir_all(&db);
 }
+
+/// Retracting a session that was never ingested must be a no-op, not a panic.
+///
+/// `tx.remove` is a multiset subtract, so handing fold deltas for records it
+/// never saw drives the aggregate count below zero. fold catches that with a
+/// `debug_assert` in `pipeline::ops::keyed`, which means a debug build aborts
+/// (exit 101) and a release build instead takes the `count <= 0` branch,
+/// deleting the key and silently discarding whatever other sessions had
+/// contributed to it. `main` filters against the `session_stats` keys before
+/// removing; this asserts the property that filter exists to protect, in both
+/// directions — an unknown session and an already-retracted one.
+#[test]
+fn retracting_an_uningested_session_is_a_no_op() {
+    let db = scratch_db("retract-unknown");
+    let ingested = vec![
+        call("s1", "Read", true, 8_000),
+        call("s1", "Bash", false, 400),
+    ];
+    // Parsed from a real transcript, but never folded in.
+    let stranger = vec![call("s2", "Read", true, 5_000)];
+
+    let mut st = test_stream!(&db);
+    st.wtx(|tx| {
+        for c in &ingested {
+            tx.insert(c);
+        }
+    });
+
+    macro_rules! seen {
+        ($st:expr) => {
+            $st.rtx(|(_, _, _, by_session)| {
+                by_session
+                    .iter()
+                    .filter(|(_, s): &(String, ToolStats)| s.calls != 0)
+                    .map(|(k, _)| k)
+                    .collect::<std::collections::HashSet<String>>()
+            })
+        };
+    }
+
+    // The guard main applies before removing anything.
+    let present: Vec<&ToolCall> = {
+        let s = seen!(st);
+        stranger.iter().filter(|c| s.contains(&c.session)).collect()
+    };
+    assert!(
+        present.is_empty(),
+        "a never-ingested session must present nothing to retract"
+    );
+
+    // Totals are untouched by the attempt.
+    st.rtx(|(total, _, _, by_session)| {
+        assert_eq!(total.get(), 2, "unrelated retract must not move totals");
+        assert!(!by_session.iter().any(|(k, _): (String, ToolStats)| k == "s2"));
+    });
+
+    // Retract s1 for real, then retracting it again must also find nothing —
+    // otherwise `retract` is only safe the first time.
+    st.wtx(|tx| {
+        for c in &ingested {
+            tx.remove(c);
+        }
+    });
+    let again: Vec<&ToolCall> = {
+        let s = seen!(st);
+        ingested.iter().filter(|c| s.contains(&c.session)).collect()
+    };
+    assert!(again.is_empty(), "double retract must be a no-op");
+    st.rtx(|(total, _, _, _)| assert_eq!(total.get(), 0));
+
+    let _ = std::fs::remove_dir_all(&db);
+}

@@ -86,12 +86,20 @@ $ cargo run -p bog-bench -- show
 $ cargo run -p bog-bench -- retract <transcript>  # views roll back
 ```
 
-**Ingest is idempotent.** Running `recent 200` twice does not double your
-numbers — `ingest` and `recent` read the session keys already in the views and
-skip anything folded in before. (`tx.insert` is a multiset add, so without that
-guard a second run would silently double every figure.) A retracted session
-correctly becomes ingestable again, because the guard keys on sessions with a
-non-zero call count rather than on a key merely existing.
+**Ingest and retract are both idempotent.** Running `recent 200` twice does not
+double your numbers — `ingest` and `recent` read the session keys already in the
+views and skip anything folded in before. (`tx.insert` is a multiset add, so
+without that guard a second run would silently double every figure.) A retracted
+session correctly becomes ingestable again, because the guard keys on sessions
+with a non-zero call count rather than on a key merely existing.
+
+`retract` applies the same guard in reverse, and needs it more: `tx.remove` is a
+multiset subtract, so retracting a session that was never ingested drives the
+aggregate count below zero. fold catches that with a `debug_assert` in
+`pipeline::ops::keyed`, so a debug build aborts; a release build would instead
+take the `count <= 0` branch and delete the key, silently discarding whatever
+other sessions had contributed to it. Retracting an unknown or already-retracted
+session prints `not ingested — nothing to retract` and exits 0.
 
 ## The benchmark
 
@@ -177,14 +185,15 @@ second piece of state to keep in sync with the main views.
 $ cargo test -p bog-bench
 ```
 
-Ten tests, no fixtures to download. Five cover the `tool_use`→`tool_result`
-join in `transcript.rs`; five cover the pipeline properties the project rests
+Eleven tests, no fixtures to download. Five cover the `tool_use`→`tool_result`
+join in `transcript.rs`; six cover the pipeline properties the project rests
 on — that retracting everything returns every view to zero with aggregate keys
 gone rather than lingering, that retracting one session leaves the other exact,
 that incremental folding agrees with a full recompute (the same invariant
 `bench` checks at runtime), that re-ingesting is a no-op while retraction
-reopens it, and one end-to-end run against a real transcript which **skips with
-a printed reason** if there is no corpus, so a fresh clone gets a clean pass.
+reopens it, that retracting a never-ingested session is a no-op rather than a
+panic, and one end-to-end run against a real transcript which **skips with a
+printed reason** if there is no corpus, so a fresh clone gets a clean pass.
 
 **On a real corpus** the same run over 114 sessions of one author's Claude Code
 history found 2,668 tool calls, 100 of them failed. `Bash` was called 3.5× more
