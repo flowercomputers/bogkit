@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use crate::toolcall::ToolCall;
+use crate::toolcall::{Outcome, ToolCall};
 
 /// A `tool_use` block waiting for its result.
 struct Pending {
@@ -24,41 +24,143 @@ struct Pending {
     at_ms: u64,
 }
 
+/// Recoverable parser problems observed while reading one transcript.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ParseDiagnostics {
+    pub lines: usize,
+    pub malformed_json_lines: usize,
+    pub non_object_lines: usize,
+    pub malformed_tool_uses: usize,
+    pub unmatched_results: usize,
+    pub unmatched_calls: usize,
+    pub invalid_utf8: bool,
+    pub read_error: Option<String>,
+}
+
+impl ParseDiagnostics {
+    pub fn has_issues(&self) -> bool {
+        self.malformed_json_lines > 0
+            || self.non_object_lines > 0
+            || self.malformed_tool_uses > 0
+            || self.unmatched_results > 0
+            || self.unmatched_calls > 0
+            || self.invalid_utf8
+            || self.read_error.is_some()
+    }
+
+    pub fn summary(&self) -> String {
+        let mut parts = Vec::new();
+        if self.malformed_json_lines > 0 {
+            parts.push(counted(self.malformed_json_lines, "malformed JSON line"));
+        }
+        if self.non_object_lines > 0 {
+            parts.push(counted(self.non_object_lines, "non-object JSON line"));
+        }
+        if self.malformed_tool_uses > 0 {
+            parts.push(counted(
+                self.malformed_tool_uses,
+                "malformed tool_use block",
+            ));
+        }
+        if self.unmatched_results > 0 {
+            parts.push(counted(self.unmatched_results, "unmatched tool result"));
+        }
+        if self.unmatched_calls > 0 {
+            parts.push(counted(self.unmatched_calls, "unknown outcome"));
+        }
+        if self.invalid_utf8 {
+            parts.push("invalid UTF-8 replaced lossily".to_string());
+        }
+        if let Some(error) = &self.read_error {
+            parts.push(format!("read error: {error}"));
+        }
+        parts.join(" · ")
+    }
+}
+
+fn counted(n: usize, singular: &str) -> String {
+    format!("{n} {singular}{}", if n == 1 { "" } else { "s" })
+}
+
+/// Calls plus diagnostics and the canonical identity used for persistence.
+#[derive(Debug, Clone)]
+pub struct ParsedSession {
+    pub session: String,
+    pub calls: Vec<ToolCall>,
+    pub diagnostics: ParseDiagnostics,
+}
+
+/// Stable identity for an on-disk transcript.
+///
+/// Canonical paths keep same-stem transcripts in different projects distinct.
+/// The absolute fallback lets `retract` find an already-ingested snapshot even
+/// if the source file was deleted after ingest.
+pub fn session_key(path: &Path) -> String {
+    fs::canonicalize(path)
+        .or_else(|_| {
+            if path.is_absolute() {
+                Ok(path.to_path_buf())
+            } else {
+                std::env::current_dir().map(|cwd| cwd.join(path))
+            }
+        })
+        .unwrap_or_else(|_| path.to_path_buf())
+        .to_string_lossy()
+        .into_owned()
+}
+
 /// Parse one Claude Code transcript into its tool calls.
 ///
 /// Malformed lines are skipped, never fatal. A file that yields nothing
 /// returns an empty `Vec` rather than an error. Calls still unmatched at
-/// end-of-input are kept with `result_chars = 0` and `duration_ms = 0` — the
-/// invocation happened, so dropping it would undercount.
+/// end-of-input are kept with an unknown outcome — the invocation happened,
+/// but the transcript does not prove success or failure.
 pub fn parse_session(path: &Path) -> Vec<ToolCall> {
-    let session = path
-        .file_stem()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_default();
+    parse_session_report(path).calls
+}
+
+pub fn parse_session_report(path: &Path) -> ParsedSession {
+    let session = session_key(path);
+    let mut diagnostics = ParseDiagnostics::default();
 
     // Transcripts are known to contain invalid UTF-8 (truncated tool output,
     // mid-codepoint splits). Read bytes and lossy-convert; never panic.
     let bytes = match fs::read(path) {
         Ok(b) => b,
-        Err(_) => return Vec::new(),
+        Err(error) => {
+            diagnostics.read_error = Some(error.to_string());
+            return ParsedSession {
+                session,
+                calls: Vec::new(),
+                diagnostics,
+            };
+        }
     };
+    diagnostics.invalid_utf8 = std::str::from_utf8(&bytes).is_err();
     let text = String::from_utf8_lossy(&bytes);
 
     let mut pending: HashMap<String, Pending> = HashMap::new();
     let mut calls: Vec<ToolCall> = Vec::new();
 
     for line in text.lines() {
+        diagnostics.lines += 1;
         let line = line.trim();
         if line.is_empty() {
             continue;
         }
         let entry: Value = match serde_json::from_str(line) {
             Ok(v) => v,
-            Err(_) => continue,
+            Err(_) => {
+                diagnostics.malformed_json_lines += 1;
+                continue;
+            }
         };
         let entry = match entry.as_object() {
             Some(o) => o,
-            None => continue,
+            None => {
+                diagnostics.non_object_lines += 1;
+                continue;
+            }
         };
 
         let at_ms = entry.get("timestamp").and_then(iso8601_to_epoch_ms);
@@ -79,6 +181,7 @@ pub fn parse_session(path: &Path) -> Vec<ToolCall> {
                     block.get("id").and_then(Value::as_str),
                     block.get("name").and_then(Value::as_str),
                 ) else {
+                    diagnostics.malformed_tool_uses += 1;
                     continue;
                 };
                 pending.insert(
@@ -108,9 +211,11 @@ pub fn parse_session(path: &Path) -> Vec<ToolCall> {
 
         for block in result_blocks {
             let Some(id) = result_id(entry, block) else {
+                diagnostics.unmatched_results += 1;
                 continue;
             };
             let Some(started) = pending.remove(id) else {
+                diagnostics.unmatched_results += 1;
                 continue;
             };
 
@@ -120,7 +225,11 @@ pub fn parse_session(path: &Path) -> Vec<ToolCall> {
                 .and_then(|b| b.get("content"))
                 .or_else(|| entry.get("toolUseResult"));
 
-            let ok = !is_error(block, payload);
+            let outcome = if is_error(block, payload) {
+                Outcome::ExplicitError
+            } else {
+                Outcome::Success
+            };
             let duration_ms = match (at_ms, started.at_ms) {
                 (Some(end), start) if start > 0 => end.saturating_sub(start),
                 _ => 0,
@@ -129,7 +238,7 @@ pub fn parse_session(path: &Path) -> Vec<ToolCall> {
             calls.push(ToolCall {
                 session: session.clone(),
                 tool: started.tool,
-                ok,
+                outcome,
                 result_chars: payload.map(result_len).unwrap_or(0),
                 duration_ms,
                 at_ms: started.at_ms,
@@ -139,18 +248,23 @@ pub fn parse_session(path: &Path) -> Vec<ToolCall> {
 
     // Drain: a call whose result never arrived (session ended mid-flight, or
     // the result line was malformed) is still a call that was made.
+    diagnostics.unmatched_calls = pending.len();
     for (_, started) in pending {
         calls.push(ToolCall {
             session: session.clone(),
             tool: started.tool,
-            ok: true,
+            outcome: Outcome::Unknown,
             result_chars: 0,
             duration_ms: 0,
             at_ms: started.at_ms,
         });
     }
 
-    calls
+    ParsedSession {
+        session,
+        calls,
+        diagnostics,
+    }
 }
 
 /// Find Claude transcripts under a root, newest first, capped at `limit`.
@@ -181,7 +295,7 @@ pub fn discover(root: &Path, limit: usize) -> Vec<PathBuf> {
         }
     }
 
-    found.sort_by(|a, b| b.0.cmp(&a.0));
+    found.sort_by_key(|(modified, _)| std::cmp::Reverse(*modified));
     found.truncate(limit);
     found.into_iter().map(|(_, p)| p).collect()
 }
@@ -191,7 +305,10 @@ fn result_id<'a>(
     entry: &'a serde_json::Map<String, Value>,
     block: Option<&'a Value>,
 ) -> Option<&'a str> {
-    if let Some(id) = block.and_then(|b| b.get("tool_use_id")).and_then(Value::as_str) {
+    if let Some(id) = block
+        .and_then(|b| b.get("tool_use_id"))
+        .and_then(Value::as_str)
+    {
         return Some(id);
     }
     entry.get("toolUseID").and_then(Value::as_str)
@@ -369,20 +486,24 @@ mod tests {
         ];
         fs::write(&path, lines.join("\n")).unwrap();
 
-        let calls = parse_session(&path);
+        let parsed = parse_session_report(&path);
+        let calls = parsed.calls;
         assert_eq!(calls.len(), 3, "two joined calls plus one drained orphan");
-        assert_eq!(calls[0].session, "11111111-2222-3333-4444-555555555555");
+        assert_eq!(calls[0].session, session_key(&path));
+        assert_eq!(parsed.diagnostics.malformed_json_lines, 1);
+        assert_eq!(parsed.diagnostics.unmatched_calls, 1);
 
         assert_eq!(calls[0].tool, "Read");
-        assert!(calls[0].ok);
+        assert_eq!(calls[0].outcome, Outcome::Success);
         assert_eq!(calls[0].result_chars, 10);
         assert_eq!(calls[0].duration_ms, 1500);
         assert_eq!(calls[0].at_ms, 1_785_010_427_000);
 
         assert_eq!(calls[1].tool, "Bash");
-        assert!(!calls[1].ok, "is_error must clear ok");
+        assert_eq!(calls[1].outcome, Outcome::ExplicitError);
 
         assert_eq!(calls[2].tool, "Edit");
+        assert_eq!(calls[2].outcome, Outcome::Unknown);
         assert_eq!(calls[2].result_chars, 0, "orphan carries no result");
 
         let _ = fs::remove_file(&path);
@@ -422,7 +543,7 @@ mod tests {
             let slot = hist.entry(call.tool.as_str()).or_default();
             slot.0 += 1;
             slot.1 += call.result_chars;
-            if !call.ok {
+            if call.outcome == Outcome::ExplicitError {
                 slot.2 += 1;
             }
         }
@@ -440,15 +561,27 @@ mod tests {
             sized
         );
         let mut rows: Vec<_> = hist.into_iter().collect();
-        rows.sort_by(|a, b| b.1 .0.cmp(&a.1 .0));
-        eprintln!("{:<28} {:>7} {:>12} {:>9}", "tool", "calls", "avg chars", "errors");
+        rows.sort_by_key(|(_, stats)| std::cmp::Reverse(stats.0));
+        eprintln!(
+            "{:<28} {:>7} {:>12} {:>9}",
+            "tool", "calls", "avg chars", "errors"
+        );
         for (tool, (n, chars, errs)) in rows.iter().take(25) {
-            eprintln!("{:<28} {:>7} {:>12} {:>9}", tool, n, chars / n.max(&1), errs);
+            eprintln!(
+                "{:<28} {:>7} {:>12} {:>9}",
+                tool,
+                n,
+                chars / n.max(&1),
+                errs
+            );
         }
         eprintln!();
 
         // Sanity: real transcripts always contain reads, and timestamps parse.
-        assert!(stamped > calls.len() / 2, "most calls should carry a timestamp");
+        assert!(
+            stamped > calls.len() / 2,
+            "most calls should carry a timestamp"
+        );
         assert!(sized > 0, "no call produced any output — join is broken");
     }
 }

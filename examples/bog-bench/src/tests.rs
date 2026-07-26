@@ -5,9 +5,7 @@
 //! a retraction returns every view to exactly where it would have been, and
 //! that folding incrementally agrees with folding from scratch.
 
-use crate::toolcall::{ToolCall, ToolStats, tool_step};
-use fold::pipeline::{Aggregate, Filter, KeyBy, terminal};
-use fold::stream::Stream;
+use crate::toolcall::{Outcome, ToolCall, ToolStats};
 use std::path::PathBuf;
 
 /// Each test needs its own database — the suite runs in parallel and fjall is
@@ -18,50 +16,15 @@ fn scratch_db(name: &str) -> PathBuf {
     p
 }
 
-/// The same pipeline shape `main` builds.
-///
-/// Duplicated rather than shared because `open!` hardcodes the production
-/// database path, and these tests each need their own store. **Kept in sync by
-/// hand** — if `main`'s pipeline gains a node and this one does not, these
-/// tests keep passing while testing something the binary no longer runs. The
-/// honest fix is to parameterise `open!` on its path and delete this; that is
-/// a post-deadline cleanup, noted here rather than left as a trap.
-macro_rules! test_stream {
-    ($path:expr) => {
-        Stream::new(
-            $path,
-            (
-                terminal::Count::new("calls_total"),
-                KeyBy::new(
-                    |c: &ToolCall| c.tool.clone(),
-                    Aggregate::new(
-                        "stats_by_tool",
-                        tool_step,
-                        terminal::Table::new("tool_stats"),
-                    ),
-                ),
-                Filter::new(
-                    |c: &ToolCall| !c.ok,
-                    terminal::Count::new("failures_total"),
-                ),
-                KeyBy::new(
-                    |c: &ToolCall| c.session.clone(),
-                    Aggregate::new(
-                        "stats_by_session",
-                        tool_step,
-                        terminal::Table::new("session_stats"),
-                    ),
-                ),
-            ),
-        )
-    };
-}
-
 fn call(session: &str, tool: &str, ok: bool, chars: u64) -> ToolCall {
     ToolCall {
         session: session.to_string(),
         tool: tool.to_string(),
-        ok,
+        outcome: if ok {
+            Outcome::Success
+        } else {
+            Outcome::ExplicitError
+        },
         result_chars: chars,
         duration_ms: 10,
         at_ms: 1_700_000_000_000,
@@ -82,18 +45,20 @@ fn retracting_everything_returns_every_view_to_zero() {
         call("s2", "Grep", true, 1_200),
     ];
 
-    let mut st = test_stream!(&db);
+    let mut st = open!(&db);
     st.wtx(|tx| {
         for c in &calls {
             tx.insert(c);
         }
     });
 
-    st.rtx(|(total, by_tool, failures, by_session)| {
+    st.rtx(|(total, by_tool, failures, unknowns, by_session, exact)| {
         assert_eq!(total.get(), 4);
         assert_eq!(failures.get(), 1);
+        assert_eq!(unknowns.get(), 0);
         assert_eq!(by_tool.iter().count(), 3);
         assert_eq!(by_session.iter().count(), 2);
+        assert_eq!(exact.iter().count(), 4);
     });
 
     st.wtx(|tx| {
@@ -102,13 +67,18 @@ fn retracting_everything_returns_every_view_to_zero() {
         }
     });
 
-    st.rtx(|(total, by_tool, failures, by_session)| {
+    st.rtx(|(total, by_tool, failures, unknowns, by_session, exact)| {
         assert_eq!(total.get(), 0, "call count did not unwind");
         assert_eq!(failures.get(), 0, "failure count did not unwind");
+        assert_eq!(unknowns.get(), 0, "unknown count did not unwind");
+        assert_eq!(exact.iter().count(), 0, "exact calls survived retraction");
         // Aggregate keys must disappear entirely, not linger at zero.
         let leftover: Vec<(String, ToolStats)> =
             by_tool.iter().filter(|(_, s)| s.calls != 0).collect();
-        assert!(leftover.is_empty(), "tool rows survived retraction: {leftover:?}");
+        assert!(
+            leftover.is_empty(),
+            "tool rows survived retraction: {leftover:?}"
+        );
         let sessions: Vec<(String, ToolStats)> =
             by_session.iter().filter(|(_, s)| s.calls != 0).collect();
         assert!(sessions.is_empty(), "session rows survived: {sessions:?}");
@@ -122,16 +92,16 @@ fn retracting_everything_returns_every_view_to_zero() {
 #[test]
 fn retracting_one_session_leaves_the_other_exact() {
     let db = scratch_db("partial");
-    let keep = vec![
+    let keep = [
         call("keep", "Read", true, 8_000),
         call("keep", "Bash", false, 400),
     ];
-    let drop = vec![
+    let drop = [
         call("drop", "Read", true, 40_000),
         call("drop", "Grep", true, 1_200),
     ];
 
-    let mut st = test_stream!(&db);
+    let mut st = open!(&db);
     st.wtx(|tx| {
         for c in keep.iter().chain(drop.iter()) {
             tx.insert(c);
@@ -143,7 +113,7 @@ fn retracting_one_session_leaves_the_other_exact() {
         }
     });
 
-    st.rtx(|(total, by_tool, failures, _)| {
+    st.rtx(|(total, by_tool, failures, _, _, _)| {
         assert_eq!(total.get(), 2);
         assert_eq!(failures.get(), 1);
         let tools: Vec<(String, ToolStats)> =
@@ -179,7 +149,7 @@ fn incremental_agrees_with_full_recompute() {
 
     // Arm A: fold the first batch, then fold the arrival on top.
     let db_a = scratch_db("inc-a");
-    let mut a = test_stream!(&db_a);
+    let mut a = open!(&db_a);
     a.wtx(|tx| {
         for c in &first {
             tx.insert(c);
@@ -193,33 +163,18 @@ fn incremental_agrees_with_full_recompute() {
 
     // Arm B: fold everything at once, from nothing.
     let db_b = scratch_db("inc-b");
-    let mut b = test_stream!(&db_b);
+    let mut b = open!(&db_b);
     b.wtx(|tx| {
         for c in first.iter().chain(arriving.iter()) {
             tx.insert(c);
         }
     });
 
-    let a_rows = a.rtx(|(total, by_tool, failures, _)| {
-        let mut rows: Vec<(String, ToolStats)> = by_tool.iter().collect();
-        rows.sort_by(|x, y| x.0.cmp(&y.0));
-        (total.get(), failures.get(), rows)
-    });
-    let b_rows = b.rtx(|(total, by_tool, failures, _)| {
-        let mut rows: Vec<(String, ToolStats)> = by_tool.iter().collect();
-        rows.sort_by(|x, y| x.0.cmp(&y.0));
-        (total.get(), failures.get(), rows)
-    });
-
-    assert_eq!(a_rows.0, b_rows.0, "call totals diverged");
-    assert_eq!(a_rows.1, b_rows.1, "failure totals diverged");
-    assert_eq!(a_rows.2.len(), b_rows.2.len(), "tool row counts diverged");
-    for ((ta, sa), (tb, sb)) in a_rows.2.iter().zip(b_rows.2.iter()) {
-        assert_eq!(ta, tb);
-        assert_eq!(sa.calls, sb.calls, "{ta}: calls diverged");
-        assert_eq!(sa.failures, sb.failures, "{ta}: failures diverged");
-        assert_eq!(sa.result_chars, sb.result_chars, "{ta}: chars diverged");
-    }
+    assert_eq!(
+        materialized_snapshot!(a),
+        materialized_snapshot!(b),
+        "a materialized view diverged"
+    );
 
     let _ = std::fs::remove_dir_all(&db_a);
     let _ = std::fs::remove_dir_all(&db_b);
@@ -228,12 +183,8 @@ fn incremental_agrees_with_full_recompute() {
 /// Re-ingesting a session must be a no-op, and retracting one must make it
 /// ingestable again.
 ///
-/// `tx.insert` is a multiset add — inserting the same call twice gives it
-/// multiplicity 2 — so without a guard, running `recent` twice silently
-/// doubles every figure. `main` filters against the `session_stats` keys
-/// before inserting; this asserts the property that filter exists to protect,
-/// including the retracted-then-restored case where a stale guard would
-/// wrongly refuse the re-ingest.
+/// `tx.insert` is a multiset add, so replacement must compare against the exact
+/// call bag before changing any branch.
 #[test]
 fn re_ingesting_is_a_no_op_but_retraction_reopens_it() {
     let db = scratch_db("idempotent");
@@ -242,55 +193,31 @@ fn re_ingesting_is_a_no_op_but_retraction_reopens_it() {
         call("s1", "Bash", false, 400),
     ];
 
-    let mut st = test_stream!(&db);
+    let mut st = open!(&db);
     st.wtx(|tx| {
         for c in &calls {
             tx.insert(c);
         }
     });
 
-    // The guard main applies: which sessions are already represented? A macro
-    // rather than a helper for the usual reason — the reader type is opaque
-    // outside the expression that produced it.
-    macro_rules! seen {
-        ($st:expr) => {
-            $st.rtx(|(_, _, _, by_session)| {
-                by_session
-                    .iter()
-                    .filter(|(_, s): &(String, ToolStats)| s.calls != 0)
-                    .map(|(k, _)| k)
-                    .collect::<std::collections::HashSet<String>>()
-            })
-        };
-    }
+    let unchanged = reconcile_snapshot!(st, "s1", &calls);
+    assert!(!unchanged.changed, "identical snapshot must be a no-op");
+    assert_eq!(unchanged.previous, 2);
+    assert_eq!(unchanged.current, 2);
+    st.rtx(|(total, _, _, _, _, _)| assert_eq!(total.get(), 2));
 
-    assert!(seen!(st).contains("s1"), "s1 should register as ingested");
-    let fresh = crate::ingestable(&calls, &seen!(st));
-    assert!(fresh.is_empty(), "second pass must find nothing to insert");
-
-    // Unfiltered, the same insert would double — proving the guard earns its
-    // keep rather than defending against an imaginary problem.
+    let stored = stored_snapshot!(st, "s1");
     st.wtx(|tx| {
-        for c in &calls {
-            tx.insert(c);
-        }
-    });
-    st.rtx(|(total, _, _, _)| {
-        assert_eq!(total.get(), 4, "unguarded re-insert should double to 4");
-    });
-
-    // Undo the accidental double, then retract the session outright.
-    st.wtx(|tx| {
-        for c in &calls {
-            tx.remove(c);
+        for c in &stored {
             tx.remove(c);
         }
     });
-    st.rtx(|(total, _, _, _)| assert_eq!(total.get(), 0));
-    assert!(
-        !seen!(st).contains("s1"),
-        "a fully retracted session must not count as ingested"
-    );
+    st.rtx(|(total, _, _, _, _, _)| assert_eq!(total.get(), 0));
+    assert!(stored_snapshot!(st, "s1").is_empty());
+
+    let restored = reconcile_snapshot!(st, "s1", &calls);
+    assert!(restored.changed, "retracted session must be ingestable");
+    st.rtx(|(total, _, _, _, _, _)| assert_eq!(total.get(), 2));
 
     let _ = std::fs::remove_dir_all(&db);
 }
@@ -311,7 +238,10 @@ fn parses_and_folds_a_real_transcript() {
         .into_iter()
         .find(|p| !crate::transcript::parse_session(p).is_empty())
     else {
-        eprintln!("skipping: no transcript with tool calls under {}", root.display());
+        eprintln!(
+            "skipping: no transcript with tool calls under {}",
+            root.display()
+        );
         return;
     };
 
@@ -323,13 +253,13 @@ fn parses_and_folds_a_real_transcript() {
     );
 
     let db = scratch_db("real");
-    let mut st = test_stream!(&db);
+    let mut st = open!(&db);
     st.wtx(|tx| {
         for c in &calls {
             tx.insert(c);
         }
     });
-    st.rtx(|(total, _, _, _)| {
+    st.rtx(|(total, _, _, _, _, _)| {
         assert_eq!(total.get() as usize, calls.len());
     });
 
@@ -339,7 +269,7 @@ fn parses_and_folds_a_real_transcript() {
             tx.remove(c);
         }
     });
-    st.rtx(|(total, _, _, _)| assert_eq!(total.get(), 0));
+    st.rtx(|(total, _, _, _, _, _)| assert_eq!(total.get(), 0));
 
     let _ = std::fs::remove_dir_all(&db);
 }
@@ -351,9 +281,8 @@ fn parses_and_folds_a_real_transcript() {
 /// `debug_assert` in `pipeline::ops::keyed`, which means a debug build aborts
 /// (exit 101) and a release build instead takes the `count <= 0` branch,
 /// deleting the key and silently discarding whatever other sessions had
-/// contributed to it. `main` filters against the `session_stats` keys before
-/// removing; this asserts the property that filter exists to protect, in both
-/// directions — an unknown session and an already-retracted one.
+/// contributed to it. `main` instead reads the exact-call branch and removes
+/// only records that branch proves are present.
 #[test]
 fn retracting_an_uningested_session_is_a_no_op() {
     let db = scratch_db("retract-unknown");
@@ -361,58 +290,45 @@ fn retracting_an_uningested_session_is_a_no_op() {
         call("s1", "Read", true, 8_000),
         call("s1", "Bash", false, 400),
     ];
-    // Parsed from a real transcript, but never folded in.
-    let stranger = vec![call("s2", "Read", true, 5_000)];
-
-    let mut st = test_stream!(&db);
+    let mut st = open!(&db);
     st.wtx(|tx| {
         for c in &ingested {
             tx.insert(c);
         }
     });
 
-    macro_rules! seen {
-        ($st:expr) => {
-            $st.rtx(|(_, _, _, by_session)| {
-                by_session
-                    .iter()
-                    .filter(|(_, s): &(String, ToolStats)| s.calls != 0)
-                    .map(|(k, _)| k)
-                    .collect::<std::collections::HashSet<String>>()
-            })
-        };
-    }
-
-    // The guard main applies before removing anything — the real function,
-    // not a copy of it, so deleting it from main.rs fails this test.
-    let present = crate::retractable(&stranger, &seen!(st));
+    let present = stored_snapshot!(st, "s2");
     assert!(
         present.is_empty(),
         "a never-ingested session must present nothing to retract"
     );
 
     // Totals are untouched by the attempt.
-    st.rtx(|(total, _, _, by_session)| {
+    st.rtx(|(total, _, _, _, by_session, _)| {
         assert_eq!(total.get(), 2, "unrelated retract must not move totals");
-        assert!(!by_session.iter().any(|(k, _): (String, ToolStats)| k == "s2"));
+        assert!(
+            !by_session
+                .iter()
+                .any(|(k, _): (String, ToolStats)| k == "s2")
+        );
     });
 
     // Retract s1 for real, then retracting it again must also find nothing —
     // otherwise `retract` is only safe the first time.
+    let present = stored_snapshot!(st, "s1");
     st.wtx(|tx| {
-        for c in &ingested {
+        for c in &present {
             tx.remove(c);
         }
     });
-    let again = crate::retractable(&ingested, &seen!(st));
+    let again = stored_snapshot!(st, "s1");
     assert!(again.is_empty(), "double retract must be a no-op");
-    st.rtx(|(total, _, _, _)| assert_eq!(total.get(), 0));
+    st.rtx(|(total, _, _, _, _, _)| assert_eq!(total.get(), 0));
 
     let _ = std::fs::remove_dir_all(&db);
 }
 
-
-/// Why `retractable` exists, pinned as a test.
+/// Why exact-snapshot lookup exists, pinned as a test.
 ///
 /// Handing fold a retraction for a record it never saw drives the aggregate
 /// count below zero. Debug builds abort here; release builds compile the
@@ -425,7 +341,7 @@ fn retracting_an_uningested_session_is_a_no_op() {
 #[should_panic(expected = "Aggregate record count went negative")]
 fn unguarded_retract_of_an_uningested_call_panics() {
     let db = scratch_db("repro-panic");
-    let mut st = test_stream!(&db);
+    let mut st = open!(&db);
     st.wtx(|tx| {
         tx.remove(&call("never-ingested", "Read", true, 5_000));
     });

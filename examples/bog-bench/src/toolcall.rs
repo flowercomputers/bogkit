@@ -5,6 +5,18 @@
 
 use serde::{Deserialize, Serialize};
 
+/// What the transcript proves about a tool call's result.
+///
+/// A call with no matching result is not evidence of success. Keeping that
+/// state explicit prevents incomplete or malformed transcripts from diluting
+/// the explicit-error rate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Outcome {
+    Success,
+    ExplicitError,
+    Unknown,
+}
+
 /// One tool invocation, joined from its request and its result.
 ///
 /// A single agent turn may issue several of these. Every field is populated
@@ -16,8 +28,8 @@ pub struct ToolCall {
     pub session: String,
     /// Tool name as the agent invoked it (`Read`, `Bash`, `Edit`, …).
     pub tool: String,
-    /// False when the result carried an error flag.
-    pub ok: bool,
+    /// Success, an explicitly flagged error, or no observed result.
+    pub outcome: Outcome,
     /// Characters in the joined tool result — the measured quantity, and the
     /// one we rank on. Counts characters rather than bytes so the estimate
     /// below stays honest on non-ASCII output.
@@ -38,21 +50,30 @@ impl ToolCall {
 
 /// Running per-tool accumulator. `delta` is +1 on insert, -1 on retraction,
 /// so every field rolls back exactly when a session is removed.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolStats {
     pub calls: i64,
+    /// Results carrying an explicit producer error flag.
     pub failures: i64,
+    /// Calls for which no matching result was observed.
+    pub unknowns: i64,
     /// Measured: characters of tool-result payload.
     pub result_chars: i64,
     pub duration_ms: i64,
 }
 
 impl ToolStats {
+    pub fn known_outcomes(&self) -> i64 {
+        self.calls - self.unknowns
+    }
+
+    /// Explicit-error rate among calls with a known outcome.
     pub fn failure_rate(&self) -> f64 {
-        if self.calls == 0 {
+        let known = self.known_outcomes();
+        if known == 0 {
             0.0
         } else {
-            self.failures as f64 / self.calls as f64
+            self.failures as f64 / known as f64
         }
     }
 
@@ -79,7 +100,16 @@ impl ToolStats {
 pub fn tool_step(acc: &mut ToolStats, call: &ToolCall, delta: isize) {
     let d = delta as i64;
     acc.calls += d;
-    acc.failures += if call.ok { 0 } else { d };
+    acc.failures += if call.outcome == Outcome::ExplicitError {
+        d
+    } else {
+        0
+    };
+    acc.unknowns += if call.outcome == Outcome::Unknown {
+        d
+    } else {
+        0
+    };
     acc.result_chars += call.cost() as i64 * d;
     acc.duration_ms += call.duration_ms as i64 * d;
 }
