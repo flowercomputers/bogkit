@@ -1,0 +1,109 @@
+{
+  "version": 1,
+  "purpose": "Track coverage and prevent repetitive or reverse-engineered BogKit scenarios.",
+  "selection_policy": {
+    "daily_trials": 2,
+    "allow_no_fit": true,
+    "prefer_underexplored_combinations": true,
+    "candidate_threshold": "two independent trials or one serious reproducible correctness defect"
+  },
+  "prior_submission_coverage": [
+    {
+      "project": "Area denial",
+      "domain": "location-based multiplayer game",
+      "roles": ["game backend developer"],
+      "components": ["fold"]
+    },
+    {
+      "project": "bog-bench",
+      "domain": "agent tooling observability",
+      "roles": ["developer tools engineer"],
+      "components": ["fold"]
+    },
+    {
+      "project": "Obsidian base views",
+      "domain": "local-first knowledge interface",
+      "roles": ["desktop application developer"],
+      "components": ["fold"]
+    },
+    {
+      "project": "tompkins-audio-search",
+      "domain": "multimodal archive search",
+      "roles": ["media data engineer"],
+      "components": ["fold", "ese", "anny"]
+    },
+    {
+      "project": "seance",
+      "domain": "time-travel repository search",
+      "roles": ["developer tools engineer"],
+      "components": ["fold", "ese", "anny"]
+    },
+    {
+      "project": "MUDGarden",
+      "domain": "persistent simulated world",
+      "roles": ["game and agent systems developer"],
+      "components": ["fold"]
+    },
+    {
+      "project": "Untitled Mobile FPS",
+      "domain": "mobile multiplayer game",
+      "roles": ["mobile and game backend developer"],
+      "components": ["fold", "ese", "anny"]
+    }
+  ],
+  "underexplored_domains": [
+    "business workflow and audit",
+    "build and deployment infrastructure",
+    "edge telemetry and operations",
+    "embedded or resource-constrained software",
+    "data synchronization",
+    "fraud and anomaly detection",
+    "scheduling and marketplaces",
+    "ordinary CRUD systems with uncertain fit"
+  ],
+  "runs": [
+    {
+      "date": "2026-07-28",
+      "slug": "purchase-audit",
+      "persona": "finance software developer, intermediate Rust",
+      "domain": "business workflow and audit",
+      "constraints": [
+        "PostgreSQL remains source of truth",
+        "state and audit event require one transaction",
+        "role-protected seven-year audit retention"
+      ],
+      "components_considered": ["fold", "ese", "anny"],
+      "components_used": ["fold"],
+      "outcome": "no_fit",
+      "report": "reports/2026-07-28.md"
+    },
+    {
+      "date": "2026-07-28",
+      "slug": "offline-reconciliation",
+      "persona": "warehouse device developer, Rust beginner",
+      "domain": "data synchronization",
+      "constraints": [
+        "PostgreSQL remains source of truth",
+        "horizontally deployed API",
+        "duplicate, reordered, and interrupted uploads",
+        "no trusted cross-device clock"
+      ],
+      "components_considered": ["fold"],
+      "components_used": ["fold"],
+      "outcome": "local_proof_only_no_production_fit",
+      "report": "reports/2026-07-28.md"
+    }
+  ],
+  "recurring_findings": [
+    {
+      "id": "document-storage-and-concurrency-boundaries",
+      "category": "documentation gap",
+      "independent_trial_count": 2,
+      "confidence": "high",
+      "candidate": true,
+      "summary": "The public onboarding should distinguish embedded source-of-truth use from external-database and horizontally deployed architectures.",
+      "smallest_improvement": "Add a concise component, storage, transaction, and concurrency capability matrix.",
+      "sources": ["purchase-audit", "offline-reconciliation"]
+    }
+  ]
+}
