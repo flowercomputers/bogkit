@@ -92,18 +92,69 @@
       "components_used": ["fold"],
       "outcome": "local_proof_only_no_production_fit",
       "report": "reports/2026-07-28.md"
+    },
+    {
+      "date": "2026-07-29",
+      "slug": "edge-spool-pressure",
+      "persona": "site reliability engineer, intermediate Rust",
+      "domain": "edge telemetry and operations",
+      "constraints": [
+        "strict 256 MiB allocated spool limit",
+        "64 MiB available memory",
+        "priority-preserving retention and explainable drops",
+        "process interruption during writes and uploads"
+      ],
+      "components_considered": ["fold", "ese", "anny"],
+      "components_used": ["fold"],
+      "outcome": "no_fit",
+      "report": "reports/2026-07-29.md"
+    },
+    {
+      "date": "2026-07-29",
+      "slug": "flash-config-journal",
+      "persona": "embedded controls developer, beginner-to-intermediate Rust",
+      "domain": "embedded or resource-constrained software",
+      "constraints": [
+        "128 KiB raw NOR flash with 4 KiB erase blocks",
+        "16 KiB working-memory target",
+        "power loss after any modeled written byte",
+        "bounded boot scan and wear distribution"
+      ],
+      "components_considered": ["fold", "ese", "anny"],
+      "components_used": [],
+      "outcome": "no_fit",
+      "report": "reports/2026-07-29.md"
     }
   ],
   "recurring_findings": [
     {
       "id": "document-storage-and-concurrency-boundaries",
       "category": "documentation gap",
-      "independent_trial_count": 2,
+      "independent_trial_count": 4,
       "confidence": "high",
       "candidate": true,
-      "summary": "The public onboarding should distinguish embedded source-of-truth use from external-database and horizontally deployed architectures.",
-      "smallest_improvement": "Add a concise component, storage, transaction, and concurrency capability matrix.",
-      "sources": ["purchase-audit", "offline-reconciliation"]
+      "summary": "The public onboarding should distinguish embedded source-of-truth use from external databases, horizontal deployment, strict disk quotas, and raw-flash firmware.",
+      "smallest_improvement": "Add a concise component, storage, transaction, concurrency, operating-system, and hard-limit capability matrix.",
+      "sources": [
+        "purchase-audit",
+        "offline-reconciliation",
+        "edge-spool-pressure",
+        "flash-config-journal"
+      ]
+    },
+    {
+      "id": "component-selective-project-scaffold",
+      "category": "API friction",
+      "independent_trial_count": 3,
+      "confidence": "high",
+      "candidate": true,
+      "summary": "Developers with Fold-only or no-component scenarios avoid the all-components starter or project scaffold because it adds unrelated crates and setup.",
+      "smallest_improvement": "Make project generation component-selective and keep the smallest Fold introduction free of unused ESE and ANNy dependencies.",
+      "sources": [
+        "purchase-audit",
+        "edge-spool-pressure",
+        "flash-config-journal"
+      ]
     }
   ]
 }
