@@ -124,28 +124,62 @@
       "components_used": [],
       "outcome": "no_fit",
       "report": "reports/2026-07-29.md"
+    },
+    {
+      "date": "2026-07-30",
+      "slug": "ci-lease-coordinator",
+      "persona": "CI platform engineer, intermediate Rust",
+      "domain": "build and deployment infrastructure",
+      "constraints": [
+        "three concurrently active coordinator replicas",
+        "duplicate, reordered, and late worker messages",
+        "100 post-acknowledgment process exits",
+        "100,000 queued jobs and 2,000 updates per second"
+      ],
+      "components_considered": ["fold", "ese", "anny"],
+      "components_used": ["fold"],
+      "outcome": "no_fit",
+      "report": "reports/2026-07-30.md"
+    },
+    {
+      "date": "2026-07-30",
+      "slug": "fraud-velocity-evaluation",
+      "persona": "fraud infrastructure developer, Rust beginner",
+      "domain": "fraud and anomaly detection",
+      "constraints": [
+        "four consumer replicas with partition reassignment",
+        "event-time windows with deterministic linked corrections",
+        "atomic durable-stream offset ownership",
+        "verified customer deletion and exact alert explanations"
+      ],
+      "components_considered": ["fold", "ese", "anny"],
+      "components_used": [],
+      "outcome": "no_fit",
+      "report": "reports/2026-07-30.md"
     }
   ],
   "recurring_findings": [
     {
       "id": "document-storage-and-concurrency-boundaries",
       "category": "documentation gap",
-      "independent_trial_count": 4,
+      "independent_trial_count": 6,
       "confidence": "high",
       "candidate": true,
-      "summary": "The public onboarding should distinguish embedded source-of-truth use from external databases, horizontal deployment, strict disk quotas, and raw-flash firmware.",
+      "summary": "The public onboarding should distinguish embedded source-of-truth use from external databases, horizontal or partitioned deployment, strict disk quotas, raw-flash firmware, and atomic broker-offset ownership.",
       "smallest_improvement": "Add a concise component, storage, transaction, concurrency, operating-system, and hard-limit capability matrix.",
       "sources": [
         "purchase-audit",
         "offline-reconciliation",
         "edge-spool-pressure",
-        "flash-config-journal"
+        "flash-config-journal",
+        "ci-lease-coordinator",
+        "fraud-velocity-evaluation"
       ]
     },
     {
       "id": "component-selective-project-scaffold",
       "category": "API friction",
-      "independent_trial_count": 3,
+      "independent_trial_count": 4,
       "confidence": "high",
       "candidate": true,
       "summary": "Developers with Fold-only or no-component scenarios avoid the all-components starter or project scaffold because it adds unrelated crates and setup.",
@@ -153,7 +187,21 @@
       "sources": [
         "purchase-audit",
         "edge-spool-pressure",
-        "flash-config-journal"
+        "flash-config-journal",
+        "ci-lease-coordinator"
+      ]
+    },
+    {
+      "id": "nameable-pipeline-and-reader-types",
+      "category": "API friction",
+      "independent_trial_count": 2,
+      "confidence": "medium",
+      "candidate": true,
+      "summary": "Developers found composed pipeline and reader types difficult to name in ordinary reusable structs and helper signatures.",
+      "smallest_improvement": "Document type-alias, function-pointer, and ordinary helper-signature patterns for composed pipelines and readers; do not infer a new type-erasure subsystem.",
+      "sources": [
+        "ci-lease-coordinator",
+        "fraud-velocity-evaluation"
       ]
     }
   ]

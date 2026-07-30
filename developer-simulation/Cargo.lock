@@ -46,6 +46,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
+name = "ci-lease-coordinator"
+version = "0.0.0"
+dependencies = [
+ "fold",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "cobs"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -103,6 +112,14 @@ dependencies = [
  "lock_api",
  "once_cell",
  "parking_lot_core",
+]
+
+[[package]]
+name = "edge-spool-pressure"
+version = "0.1.0"
+dependencies = [
+ "fold",
+ "serde",
 ]
 
 [[package]]
@@ -168,6 +185,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "flash-config-journal"
+version = "0.0.0"
+
+[[package]]
 name = "flume"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -186,6 +207,10 @@ dependencies = [
  "postcard",
  "serde",
 ]
+
+[[package]]
+name = "fraud-velocity-evaluation"
+version = "0.1.0"
 
 [[package]]
 name = "fxhash"
