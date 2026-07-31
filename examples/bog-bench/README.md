@@ -4,6 +4,8 @@
 rescanning prior sessions; three local five-trial measurements kept append cost
 in the same tens-of-milliseconds range across 51–801 sessions.**
 
+![bog-bench application and fold architecture, including exact retraction, isolated windows, and local benchmark measurements](assets/bog-bench-overview.webp)
+
 Category: **performance**
 
 ```console
