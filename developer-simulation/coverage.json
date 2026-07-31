@@ -156,16 +156,48 @@
       "components_used": [],
       "outcome": "no_fit",
       "report": "reports/2026-07-30.md"
+    },
+    {
+      "date": "2026-07-31",
+      "slug": "homecare-gap-fill",
+      "persona": "scheduling-platform developer, intermediate Rust",
+      "domain": "home-care scheduling and dispatch",
+      "constraints": [
+        "SQLite remains authoritative",
+        "20,000 caregivers and 120,000 visits over 14 days",
+        "200 cancellation changes per second with stable assignments",
+        "deterministic explanations, restart recovery, and explicit time offsets"
+      ],
+      "components_considered": ["fold", "ese", "anny"],
+      "components_used": ["fold"],
+      "outcome": "no_fit",
+      "report": "reports/2026-07-31.md"
+    },
+    {
+      "date": "2026-07-31",
+      "slug": "parts-catalog-evolution",
+      "persona": "wholesale catalog backend developer, beginner-to-intermediate Rust",
+      "domain": "ordinary CRUD and runtime schema evolution",
+      "constraints": [
+        "existing SQLite file and HTTP shapes remain authoritative",
+        "250,000 products with category-specific nested attributes",
+        "conditional edits and resumable bulk import",
+        "single 512 MiB VM and storage below 1.5 times baseline"
+      ],
+      "components_considered": ["fold", "ese", "anny"],
+      "components_used": [],
+      "outcome": "no_fit",
+      "report": "reports/2026-07-31.md"
     }
   ],
   "recurring_findings": [
     {
       "id": "document-storage-and-concurrency-boundaries",
       "category": "documentation gap",
-      "independent_trial_count": 6,
+      "independent_trial_count": 8,
       "confidence": "high",
       "candidate": true,
-      "summary": "The public onboarding should distinguish embedded source-of-truth use from external databases, horizontal or partitioned deployment, strict disk quotas, raw-flash firmware, and atomic broker-offset ownership.",
+      "summary": "The public onboarding should distinguish embedded source-of-truth use from external databases and cross-store handoffs, horizontal or partitioned deployment, strict disk quotas, raw-flash firmware, and atomic broker-offset ownership.",
       "smallest_improvement": "Add a concise component, storage, transaction, concurrency, operating-system, and hard-limit capability matrix.",
       "sources": [
         "purchase-audit",
@@ -173,7 +205,9 @@
         "edge-spool-pressure",
         "flash-config-journal",
         "ci-lease-coordinator",
-        "fraud-velocity-evaluation"
+        "fraud-velocity-evaluation",
+        "homecare-gap-fill",
+        "parts-catalog-evolution"
       ]
     },
     {
@@ -194,14 +228,15 @@
     {
       "id": "nameable-pipeline-and-reader-types",
       "category": "API friction",
-      "independent_trial_count": 2,
+      "independent_trial_count": 3,
       "confidence": "medium",
       "candidate": true,
       "summary": "Developers found composed pipeline and reader types difficult to name in ordinary reusable structs and helper signatures.",
       "smallest_improvement": "Document type-alias, function-pointer, and ordinary helper-signature patterns for composed pipelines and readers; do not infer a new type-erasure subsystem.",
       "sources": [
         "ci-lease-coordinator",
-        "fraud-velocity-evaluation"
+        "fraud-velocity-evaluation",
+        "homecare-gap-fill"
       ]
     }
   ]
