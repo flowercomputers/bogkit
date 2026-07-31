@@ -11,7 +11,7 @@ use std::path::PathBuf;
 /// Each test needs its own database — the suite runs in parallel and fjall is
 /// a single-writer store.
 fn scratch_db(name: &str) -> PathBuf {
-    let p = std::env::temp_dir().join(format!("bog-bench-test-{name}.db"));
+    let p = std::env::temp_dir().join(format!("bog-bench-test-{}-{name}.db", std::process::id()));
     let _ = std::fs::remove_dir_all(&p);
     p
 }
