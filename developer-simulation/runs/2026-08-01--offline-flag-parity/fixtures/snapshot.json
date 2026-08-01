@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "config_id": "demo-v1",
+  "salt": "retail-kiosk-v1",
+  "flags": {
+    "checkout_redesign": {
+      "default": false,
+      "rules": [
+        {
+          "id": "employees-first",
+          "conditions": [
+            {
+              "attribute": "tier",
+              "op": "eq",
+              "value": "employee"
+            }
+          ],
+          "serve": true,
+          "percentage": null
+        },
+        {
+          "id": "kiosk-rollout",
+          "conditions": [
+            {
+              "attribute": "kiosk",
+              "op": "eq",
+              "value": true
+            }
+          ],
+          "serve": true,
+          "percentage": {
+            "attribute": "user_id",
+            "basis_points": 3500
+          }
+        }
+      ]
+    },
+    "max_cart_items": {
+      "default": 30.0,
+      "rules": [
+        {
+          "id": "large-store",
+          "conditions": [
+            {
+              "attribute": "store_size",
+              "op": "greater_than",
+              "value": 20000.0
+            }
+          ],
+          "serve": 50.0,
+          "percentage": null
+        }
+      ]
+    },
+    "receipt_style": {
+      "default": "compact",
+      "rules": [
+        {
+          "id": "accessible-store",
+          "conditions": [
+            {
+              "attribute": "accessibility_mode",
+              "op": "eq",
+              "value": true
+            }
+          ],
+          "serve": "large-print",
+          "percentage": null
+        }
+      ]
+    },
+    "support_prompt": {
+      "default": false,
+      "rules": [
+        {
+          "id": "non-guest",
+          "conditions": [
+            {
+              "attribute": "tier",
+              "op": "not_eq",
+              "value": "guest"
+            }
+          ],
+          "serve": true,
+          "percentage": null
+        }
+      ]
+    }
+  }
+}

@@ -188,13 +188,45 @@
       "components_used": [],
       "outcome": "no_fit",
       "report": "reports/2026-07-31.md"
+    },
+    {
+      "date": "2026-08-01",
+      "slug": "offline-flag-parity",
+      "persona": "client-platform SDK developer, Rust beginner with production TypeScript experience",
+      "domain": "offline feature-flag evaluation and configuration admission",
+      "constraints": [
+        "5,000 flags and 50,000 ordered targeting rules",
+        "cross-implementation deterministic decisions and explanations",
+        "failed reload preserves the active in-process snapshot",
+        "64 MiB measured process-memory target and 250 microsecond p95 target"
+      ],
+      "components_considered": ["fold", "ese", "anny"],
+      "components_used": [],
+      "outcome": "no_fit",
+      "report": "reports/2026-08-01.md"
+    },
+    {
+      "date": "2026-08-01",
+      "slug": "cnc-job-bundle-preflight",
+      "persona": "manufacturing software engineer, intermediate Rust",
+      "domain": "offline manufacturing job-bundle validation and staging",
+      "constraints": [
+        "untrusted classic stored-ZIP subset with deterministic diagnostics",
+        "1,000 declared files and a streamed 2 GiB sparse-member check",
+        "32 MiB measured process-memory target",
+        "no final ready name until a complete rechecked copy succeeds"
+      ],
+      "components_considered": ["fold", "ese", "anny"],
+      "components_used": [],
+      "outcome": "no_fit",
+      "report": "reports/2026-08-01.md"
     }
   ],
   "recurring_findings": [
     {
       "id": "document-storage-and-concurrency-boundaries",
       "category": "documentation gap",
-      "independent_trial_count": 8,
+      "independent_trial_count": 10,
       "confidence": "high",
       "candidate": true,
       "summary": "The public onboarding should distinguish embedded source-of-truth use from external databases and cross-store handoffs, horizontal or partitioned deployment, strict disk quotas, raw-flash firmware, and atomic broker-offset ownership.",
@@ -207,7 +239,9 @@
         "ci-lease-coordinator",
         "fraud-velocity-evaluation",
         "homecare-gap-fill",
-        "parts-catalog-evolution"
+        "parts-catalog-evolution",
+        "offline-flag-parity",
+        "cnc-job-bundle-preflight"
       ]
     },
     {
