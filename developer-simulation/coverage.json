@@ -220,16 +220,48 @@
       "components_used": [],
       "outcome": "no_fit",
       "report": "reports/2026-08-01.md"
+    },
+    {
+      "date": "2026-08-02",
+      "slug": "carrier-label-ambiguity",
+      "persona": "fulfillment-platform engineer, intermediate Rust with strong TypeScript experience",
+      "domain": "fulfillment workflow and external purchase ambiguity",
+      "constraints": [
+        "carrier remains authoritative for charges and PostgreSQL for workflow state",
+        "20,000 shipments across 30 deterministic fault seeds",
+        "ambiguous timeouts, duplicate and reordered callbacks, and process exits",
+        "no automatic repurchase after an inconclusive carrier outcome"
+      ],
+      "components_considered": ["fold", "ese", "anny"],
+      "components_used": [],
+      "outcome": "no_fit",
+      "report": "reports/2026-08-02.md"
+    },
+    {
+      "date": "2026-08-02",
+      "slug": "snapshot-gc-safety",
+      "persona": "backup-tools maintainer, Rust beginner with production Python experience",
+      "domain": "backup retention and filesystem garbage-collection safety",
+      "constraints": [
+        "existing JSONL manifests and content-addressed blob layout remain authoritative",
+        "1,000,000 references across 10,000 manifests and 300,000 blobs",
+        "128 MiB measured process-memory target and bounded scratch space",
+        "cooperative publication lock, recoverable quarantine, and restart idempotence"
+      ],
+      "components_considered": ["fold", "ese", "anny"],
+      "components_used": [],
+      "outcome": "no_fit",
+      "report": "reports/2026-08-02.md"
     }
   ],
   "recurring_findings": [
     {
       "id": "document-storage-and-concurrency-boundaries",
       "category": "documentation gap",
-      "independent_trial_count": 10,
+      "independent_trial_count": 12,
       "confidence": "high",
       "candidate": true,
-      "summary": "The public onboarding should distinguish embedded source-of-truth use from external databases and cross-store handoffs, horizontal or partitioned deployment, strict disk quotas, raw-flash firmware, and atomic broker-offset ownership.",
+      "summary": "The public onboarding should distinguish embedded source-of-truth use from external databases and cross-store handoffs, external network authorities and cooperative filesystem protocols, horizontal or partitioned deployment, strict disk quotas, raw-flash firmware, and atomic broker-offset ownership.",
       "smallest_improvement": "Add a concise component, storage, transaction, concurrency, operating-system, and hard-limit capability matrix.",
       "sources": [
         "purchase-audit",
@@ -241,7 +273,9 @@
         "homecare-gap-fill",
         "parts-catalog-evolution",
         "offline-flag-parity",
-        "cnc-job-bundle-preflight"
+        "cnc-job-bundle-preflight",
+        "carrier-label-ambiguity",
+        "snapshot-gc-safety"
       ]
     },
     {
