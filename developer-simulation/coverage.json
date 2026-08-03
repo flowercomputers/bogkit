@@ -252,16 +252,48 @@
       "components_used": [],
       "outcome": "no_fit",
       "report": "reports/2026-08-02.md"
+    },
+    {
+      "date": "2026-08-03",
+      "slug": "provenance-revocation-impact",
+      "persona": "release-security platform engineer, intermediate Rust",
+      "domain": "software supply-chain provenance and revocation impact",
+      "constraints": [
+        "PostgreSQL remains authoritative during continuous manifest ingestion",
+        "transitive revocation, missing manifests, duplicate edges, and malformed cycles",
+        "deterministic explanation paths and generation-safe publication",
+        "500,000-artifact and 5-million-edge scale target"
+      ],
+      "components_considered": ["fold", "ese", "anny"],
+      "components_used": ["fold"],
+      "outcome": "no_fit",
+      "report": "reports/2026-08-03.md"
+    },
+    {
+      "date": "2026-08-03",
+      "slug": "offline-door-policy-update",
+      "persona": "building-access systems developer, Rust beginner with production embedded-C experience",
+      "domain": "offline physical-access policy distribution",
+      "constraints": [
+        "fixed 16 MiB policy image and 4 MiB working-memory target",
+        "signed duplicated reordered skipped or truncated bundles",
+        "50,000 emergency revocations with monotonic versions",
+        "old-or-new recovery after every modeled 4 KiB flash write"
+      ],
+      "components_considered": ["fold", "ese", "anny"],
+      "components_used": ["fold"],
+      "outcome": "no_fit",
+      "report": "reports/2026-08-03.md"
     }
   ],
   "recurring_findings": [
     {
       "id": "document-storage-and-concurrency-boundaries",
       "category": "documentation gap",
-      "independent_trial_count": 12,
+      "independent_trial_count": 14,
       "confidence": "high",
       "candidate": true,
-      "summary": "The public onboarding should distinguish embedded source-of-truth use from external databases and cross-store handoffs, external network authorities and cooperative filesystem protocols, horizontal or partitioned deployment, strict disk quotas, raw-flash firmware, and atomic broker-offset ownership.",
+      "summary": "The public onboarding should distinguish embedded source-of-truth use from external databases and cross-store handoffs, external network authorities and cooperative filesystem protocols, horizontal or partitioned deployment, strict disk quotas, raw-flash firmware and fixed controller images, atomic broker-offset ownership, and exact recursive graph workloads not supplied by the public operators.",
       "smallest_improvement": "Add a concise component, storage, transaction, concurrency, operating-system, and hard-limit capability matrix.",
       "sources": [
         "purchase-audit",
@@ -275,7 +307,9 @@
         "offline-flag-parity",
         "cnc-job-bundle-preflight",
         "carrier-label-ambiguity",
-        "snapshot-gc-safety"
+        "snapshot-gc-safety",
+        "provenance-revocation-impact",
+        "offline-door-policy-update"
       ]
     },
     {

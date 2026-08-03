@@ -591,6 +591,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "offline-door-policy-fit-probe"
+version = "0.1.0"
+dependencies = [
+ "fold",
+ "libc",
+ "serde",
+]
+
+[[package]]
 name = "offline-flag-parity"
 version = "0.1.0"
 dependencies = [
@@ -670,6 +679,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "provenance-revocation-reproducer"
+version = "0.1.0"
+dependencies = [
+ "fold",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
