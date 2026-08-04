@@ -284,16 +284,48 @@
       "components_used": ["fold"],
       "outcome": "no_fit",
       "report": "reports/2026-08-03.md"
+    },
+    {
+      "date": "2026-08-04",
+      "slug": "mixed-version-contract-gate",
+      "persona": "deployment-platform developer, intermediate Rust with production Go experience",
+      "domain": "mixed-version event-contract compatibility during rolling deployment",
+      "constraints": [
+        "300 services, 120 topics, 1,800 contracts, and 12,000 relationships",
+        "every permitted producer-consumer version pair evaluated deterministically",
+        "unsupported or malformed schema input must require review",
+        "five-second and 128 MiB one-process targets"
+      ],
+      "components_considered": ["fold", "ese", "anny"],
+      "components_used": [],
+      "outcome": "no_fit",
+      "report": "reports/2026-08-04.md"
+    },
+    {
+      "date": "2026-08-04",
+      "slug": "ocr-redaction-remap",
+      "persona": "public-records processing engineer, Rust beginner with production Python experience",
+      "domain": "OCR redaction remapping and publication safety",
+      "constraints": [
+        "5,000 page-streaming workload with 20 million scalars and 150,000 reviewed spans",
+        "ambiguous correspondence must conservatively cover or block",
+        "diagnostics must not contain OCR or matched text",
+        "controlled process resume and 64 MiB measured-memory target"
+      ],
+      "components_considered": ["fold", "ese", "anny"],
+      "components_used": [],
+      "outcome": "no_fit",
+      "report": "reports/2026-08-04.md"
     }
   ],
   "recurring_findings": [
     {
       "id": "document-storage-and-concurrency-boundaries",
       "category": "documentation gap",
-      "independent_trial_count": 14,
+      "independent_trial_count": 16,
       "confidence": "high",
       "candidate": true,
-      "summary": "The public onboarding should distinguish embedded source-of-truth use from external databases and cross-store handoffs, external network authorities and cooperative filesystem protocols, horizontal or partitioned deployment, strict disk quotas, raw-flash firmware and fixed controller images, atomic broker-offset ownership, and exact recursive graph workloads not supplied by the public operators.",
+      "summary": "The public onboarding should distinguish embedded source-of-truth use from external databases and cross-store handoffs, external network authorities and cooperative filesystem protocols, horizontal or partitioned deployment, strict disk quotas, raw-flash firmware and fixed controller images, atomic broker-offset ownership, exact recursive graph workloads, and bounded read-only analysis or page-local transformation that does not benefit from durable state.",
       "smallest_improvement": "Add a concise component, storage, transaction, concurrency, operating-system, and hard-limit capability matrix.",
       "sources": [
         "purchase-audit",
@@ -309,13 +341,15 @@
         "carrier-label-ambiguity",
         "snapshot-gc-safety",
         "provenance-revocation-impact",
-        "offline-door-policy-update"
+        "offline-door-policy-update",
+        "mixed-version-contract-gate",
+        "ocr-redaction-remap"
       ]
     },
     {
       "id": "component-selective-project-scaffold",
       "category": "API friction",
-      "independent_trial_count": 4,
+      "independent_trial_count": 6,
       "confidence": "high",
       "candidate": true,
       "summary": "Developers with Fold-only or no-component scenarios avoid the all-components starter or project scaffold because it adds unrelated crates and setup.",
@@ -324,7 +358,9 @@
         "purchase-audit",
         "edge-spool-pressure",
         "flash-config-journal",
-        "ci-lease-coordinator"
+        "ci-lease-coordinator",
+        "mixed-version-contract-gate",
+        "ocr-redaction-remap"
       ]
     },
     {
