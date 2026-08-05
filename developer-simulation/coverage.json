@@ -316,16 +316,48 @@
       "components_used": [],
       "outcome": "no_fit",
       "report": "reports/2026-08-04.md"
+    },
+    {
+      "date": "2026-08-05",
+      "slug": "fastq-barcode-spill",
+      "persona": "sequencing-pipeline engineer, intermediate Rust with production Python experience",
+      "domain": "streaming genomic demultiplexing and bounded output fan-out",
+      "constraints": [
+        "one non-seekable pass over 1,000,000 paired FASTQ records",
+        "unique Hamming-distance-one correction with ambiguous ties",
+        "at most 24 sample output files open",
+        "no read or sample content in diagnostics and completion manifest only after validation"
+      ],
+      "components_considered": ["fold", "ese", "anny"],
+      "components_used": [],
+      "outcome": "no_fit",
+      "report": "reports/2026-08-05.md"
+    },
+    {
+      "date": "2026-08-05",
+      "slug": "parcel-delta-tiles",
+      "persona": "civic GIS platform developer, Rust beginner with production TypeScript experience",
+      "domain": "parcel geometry delta planning for map-tile invalidation",
+      "constraints": [
+        "authoritative old and new Polygon or MultiPolygon deltas without parcel-store access",
+        "closed-boundary tile contact with strict simple-topology admission",
+        "deterministic lexicographic plan and no partial output on invalid input",
+        "1,000 mixed edits with 200 vertices per line under five seconds and 256 MiB"
+      ],
+      "components_considered": ["fold", "ese", "anny"],
+      "components_used": [],
+      "outcome": "no_fit",
+      "report": "reports/2026-08-05.md"
     }
   ],
   "recurring_findings": [
     {
       "id": "document-storage-and-concurrency-boundaries",
       "category": "documentation gap",
-      "independent_trial_count": 16,
+      "independent_trial_count": 18,
       "confidence": "high",
       "candidate": true,
-      "summary": "The public onboarding should distinguish embedded source-of-truth use from external databases and cross-store handoffs, external network authorities and cooperative filesystem protocols, horizontal or partitioned deployment, strict disk quotas, raw-flash firmware and fixed controller images, atomic broker-offset ownership, exact recursive graph workloads, and bounded read-only analysis or page-local transformation that does not benefit from durable state.",
+      "summary": "The public onboarding should distinguish embedded source-of-truth use from external databases and cross-store handoffs, external network authorities and cooperative filesystem protocols, horizontal or partitioned deployment, strict disk quotas, raw-flash firmware and fixed controller images, atomic broker-offset ownership, exact recursive graph workloads, and bounded stateless stream or geometry transformations that do not benefit from durable state.",
       "smallest_improvement": "Add a concise component, storage, transaction, concurrency, operating-system, and hard-limit capability matrix.",
       "sources": [
         "purchase-audit",
@@ -343,13 +375,15 @@
         "provenance-revocation-impact",
         "offline-door-policy-update",
         "mixed-version-contract-gate",
-        "ocr-redaction-remap"
+        "ocr-redaction-remap",
+        "fastq-barcode-spill",
+        "parcel-delta-tiles"
       ]
     },
     {
       "id": "component-selective-project-scaffold",
       "category": "API friction",
-      "independent_trial_count": 6,
+      "independent_trial_count": 8,
       "confidence": "high",
       "candidate": true,
       "summary": "Developers with Fold-only or no-component scenarios avoid the all-components starter or project scaffold because it adds unrelated crates and setup.",
@@ -360,7 +394,9 @@
         "flash-config-journal",
         "ci-lease-coordinator",
         "mixed-version-contract-gate",
-        "ocr-redaction-remap"
+        "ocr-redaction-remap",
+        "fastq-barcode-spill",
+        "parcel-delta-tiles"
       ]
     },
     {
