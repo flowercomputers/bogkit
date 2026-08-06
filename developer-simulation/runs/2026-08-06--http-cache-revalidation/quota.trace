@@ -1,0 +1,6 @@
+quota 300
+blob body-a 10 verified
+entry tenant-a GET https://cache.test/quota en 10 20 body-a 10 0 quota etag-a
+origin replace modified body-b 200 100 200 - etag-b verified
+request r1 10 worker-1 tenant-a GET https://cache.test/quota en allow replace
+complete r1 11 none

@@ -119,6 +119,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c53ba0f290bfc610084c05582d9c5d421662128fc69f4bf236707af6fd321b9"
 
 [[package]]
+name = "caldav-recurrence-prototype"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "fold",
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "carrier-label-ambiguity"
 version = "0.1.0"
 
@@ -493,6 +505,10 @@ dependencies = [
  "http-body",
  "pin-project-lite",
 ]
+
+[[package]]
+name = "http-cache-revalidation"
+version = "0.1.0"
 
 [[package]]
 name = "httparse"

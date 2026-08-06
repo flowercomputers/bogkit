@@ -348,16 +348,48 @@
       "components_used": [],
       "outcome": "no_fit",
       "report": "reports/2026-08-05.md"
+    },
+    {
+      "date": "2026-08-06",
+      "slug": "caldav-recurrence",
+      "persona": "CalDAV calendar maintainer, beginner-to-intermediate Rust",
+      "domain": "calendar recurrence and time-zone correctness",
+      "constraints": [
+        "SQLite remains authoritative",
+        "timed and all-day recurrence across DST gaps and folds",
+        "canonical overrides, deterministic ordering, and atomic publication",
+        "5,000 masters and 2,000,000 candidate occurrences"
+      ],
+      "components_considered": ["fold", "ese", "anny"],
+      "components_used": ["fold"],
+      "outcome": "no_fit",
+      "report": "reports/2026-08-06.md"
+    },
+    {
+      "date": "2026-08-06",
+      "slug": "http-cache-revalidation",
+      "persona": "edge reverse-proxy maintainer, intermediate Rust",
+      "domain": "HTTP cache revalidation and tag-purge safety",
+      "constraints": [
+        "separate metadata and content-addressed body authority",
+        "Vary-aware identity, freshness, stale-if-error, and single-flight revalidation",
+        "ordered tenant tag purges and modeled crash recovery",
+        "2,000,000 objects, 1,000,000 requests, and 100,000 purges"
+      ],
+      "components_considered": ["fold", "ese", "anny"],
+      "components_used": [],
+      "outcome": "no_fit",
+      "report": "reports/2026-08-06.md"
     }
   ],
   "recurring_findings": [
     {
       "id": "document-storage-and-concurrency-boundaries",
       "category": "documentation gap",
-      "independent_trial_count": 18,
+      "independent_trial_count": 20,
       "confidence": "high",
       "candidate": true,
-      "summary": "The public onboarding should distinguish embedded source-of-truth use from external databases and cross-store handoffs, external network authorities and cooperative filesystem protocols, horizontal or partitioned deployment, strict disk quotas, raw-flash firmware and fixed controller images, atomic broker-offset ownership, exact recursive graph workloads, and bounded stateless stream or geometry transformations that do not benefit from durable state.",
+      "summary": "The public onboarding should distinguish embedded source-of-truth use from external databases and calendar or cache body-store handoffs, external network authorities and cooperative filesystem protocols, horizontal or partitioned deployment, durable leases and ordered purges, strict disk quotas, raw-flash firmware and fixed controller images, atomic broker-offset ownership, exact recursive graph workloads, and bounded stateless stream or geometry transformations that do not benefit from durable state.",
       "smallest_improvement": "Add a concise component, storage, transaction, concurrency, operating-system, and hard-limit capability matrix.",
       "sources": [
         "purchase-audit",
@@ -377,13 +409,15 @@
         "mixed-version-contract-gate",
         "ocr-redaction-remap",
         "fastq-barcode-spill",
-        "parcel-delta-tiles"
+        "parcel-delta-tiles",
+        "caldav-recurrence",
+        "http-cache-revalidation"
       ]
     },
     {
       "id": "component-selective-project-scaffold",
       "category": "API friction",
-      "independent_trial_count": 8,
+      "independent_trial_count": 10,
       "confidence": "high",
       "candidate": true,
       "summary": "Developers with Fold-only or no-component scenarios avoid the all-components starter or project scaffold because it adds unrelated crates and setup.",
@@ -396,7 +430,9 @@
         "mixed-version-contract-gate",
         "ocr-redaction-remap",
         "fastq-barcode-spill",
-        "parcel-delta-tiles"
+        "parcel-delta-tiles",
+        "caldav-recurrence",
+        "http-cache-revalidation"
       ]
     },
     {

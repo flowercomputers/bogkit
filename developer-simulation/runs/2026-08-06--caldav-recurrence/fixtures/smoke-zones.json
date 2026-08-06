@@ -1,0 +1,15 @@
+{
+  "zones": {
+    "America/New_York": {
+      "initial_offset_seconds": -18000,
+      "transitions": [
+        {"at_utc":"2026-03-08T07:00:00Z","offset_after_seconds":-14400},
+        {"at_utc":"2026-11-01T06:00:00Z","offset_after_seconds":-18000}
+      ]
+    },
+    "FLOATING": {
+      "initial_offset_seconds": 0,
+      "transitions": []
+    }
+  }
+}
