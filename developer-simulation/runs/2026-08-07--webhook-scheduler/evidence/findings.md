@@ -1,0 +1,19 @@
+# Categorized findings
+
+Severity uses the consequence if this prototype's behavior were mistakenly
+treated as production-ready. Confidence describes how directly the local
+tests and demo support the finding.
+
+| Category | Finding | Severity | Confidence | Reproduction | Smallest improvement |
+| --- | --- | --- | --- | --- | --- |
+| Ordering | The endpoint queue retains its in-flight head; later events cannot be selected until that head reaches a terminal status. | Low | High | `cargo test -p webhook-scheduler endpoint_order_is_preserved_across_retry` | Add a persisted sequence number and contract test against the production delivery table. |
+| Retry classification | Retryable, non-retryable, expired, and maximum-attempt dead-letter states are distinct and tested. | Low | High | `cargo test -p webhook-scheduler failure_classes_are_distinct` | Map real HTTP/database error classes and clock source into this enum. |
+| Crash delivery | A lease is persisted before a send decision; restart requeues it and stale outcomes are ignored, yielding at-least-once behavior. | Medium | High within the model | `cargo test -p webhook-scheduler crash_requeues_unacknowledged_lease_and_old_outcome_is_ignored` | Replace the clone snapshot with an atomic PostgreSQL lease/ack transaction and crash-injection tests. |
+| Noisy endpoint bounds | One endpoint is limited to one in-flight head and an eight-item queue budget; its occupancy reaches but does not exceed the configured budget. | Low | High | `cargo test -p webhook-scheduler noisy_endpoint_is_bounded_and_healthy_tenant_is_admitted` | Decide the production overflow policy and expose it to operations. |
+| Outage recovery | During a continuous simulated one-hour unavailability, no retry is sent early; one overdue head is admitted on recovery. | Low | High within the model | `cargo test -p webhook-scheduler one_hour_outage_has_no_retry_storm_and_recovers_one_head` | Add multi-endpoint recovery traces and a real scheduler-clock integration test. |
+| Fairness/rate limits | Tenant round-robin plus tenant and endpoint spacing admits a healthy tenant while another tenant is rate-limited. | Medium | Medium-high; synthetic traces only | `cargo test -p webhook-scheduler tenant_rate_limit_does_not_starve_another_tenant` | Run generated traces at the stated 10,000-tenant/500-endpoint shape and record tail percentiles. |
+| Determinism | Identical timestamp/outcome traces produce identical observations and stable jitter deadlines. | Low | High | `cargo test -p webhook-scheduler identical_trace_is_deterministic` | Add a serialized trace corpus and cross-process replay comparison. |
+| Tail latency | The stated four-worker fixture improves the healthy tenant from 60,000 ms modeled baseline tail latency to 0 ms. | Medium | High for the fixture, low for production | `cargo run --release -p webhook-scheduler -- --repeat 1000` | Benchmark a faithful baseline implementation and production-shaped traces in release mode. |
+| Retry cap | Reviewer reproduced jitter exceeding the configured retry cap; coordinator fixed the hard-cap calculation and added a regression. | High before fix; low after fix | High | `cargo test -p webhook-scheduler retry_jitter_respects_hard_cap` | Keep the post-jitter hard-cap regression and define the cap in the production contract. |
+| BogKit fit | Public Fold examples show durable incremental views, but not timer/lease/side-effect scheduling. | Medium | High from public discovery | See `discovery.md` and the ordered commands there. | Revisit only after a storage adapter and external-effect acknowledgment boundary are specified. |
+| Production boundary | No HTTP, PostgreSQL, process-level durability, payload memory pressure, auth, or 200,000 events/hour load was exercised. | High | High | The package README and this record state the boundary. | Build a separate integration trial before production adoption. |

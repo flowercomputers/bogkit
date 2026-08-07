@@ -1,0 +1,12 @@
+[package]
+name = "webhook-scheduler"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "webhook_scheduler"
+path = "src/lib.rs"
+
+[[bin]]
+name = "webhook-scheduler"
+path = "src/main.rs"

@@ -380,6 +380,38 @@
       "components_used": [],
       "outcome": "no_fit",
       "report": "reports/2026-08-06.md"
+    },
+    {
+      "date": "2026-08-07",
+      "slug": "localization-catalog-compiler",
+      "persona": "desktop build-tooling developer, intermediate Rust",
+      "domain": "localization catalog validation and deterministic compilation",
+      "constraints": [
+        "100,000 messages across 18 locales with nested fallbacks",
+        "missing plural branches, placeholder mismatches, invalid references, and duplicate IDs",
+        "offline CI with a 512 MiB memory limit and three-minute budget",
+        "complete source diagnostics and byte-for-byte deterministic runtime tables"
+      ],
+      "components_considered": ["fold", "ese", "anny"],
+      "components_used": [],
+      "outcome": "local_proof_only_no_production_fit",
+      "report": "reports/2026-08-07.md"
+    },
+    {
+      "date": "2026-08-07",
+      "slug": "webhook-scheduler",
+      "persona": "multi-tenant event-delivery backend developer, senior Rust",
+      "domain": "webhook delivery scheduling and external side-effect coordination",
+      "constraints": [
+        "200,000 events per hour across 10,000 tenants and 500 endpoints",
+        "per-endpoint ordering, tenant and endpoint rate limits, and bounded noisy-endpoint queues",
+        "at-least-once delivery across crashes with deterministic retry and dead-letter classification",
+        "fair recovery from a one-hour endpoint outage without retry storms"
+      ],
+      "components_considered": ["fold", "ese", "anny"],
+      "components_used": [],
+      "outcome": "no_fit",
+      "report": "reports/2026-08-07.md"
     }
   ],
   "recurring_findings": [

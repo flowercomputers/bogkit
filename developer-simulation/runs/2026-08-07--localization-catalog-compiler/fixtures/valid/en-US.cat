@@ -1,0 +1,24 @@
+locale en-US
+fallback -
+
+message apples
+plural count
+branch one
+text One apple for {name}
+branch other
+text {count} apples for {name}
+end
+
+message greeting
+select gender
+branch male
+text He says hi to {name}
+branch other
+text They say hi to {name}
+end
+
+message nested
+ref en-US shared
+
+message shared
+text Shared message for {name}

@@ -1,0 +1,21 @@
+locale en-US
+fallback -
+
+message apples
+plural count
+branch one
+text One apple
+branch other
+text {count} apples
+end
+
+message greeting
+text Hello {name}
+
+message duplicate
+text first
+message duplicate
+text second
+
+message existing
+text Existing
