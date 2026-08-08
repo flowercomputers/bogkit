@@ -1,0 +1,10 @@
+{
+  "passed": true,
+  "precision": 1.0,
+  "recall": 1.0,
+  "correct_links": 49995,
+  "accepted_links": 49995,
+  "expected_unambiguous_links": 49995,
+  "invariant_failures": 0,
+  "failures": []
+}

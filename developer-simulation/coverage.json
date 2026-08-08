@@ -412,6 +412,46 @@
       "components_used": [],
       "outcome": "no_fit",
       "report": "reports/2026-08-07.md"
+    },
+    {
+      "date": "2026-08-08",
+      "slug": "remittance-reconciliation",
+      "persona": "revenue-cycle platform engineer, Rust beginner with production Java and SQL experience",
+      "domain": "medical remittance reconciliation and exact constrained assignment",
+      "constraints": [
+        "62,000 claim revisions and 50,000 remittance lines in one immutable nightly snapshot",
+        "exact integer-cent conservation with no silent double posting",
+        "deterministic output across ten input shuffles and complete uncertainty review",
+        "60-second four-core target with privacy-safe explanations"
+      ],
+      "components_considered": [
+        "fold",
+        "ese",
+        "anny"
+      ],
+      "components_used": [],
+      "outcome": "no_fit",
+      "report": "reports/2026-08-08.md"
+    },
+    {
+      "date": "2026-08-08",
+      "slug": "container-yard-planner",
+      "persona": "terminal-operating-system integration developer, Rust novice with production C# and SQL experience",
+      "domain": "advisory container-yard constraint planning",
+      "constraints": [
+        "48 bays by 6 rows with 1,050 to 1,300 containers and 40 to 120 ordered pickups",
+        "every intermediate move must satisfy capacity, weight, reefer, customs, maintenance, and hazardous-neighbor rules",
+        "deterministic replayable output with no executable partial plan",
+        "10-second target and at least 20 percent fewer relocations than nearest-legal-slot baseline"
+      ],
+      "components_considered": [
+        "fold",
+        "ese",
+        "anny"
+      ],
+      "components_used": [],
+      "outcome": "no_fit",
+      "report": "reports/2026-08-08.md"
     }
   ],
   "recurring_findings": [

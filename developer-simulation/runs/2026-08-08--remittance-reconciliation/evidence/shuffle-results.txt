@@ -1,0 +1,12 @@
+seed 1: 5.195s, byte-identical
+seed 2: 4.863s, byte-identical
+seed 3: 4.994s, byte-identical
+seed 5: 4.906s, byte-identical
+seed 8: 4.829s, byte-identical
+seed 13: 4.866s, byte-identical
+seed 21: 5.139s, byte-identical
+seed 34: 5.094s, byte-identical
+seed 55: 4.823s, byte-identical
+seed 89: 4.876s, byte-identical
+
+Each comparison used `cmp` on accepted.jsonl, review.jsonl, and summary.json.
