@@ -1,0 +1,525 @@
+{
+  "version": 1,
+  "purpose": "Track coverage and prevent repetitive or reverse-engineered BogKit scenarios.",
+  "selection_policy": {
+    "daily_trials": 2,
+    "allow_no_fit": true,
+    "prefer_underexplored_combinations": true,
+    "candidate_threshold": "two independent trials or one serious reproducible correctness defect"
+  },
+  "prior_submission_coverage": [
+    {
+      "project": "Area denial",
+      "domain": "location-based multiplayer game",
+      "roles": ["game backend developer"],
+      "components": ["fold"]
+    },
+    {
+      "project": "bog-bench",
+      "domain": "agent tooling observability",
+      "roles": ["developer tools engineer"],
+      "components": ["fold"]
+    },
+    {
+      "project": "Obsidian base views",
+      "domain": "local-first knowledge interface",
+      "roles": ["desktop application developer"],
+      "components": ["fold"]
+    },
+    {
+      "project": "tompkins-audio-search",
+      "domain": "multimodal archive search",
+      "roles": ["media data engineer"],
+      "components": ["fold", "ese", "anny"]
+    },
+    {
+      "project": "seance",
+      "domain": "time-travel repository search",
+      "roles": ["developer tools engineer"],
+      "components": ["fold", "ese", "anny"]
+    },
+    {
+      "project": "MUDGarden",
+      "domain": "persistent simulated world",
+      "roles": ["game and agent systems developer"],
+      "components": ["fold"]
+    },
+    {
+      "project": "Untitled Mobile FPS",
+      "domain": "mobile multiplayer game",
+      "roles": ["mobile and game backend developer"],
+      "components": ["fold", "ese", "anny"]
+    }
+  ],
+  "underexplored_domains": [
+    "business workflow and audit",
+    "build and deployment infrastructure",
+    "edge telemetry and operations",
+    "embedded or resource-constrained software",
+    "data synchronization",
+    "fraud and anomaly detection",
+    "scheduling and marketplaces",
+    "ordinary CRUD systems with uncertain fit"
+  ],
+  "runs": [
+    {
+      "date": "2026-07-28",
+      "slug": "purchase-audit",
+      "persona": "finance software developer, intermediate Rust",
+      "domain": "business workflow and audit",
+      "constraints": [
+        "PostgreSQL remains source of truth",
+        "state and audit event require one transaction",
+        "role-protected seven-year audit retention"
+      ],
+      "components_considered": ["fold", "ese", "anny"],
+      "components_used": ["fold"],
+      "outcome": "no_fit",
+      "report": "reports/2026-07-28.md"
+    },
+    {
+      "date": "2026-07-28",
+      "slug": "offline-reconciliation",
+      "persona": "warehouse device developer, Rust beginner",
+      "domain": "data synchronization",
+      "constraints": [
+        "PostgreSQL remains source of truth",
+        "horizontally deployed API",
+        "duplicate, reordered, and interrupted uploads",
+        "no trusted cross-device clock"
+      ],
+      "components_considered": ["fold"],
+      "components_used": ["fold"],
+      "outcome": "local_proof_only_no_production_fit",
+      "report": "reports/2026-07-28.md"
+    },
+    {
+      "date": "2026-07-29",
+      "slug": "edge-spool-pressure",
+      "persona": "site reliability engineer, intermediate Rust",
+      "domain": "edge telemetry and operations",
+      "constraints": [
+        "strict 256 MiB allocated spool limit",
+        "64 MiB available memory",
+        "priority-preserving retention and explainable drops",
+        "process interruption during writes and uploads"
+      ],
+      "components_considered": ["fold", "ese", "anny"],
+      "components_used": ["fold"],
+      "outcome": "no_fit",
+      "report": "reports/2026-07-29.md"
+    },
+    {
+      "date": "2026-07-29",
+      "slug": "flash-config-journal",
+      "persona": "embedded controls developer, beginner-to-intermediate Rust",
+      "domain": "embedded or resource-constrained software",
+      "constraints": [
+        "128 KiB raw NOR flash with 4 KiB erase blocks",
+        "16 KiB working-memory target",
+        "power loss after any modeled written byte",
+        "bounded boot scan and wear distribution"
+      ],
+      "components_considered": ["fold", "ese", "anny"],
+      "components_used": [],
+      "outcome": "no_fit",
+      "report": "reports/2026-07-29.md"
+    },
+    {
+      "date": "2026-07-30",
+      "slug": "ci-lease-coordinator",
+      "persona": "CI platform engineer, intermediate Rust",
+      "domain": "build and deployment infrastructure",
+      "constraints": [
+        "three concurrently active coordinator replicas",
+        "duplicate, reordered, and late worker messages",
+        "100 post-acknowledgment process exits",
+        "100,000 queued jobs and 2,000 updates per second"
+      ],
+      "components_considered": ["fold", "ese", "anny"],
+      "components_used": ["fold"],
+      "outcome": "no_fit",
+      "report": "reports/2026-07-30.md"
+    },
+    {
+      "date": "2026-07-30",
+      "slug": "fraud-velocity-evaluation",
+      "persona": "fraud infrastructure developer, Rust beginner",
+      "domain": "fraud and anomaly detection",
+      "constraints": [
+        "four consumer replicas with partition reassignment",
+        "event-time windows with deterministic linked corrections",
+        "atomic durable-stream offset ownership",
+        "verified customer deletion and exact alert explanations"
+      ],
+      "components_considered": ["fold", "ese", "anny"],
+      "components_used": [],
+      "outcome": "no_fit",
+      "report": "reports/2026-07-30.md"
+    },
+    {
+      "date": "2026-07-31",
+      "slug": "homecare-gap-fill",
+      "persona": "scheduling-platform developer, intermediate Rust",
+      "domain": "home-care scheduling and dispatch",
+      "constraints": [
+        "SQLite remains authoritative",
+        "20,000 caregivers and 120,000 visits over 14 days",
+        "200 cancellation changes per second with stable assignments",
+        "deterministic explanations, restart recovery, and explicit time offsets"
+      ],
+      "components_considered": ["fold", "ese", "anny"],
+      "components_used": ["fold"],
+      "outcome": "no_fit",
+      "report": "reports/2026-07-31.md"
+    },
+    {
+      "date": "2026-07-31",
+      "slug": "parts-catalog-evolution",
+      "persona": "wholesale catalog backend developer, beginner-to-intermediate Rust",
+      "domain": "ordinary CRUD and runtime schema evolution",
+      "constraints": [
+        "existing SQLite file and HTTP shapes remain authoritative",
+        "250,000 products with category-specific nested attributes",
+        "conditional edits and resumable bulk import",
+        "single 512 MiB VM and storage below 1.5 times baseline"
+      ],
+      "components_considered": ["fold", "ese", "anny"],
+      "components_used": [],
+      "outcome": "no_fit",
+      "report": "reports/2026-07-31.md"
+    },
+    {
+      "date": "2026-08-01",
+      "slug": "offline-flag-parity",
+      "persona": "client-platform SDK developer, Rust beginner with production TypeScript experience",
+      "domain": "offline feature-flag evaluation and configuration admission",
+      "constraints": [
+        "5,000 flags and 50,000 ordered targeting rules",
+        "cross-implementation deterministic decisions and explanations",
+        "failed reload preserves the active in-process snapshot",
+        "64 MiB measured process-memory target and 250 microsecond p95 target"
+      ],
+      "components_considered": ["fold", "ese", "anny"],
+      "components_used": [],
+      "outcome": "no_fit",
+      "report": "reports/2026-08-01.md"
+    },
+    {
+      "date": "2026-08-01",
+      "slug": "cnc-job-bundle-preflight",
+      "persona": "manufacturing software engineer, intermediate Rust",
+      "domain": "offline manufacturing job-bundle validation and staging",
+      "constraints": [
+        "untrusted classic stored-ZIP subset with deterministic diagnostics",
+        "1,000 declared files and a streamed 2 GiB sparse-member check",
+        "32 MiB measured process-memory target",
+        "no final ready name until a complete rechecked copy succeeds"
+      ],
+      "components_considered": ["fold", "ese", "anny"],
+      "components_used": [],
+      "outcome": "no_fit",
+      "report": "reports/2026-08-01.md"
+    },
+    {
+      "date": "2026-08-02",
+      "slug": "carrier-label-ambiguity",
+      "persona": "fulfillment-platform engineer, intermediate Rust with strong TypeScript experience",
+      "domain": "fulfillment workflow and external purchase ambiguity",
+      "constraints": [
+        "carrier remains authoritative for charges and PostgreSQL for workflow state",
+        "20,000 shipments across 30 deterministic fault seeds",
+        "ambiguous timeouts, duplicate and reordered callbacks, and process exits",
+        "no automatic repurchase after an inconclusive carrier outcome"
+      ],
+      "components_considered": ["fold", "ese", "anny"],
+      "components_used": [],
+      "outcome": "no_fit",
+      "report": "reports/2026-08-02.md"
+    },
+    {
+      "date": "2026-08-02",
+      "slug": "snapshot-gc-safety",
+      "persona": "backup-tools maintainer, Rust beginner with production Python experience",
+      "domain": "backup retention and filesystem garbage-collection safety",
+      "constraints": [
+        "existing JSONL manifests and content-addressed blob layout remain authoritative",
+        "1,000,000 references across 10,000 manifests and 300,000 blobs",
+        "128 MiB measured process-memory target and bounded scratch space",
+        "cooperative publication lock, recoverable quarantine, and restart idempotence"
+      ],
+      "components_considered": ["fold", "ese", "anny"],
+      "components_used": [],
+      "outcome": "no_fit",
+      "report": "reports/2026-08-02.md"
+    },
+    {
+      "date": "2026-08-03",
+      "slug": "provenance-revocation-impact",
+      "persona": "release-security platform engineer, intermediate Rust",
+      "domain": "software supply-chain provenance and revocation impact",
+      "constraints": [
+        "PostgreSQL remains authoritative during continuous manifest ingestion",
+        "transitive revocation, missing manifests, duplicate edges, and malformed cycles",
+        "deterministic explanation paths and generation-safe publication",
+        "500,000-artifact and 5-million-edge scale target"
+      ],
+      "components_considered": ["fold", "ese", "anny"],
+      "components_used": ["fold"],
+      "outcome": "no_fit",
+      "report": "reports/2026-08-03.md"
+    },
+    {
+      "date": "2026-08-03",
+      "slug": "offline-door-policy-update",
+      "persona": "building-access systems developer, Rust beginner with production embedded-C experience",
+      "domain": "offline physical-access policy distribution",
+      "constraints": [
+        "fixed 16 MiB policy image and 4 MiB working-memory target",
+        "signed duplicated reordered skipped or truncated bundles",
+        "50,000 emergency revocations with monotonic versions",
+        "old-or-new recovery after every modeled 4 KiB flash write"
+      ],
+      "components_considered": ["fold", "ese", "anny"],
+      "components_used": ["fold"],
+      "outcome": "no_fit",
+      "report": "reports/2026-08-03.md"
+    },
+    {
+      "date": "2026-08-04",
+      "slug": "mixed-version-contract-gate",
+      "persona": "deployment-platform developer, intermediate Rust with production Go experience",
+      "domain": "mixed-version event-contract compatibility during rolling deployment",
+      "constraints": [
+        "300 services, 120 topics, 1,800 contracts, and 12,000 relationships",
+        "every permitted producer-consumer version pair evaluated deterministically",
+        "unsupported or malformed schema input must require review",
+        "five-second and 128 MiB one-process targets"
+      ],
+      "components_considered": ["fold", "ese", "anny"],
+      "components_used": [],
+      "outcome": "no_fit",
+      "report": "reports/2026-08-04.md"
+    },
+    {
+      "date": "2026-08-04",
+      "slug": "ocr-redaction-remap",
+      "persona": "public-records processing engineer, Rust beginner with production Python experience",
+      "domain": "OCR redaction remapping and publication safety",
+      "constraints": [
+        "5,000 page-streaming workload with 20 million scalars and 150,000 reviewed spans",
+        "ambiguous correspondence must conservatively cover or block",
+        "diagnostics must not contain OCR or matched text",
+        "controlled process resume and 64 MiB measured-memory target"
+      ],
+      "components_considered": ["fold", "ese", "anny"],
+      "components_used": [],
+      "outcome": "no_fit",
+      "report": "reports/2026-08-04.md"
+    },
+    {
+      "date": "2026-08-05",
+      "slug": "fastq-barcode-spill",
+      "persona": "sequencing-pipeline engineer, intermediate Rust with production Python experience",
+      "domain": "streaming genomic demultiplexing and bounded output fan-out",
+      "constraints": [
+        "one non-seekable pass over 1,000,000 paired FASTQ records",
+        "unique Hamming-distance-one correction with ambiguous ties",
+        "at most 24 sample output files open",
+        "no read or sample content in diagnostics and completion manifest only after validation"
+      ],
+      "components_considered": ["fold", "ese", "anny"],
+      "components_used": [],
+      "outcome": "no_fit",
+      "report": "reports/2026-08-05.md"
+    },
+    {
+      "date": "2026-08-05",
+      "slug": "parcel-delta-tiles",
+      "persona": "civic GIS platform developer, Rust beginner with production TypeScript experience",
+      "domain": "parcel geometry delta planning for map-tile invalidation",
+      "constraints": [
+        "authoritative old and new Polygon or MultiPolygon deltas without parcel-store access",
+        "closed-boundary tile contact with strict simple-topology admission",
+        "deterministic lexicographic plan and no partial output on invalid input",
+        "1,000 mixed edits with 200 vertices per line under five seconds and 256 MiB"
+      ],
+      "components_considered": ["fold", "ese", "anny"],
+      "components_used": [],
+      "outcome": "no_fit",
+      "report": "reports/2026-08-05.md"
+    },
+    {
+      "date": "2026-08-06",
+      "slug": "caldav-recurrence",
+      "persona": "CalDAV calendar maintainer, beginner-to-intermediate Rust",
+      "domain": "calendar recurrence and time-zone correctness",
+      "constraints": [
+        "SQLite remains authoritative",
+        "timed and all-day recurrence across DST gaps and folds",
+        "canonical overrides, deterministic ordering, and atomic publication",
+        "5,000 masters and 2,000,000 candidate occurrences"
+      ],
+      "components_considered": ["fold", "ese", "anny"],
+      "components_used": ["fold"],
+      "outcome": "no_fit",
+      "report": "reports/2026-08-06.md"
+    },
+    {
+      "date": "2026-08-06",
+      "slug": "http-cache-revalidation",
+      "persona": "edge reverse-proxy maintainer, intermediate Rust",
+      "domain": "HTTP cache revalidation and tag-purge safety",
+      "constraints": [
+        "separate metadata and content-addressed body authority",
+        "Vary-aware identity, freshness, stale-if-error, and single-flight revalidation",
+        "ordered tenant tag purges and modeled crash recovery",
+        "2,000,000 objects, 1,000,000 requests, and 100,000 purges"
+      ],
+      "components_considered": ["fold", "ese", "anny"],
+      "components_used": [],
+      "outcome": "no_fit",
+      "report": "reports/2026-08-06.md"
+    },
+    {
+      "date": "2026-08-07",
+      "slug": "localization-catalog-compiler",
+      "persona": "desktop build-tooling developer, intermediate Rust",
+      "domain": "localization catalog validation and deterministic compilation",
+      "constraints": [
+        "100,000 messages across 18 locales with nested fallbacks",
+        "missing plural branches, placeholder mismatches, invalid references, and duplicate IDs",
+        "offline CI with a 512 MiB memory limit and three-minute budget",
+        "complete source diagnostics and byte-for-byte deterministic runtime tables"
+      ],
+      "components_considered": ["fold", "ese", "anny"],
+      "components_used": [],
+      "outcome": "local_proof_only_no_production_fit",
+      "report": "reports/2026-08-07.md"
+    },
+    {
+      "date": "2026-08-07",
+      "slug": "webhook-scheduler",
+      "persona": "multi-tenant event-delivery backend developer, senior Rust",
+      "domain": "webhook delivery scheduling and external side-effect coordination",
+      "constraints": [
+        "200,000 events per hour across 10,000 tenants and 500 endpoints",
+        "per-endpoint ordering, tenant and endpoint rate limits, and bounded noisy-endpoint queues",
+        "at-least-once delivery across crashes with deterministic retry and dead-letter classification",
+        "fair recovery from a one-hour endpoint outage without retry storms"
+      ],
+      "components_considered": ["fold", "ese", "anny"],
+      "components_used": [],
+      "outcome": "no_fit",
+      "report": "reports/2026-08-07.md"
+    },
+    {
+      "date": "2026-08-08",
+      "slug": "remittance-reconciliation",
+      "persona": "revenue-cycle platform engineer, Rust beginner with production Java and SQL experience",
+      "domain": "medical remittance reconciliation and exact constrained assignment",
+      "constraints": [
+        "62,000 claim revisions and 50,000 remittance lines in one immutable nightly snapshot",
+        "exact integer-cent conservation with no silent double posting",
+        "deterministic output across ten input shuffles and complete uncertainty review",
+        "60-second four-core target with privacy-safe explanations"
+      ],
+      "components_considered": [
+        "fold",
+        "ese",
+        "anny"
+      ],
+      "components_used": [],
+      "outcome": "no_fit",
+      "report": "reports/2026-08-08.md"
+    },
+    {
+      "date": "2026-08-08",
+      "slug": "container-yard-planner",
+      "persona": "terminal-operating-system integration developer, Rust novice with production C# and SQL experience",
+      "domain": "advisory container-yard constraint planning",
+      "constraints": [
+        "48 bays by 6 rows with 1,050 to 1,300 containers and 40 to 120 ordered pickups",
+        "every intermediate move must satisfy capacity, weight, reefer, customs, maintenance, and hazardous-neighbor rules",
+        "deterministic replayable output with no executable partial plan",
+        "10-second target and at least 20 percent fewer relocations than nearest-legal-slot baseline"
+      ],
+      "components_considered": [
+        "fold",
+        "ese",
+        "anny"
+      ],
+      "components_used": [],
+      "outcome": "no_fit",
+      "report": "reports/2026-08-08.md"
+    }
+  ],
+  "recurring_findings": [
+    {
+      "id": "document-storage-and-concurrency-boundaries",
+      "category": "documentation gap",
+      "independent_trial_count": 20,
+      "confidence": "high",
+      "candidate": true,
+      "summary": "The public onboarding should distinguish embedded source-of-truth use from external databases and calendar or cache body-store handoffs, external network authorities and cooperative filesystem protocols, horizontal or partitioned deployment, durable leases and ordered purges, strict disk quotas, raw-flash firmware and fixed controller images, atomic broker-offset ownership, exact recursive graph workloads, and bounded stateless stream or geometry transformations that do not benefit from durable state.",
+      "smallest_improvement": "Add a concise component, storage, transaction, concurrency, operating-system, and hard-limit capability matrix.",
+      "sources": [
+        "purchase-audit",
+        "offline-reconciliation",
+        "edge-spool-pressure",
+        "flash-config-journal",
+        "ci-lease-coordinator",
+        "fraud-velocity-evaluation",
+        "homecare-gap-fill",
+        "parts-catalog-evolution",
+        "offline-flag-parity",
+        "cnc-job-bundle-preflight",
+        "carrier-label-ambiguity",
+        "snapshot-gc-safety",
+        "provenance-revocation-impact",
+        "offline-door-policy-update",
+        "mixed-version-contract-gate",
+        "ocr-redaction-remap",
+        "fastq-barcode-spill",
+        "parcel-delta-tiles",
+        "caldav-recurrence",
+        "http-cache-revalidation"
+      ]
+    },
+    {
+      "id": "component-selective-project-scaffold",
+      "category": "API friction",
+      "independent_trial_count": 10,
+      "confidence": "high",
+      "candidate": true,
+      "summary": "Developers with Fold-only or no-component scenarios avoid the all-components starter or project scaffold because it adds unrelated crates and setup.",
+      "smallest_improvement": "Make project generation component-selective and keep the smallest Fold introduction free of unused ESE and ANNy dependencies.",
+      "sources": [
+        "purchase-audit",
+        "edge-spool-pressure",
+        "flash-config-journal",
+        "ci-lease-coordinator",
+        "mixed-version-contract-gate",
+        "ocr-redaction-remap",
+        "fastq-barcode-spill",
+        "parcel-delta-tiles",
+        "caldav-recurrence",
+        "http-cache-revalidation"
+      ]
+    },
+    {
+      "id": "nameable-pipeline-and-reader-types",
+      "category": "API friction",
+      "independent_trial_count": 3,
+      "confidence": "medium",
+      "candidate": true,
+      "summary": "Developers found composed pipeline and reader types difficult to name in ordinary reusable structs and helper signatures.",
+      "smallest_improvement": "Document type-alias, function-pointer, and ordinary helper-signature patterns for composed pipelines and readers; do not infer a new type-erasure subsystem.",
+      "sources": [
+        "ci-lease-coordinator",
+        "fraud-velocity-evaluation",
+        "homecare-gap-fill"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+locale fr
+fallback en-US
+
+message apples
+plural count
+branch one
+text Une pomme pour {name}
+branch other
+text {count} pommes pour {name}
+end
+
+message greeting
+select gender
+branch male
+text Il dit bonjour a {name}
+branch other
+text Iel dit bonjour a {name}
+end
+
+message nested
+ref en-US shared

@@ -1,0 +1,30 @@
+# Synthetic labels and URLs are input only; the CLI output hashes them.
+quota 1000000
+blob body-a 10 verified
+blob body-d 10 verified
+blob body-e 10 verified
+entry tenant-a GET https://cache.test/item en 10 30 body-a 10 0 article etag-a
+entry tenant-b GET https://cache.test/profile en 5 15 body-d 10 0 profile etag-d
+entry tenant-c GET https://cache.test/crash en 1 100 body-e 10 0 crash etag-e
+origin replace modified body-b 11 100 200 article etag-b verified
+origin replace-new modified body-c 11 100 200 article etag-c verified
+origin origin-error error origin_down
+origin crash modified body-f 11 100 200 crash etag-f verified
+origin bad modified body-g 11 100 200 crash etag-g unverified
+request r1 10 worker-1 tenant-a GET https://cache.test/item EN allow replace
+request r2 10 worker-2 tenant-a GET https://cache.test/item en allow replace
+purge 11 tenant-a 2 article
+complete r1 12 none
+purge 13 tenant-a 1 article
+purge 14 tenant-a 2 article
+request r3 15 worker-3 tenant-a GET https://cache.test/item en allow replace-new
+complete r3 16 none
+request r4 20 worker-4 tenant-a GET https://cache.test/item en allow replace-new
+request r5 10 worker-5 tenant-b GET https://cache.test/profile en allow origin-error
+complete r5 11 none
+request r6 16 worker-6 tenant-b GET https://cache.test/profile en allow origin-error
+complete r6 17 none
+request r7 2 worker-7 tenant-c GET https://cache.test/crash en allow crash
+complete r7 3 after_metadata
+request r8 4 worker-8 tenant-d GET https://cache.test/unverified en allow bad
+complete r8 5 after_body

@@ -1,0 +1,2 @@
+{"remittance_line_id":"R-OVERLAP","unambiguous":false,"links":[]}
+{"remittance_line_id":"R-OK","unambiguous":true,"links":[{"remittance_line_id":"R-OK","claim_line_id":"C-OK","claim_revision":1,"applied_cents":100}]}

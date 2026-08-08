@@ -1,0 +1,13 @@
+[package]
+name = "cnc-job-bundle-preflight"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[lints.clippy]
+all = "deny"
+pedantic = "deny"

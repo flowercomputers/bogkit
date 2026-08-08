@@ -1,0 +1,5 @@
+{"device_id":"scanner-01","sequence":2,"pallet_id":"pallet-7","action":"move","location":"cold-1","operator":"maya","device_timestamp_ms":1700000000002}
+{"device_id":"scanner-02","sequence":1,"pallet_id":"pallet-7","action":"move","location":"freezer-9","operator":"liam","device_timestamp_ms":1699999999000}
+{"device_id":"scanner-01","sequence":1,"pallet_id":"pallet-7","action":"arrive","location":"dock","operator":"maya","device_timestamp_ms":1700000000001}
+{"device_id":"scanner-03","sequence":1,"pallet_id":"pallet-8","action":"arrive","location":"dock","operator":"noor","device_timestamp_ms":1700000001000}
+{"device_id":"scanner-01","sequence":2,"pallet_id":"pallet-7","action":"move","location":"cold-1","operator":"maya","device_timestamp_ms":1700000000002}

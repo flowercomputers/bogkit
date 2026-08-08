@@ -1,0 +1,14 @@
+locale fr
+fallback missing-locale,en-US
+
+message apples
+plural count
+branch one
+text Une pomme
+end
+
+message greeting
+text Bonjour {username}
+
+message bad-ref
+ref missing-locale absent

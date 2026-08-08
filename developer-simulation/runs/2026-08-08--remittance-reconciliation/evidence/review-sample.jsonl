@@ -1,0 +1,3 @@
+{"remittance_line_id":"R-AMBIG-000","physical_record_ordinal":1,"reason_codes":["conflicting_strong_candidates"],"candidate_count":2}
+{"remittance_line_id":"R-MALFORMED","physical_record_ordinal":1,"reason_codes":["malformed_record"],"candidate_count":0}
+{"remittance_line_id":"R-UNSUPPORTED-000","physical_record_ordinal":1,"reason_codes":["unsupported_bundle"],"candidate_count":2}

@@ -1,0 +1,16 @@
+[package]
+name = "edge-spool-pressure"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+fold = { path = "../../../fold" }
+serde = { version = "1", features = ["derive"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "warn"
+pedantic = "allow"

@@ -1,0 +1,7212 @@
+[
+  {
+    "input": {
+      "case_id": "golden-000",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": true,
+        "kiosk": false,
+        "store_size": 8000.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-000"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": true,
+      "source": "employees-first",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-001",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 8257.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-001"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 30.0,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": false,
+          "reason": "attribute \"store_size\" was 8257; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-002",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 8514.0,
+        "tier": "member",
+        "user_id": "synthetic-user-002"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-003",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 8771.0,
+        "tier": "member",
+        "user_id": "synthetic-user-003"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-004",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 9028.0,
+        "tier": "member",
+        "user_id": "synthetic-user-004"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"member\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": false,
+          "reason": "stable bucket 7272 was outside 0..3500"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-005",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 9285.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-005"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 30.0,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": false,
+          "reason": "attribute \"store_size\" was 9285; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-006",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 9542.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-006"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-007",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": true,
+        "kiosk": true,
+        "store_size": 9799.0,
+        "tier": "member",
+        "user_id": "synthetic-user-007"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-008",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 10056.0,
+        "tier": "member",
+        "user_id": "synthetic-user-008"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"member\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": false,
+          "reason": "stable bucket 9892 was outside 0..3500"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-009",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 10313.0,
+        "tier": "member",
+        "user_id": "synthetic-user-009"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 30.0,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": false,
+          "reason": "attribute \"store_size\" was 10313; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-010",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 10570.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-010"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-011",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 10827.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-011"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"guest\"; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-012",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 11084.0,
+        "tier": "member",
+        "user_id": "synthetic-user-012"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"member\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": false,
+          "reason": "attribute \"kiosk\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-013",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 11341.0,
+        "tier": "member",
+        "user_id": "synthetic-user-013"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 30.0,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": false,
+          "reason": "attribute \"store_size\" was 11341; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-014",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": true,
+        "kiosk": true,
+        "store_size": 11598.0,
+        "tier": "member",
+        "user_id": "synthetic-user-014"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "large-print",
+      "source": "accessible-store",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-015",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 11855.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-015"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-016",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 12112.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-016"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"guest\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": false,
+          "reason": "stable bucket 5137 was outside 0..3500"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-017",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 12369.0,
+        "tier": "member",
+        "user_id": "synthetic-user-017"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 30.0,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": false,
+          "reason": "attribute \"store_size\" was 12369; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-018",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 12626.0,
+        "tier": "member",
+        "user_id": "synthetic-user-018"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-019",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 12883.0,
+        "tier": "member",
+        "user_id": "synthetic-user-019"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-020",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 13140.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-020"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": true,
+      "source": "employees-first",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-021",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": true,
+        "kiosk": false,
+        "store_size": 13397.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-021"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 30.0,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": false,
+          "reason": "attribute \"store_size\" was 13397; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-022",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 13654.0,
+        "tier": "member",
+        "user_id": "synthetic-user-022"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-023",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 13911.0,
+        "tier": "member",
+        "user_id": "synthetic-user-023"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-024",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 14168.0,
+        "tier": "member",
+        "user_id": "synthetic-user-024"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"member\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": false,
+          "reason": "attribute \"kiosk\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-025",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 14425.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-025"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 30.0,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": false,
+          "reason": "attribute \"store_size\" was 14425; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-026",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 14682.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-026"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-027",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 14939.0,
+        "tier": "member",
+        "user_id": "synthetic-user-027"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-028",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": true,
+        "kiosk": true,
+        "store_size": 15196.0,
+        "tier": "member",
+        "user_id": "synthetic-user-028"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"member\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": false,
+          "reason": "stable bucket 9642 was outside 0..3500"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-029",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 15453.0,
+        "tier": "member",
+        "user_id": "synthetic-user-029"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 30.0,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": false,
+          "reason": "attribute \"store_size\" was 15453; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-030",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 15710.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-030"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-031",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 15967.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-031"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"guest\"; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-032",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 16224.0,
+        "tier": "member",
+        "user_id": "synthetic-user-032"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"member\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": false,
+          "reason": "stable bucket 6287 was outside 0..3500"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-033",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 16481.0,
+        "tier": "member",
+        "user_id": "synthetic-user-033"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 30.0,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": false,
+          "reason": "attribute \"store_size\" was 16481; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-034",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 16738.0,
+        "tier": "member",
+        "user_id": "synthetic-user-034"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-035",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": true,
+        "kiosk": true,
+        "store_size": 16995.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-035"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-036",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 17252.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-036"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"guest\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": false,
+          "reason": "attribute \"kiosk\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-037",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 17509.0,
+        "tier": "member",
+        "user_id": "synthetic-user-037"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 30.0,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": false,
+          "reason": "attribute \"store_size\" was 17509; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-038",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 17766.0,
+        "tier": "member",
+        "user_id": "synthetic-user-038"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-039",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 18023.0,
+        "tier": "member",
+        "user_id": "synthetic-user-039"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-040",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 18280.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-040"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": true,
+      "source": "employees-first",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-041",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 18537.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-041"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 30.0,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": false,
+          "reason": "attribute \"store_size\" was 18537; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-042",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": true,
+        "kiosk": false,
+        "store_size": 18794.0,
+        "tier": "member",
+        "user_id": "synthetic-user-042"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "large-print",
+      "source": "accessible-store",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-043",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 19051.0,
+        "tier": "member",
+        "user_id": "synthetic-user-043"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-044",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 19308.0,
+        "tier": "member",
+        "user_id": "synthetic-user-044"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"member\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": false,
+          "reason": "stable bucket 7332 was outside 0..3500"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-045",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 19565.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-045"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 30.0,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": false,
+          "reason": "attribute \"store_size\" was 19565; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-046",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 19822.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-046"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-047",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 20079.0,
+        "tier": "member",
+        "user_id": "synthetic-user-047"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-048",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 20336.0,
+        "tier": "member",
+        "user_id": "synthetic-user-048"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"member\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": false,
+          "reason": "attribute \"kiosk\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-049",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": true,
+        "kiosk": true,
+        "store_size": 20593.0,
+        "tier": "member",
+        "user_id": "synthetic-user-049"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 50.0,
+      "source": "large-store",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-050",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 20850.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-050"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-051",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 21107.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-051"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"guest\"; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-052",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 21364.0,
+        "tier": "member",
+        "user_id": "synthetic-user-052"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"member\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": false,
+          "reason": "stable bucket 7817 was outside 0..3500"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-053",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 21621.0,
+        "tier": "member",
+        "user_id": "synthetic-user-053"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 50.0,
+      "source": "large-store",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-054",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 21878.0,
+        "tier": "member",
+        "user_id": "synthetic-user-054"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-055",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 22135.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-055"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-056",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": true,
+        "kiosk": true,
+        "store_size": 22392.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-056"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"guest\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": false,
+          "reason": "stable bucket 5197 was outside 0..3500"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-057",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 22649.0,
+        "tier": "member",
+        "user_id": "synthetic-user-057"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 50.0,
+      "source": "large-store",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-058",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 22906.0,
+        "tier": "member",
+        "user_id": "synthetic-user-058"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-059",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 23163.0,
+        "tier": "member",
+        "user_id": "synthetic-user-059"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-060",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 23420.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-060"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": true,
+      "source": "employees-first",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-061",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 23677.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-061"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 50.0,
+      "source": "large-store",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-062",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 23934.0,
+        "tier": "member",
+        "user_id": "synthetic-user-062"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-063",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": true,
+        "kiosk": false,
+        "store_size": 24191.0,
+        "tier": "member",
+        "user_id": "synthetic-user-063"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-064",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 24448.0,
+        "tier": "member",
+        "user_id": "synthetic-user-064"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": true,
+      "source": "kiosk-rollout",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"member\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": true,
+          "reason": "conditions matched; stable bucket 1842 was inside 0..3500"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-065",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 24705.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-065"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 50.0,
+      "source": "large-store",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-066",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 24962.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-066"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-067",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 25219.0,
+        "tier": "member",
+        "user_id": "synthetic-user-067"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-068",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 25476.0,
+        "tier": "member",
+        "user_id": "synthetic-user-068"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"member\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": false,
+          "reason": "stable bucket 3982 was outside 0..3500"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-069",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 25733.0,
+        "tier": "member",
+        "user_id": "synthetic-user-069"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 50.0,
+      "source": "large-store",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-070",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": true,
+        "kiosk": true,
+        "store_size": 25990.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-070"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "large-print",
+      "source": "accessible-store",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-071",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 26247.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-071"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"guest\"; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-072",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 26504.0,
+        "tier": "member",
+        "user_id": "synthetic-user-072"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"member\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": false,
+          "reason": "attribute \"kiosk\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-073",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 26761.0,
+        "tier": "member",
+        "user_id": "synthetic-user-073"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 50.0,
+      "source": "large-store",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-074",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 27018.0,
+        "tier": "member",
+        "user_id": "synthetic-user-074"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-075",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 27275.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-075"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-076",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 27532.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-076"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"guest\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": false,
+          "reason": "stable bucket 8007 was outside 0..3500"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-077",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": true,
+        "kiosk": true,
+        "store_size": 27789.0,
+        "tier": "member",
+        "user_id": "synthetic-user-077"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 50.0,
+      "source": "large-store",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-078",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 28046.0,
+        "tier": "member",
+        "user_id": "synthetic-user-078"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-079",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 28303.0,
+        "tier": "member",
+        "user_id": "synthetic-user-079"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-080",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 28560.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-080"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": true,
+      "source": "employees-first",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-081",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 28817.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-081"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 50.0,
+      "source": "large-store",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-082",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 29074.0,
+        "tier": "member",
+        "user_id": "synthetic-user-082"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-083",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 29331.0,
+        "tier": "member",
+        "user_id": "synthetic-user-083"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-084",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": true,
+        "kiosk": false,
+        "store_size": 29588.0,
+        "tier": "member",
+        "user_id": "synthetic-user-084"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"member\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": false,
+          "reason": "attribute \"kiosk\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-085",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 29845.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-085"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 50.0,
+      "source": "large-store",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-086",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 30102.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-086"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-087",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 30359.0,
+        "tier": "member",
+        "user_id": "synthetic-user-087"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-088",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 30616.0,
+        "tier": "member",
+        "user_id": "synthetic-user-088"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": true,
+      "source": "kiosk-rollout",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"member\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": true,
+          "reason": "conditions matched; stable bucket 732 was inside 0..3500"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-089",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 30873.0,
+        "tier": "member",
+        "user_id": "synthetic-user-089"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 50.0,
+      "source": "large-store",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-090",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 31130.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-090"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-091",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": true,
+        "kiosk": true,
+        "store_size": 31387.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-091"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"guest\"; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-092",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 31644.0,
+        "tier": "member",
+        "user_id": "synthetic-user-092"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"member\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": false,
+          "reason": "stable bucket 9997 was outside 0..3500"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-093",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 31901.0,
+        "tier": "member",
+        "user_id": "synthetic-user-093"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 50.0,
+      "source": "large-store",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-094",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 32158.0,
+        "tier": "member",
+        "user_id": "synthetic-user-094"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-095",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 32415.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-095"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-096",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 32672.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-096"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"guest\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": false,
+          "reason": "attribute \"kiosk\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-097",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 32929.0,
+        "tier": "member",
+        "user_id": "synthetic-user-097"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 50.0,
+      "source": "large-store",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-098",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": true,
+        "kiosk": true,
+        "store_size": 8186.0,
+        "tier": "member",
+        "user_id": "synthetic-user-098"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "large-print",
+      "source": "accessible-store",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-099",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 8443.0,
+        "tier": "member",
+        "user_id": "synthetic-user-099"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-100",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 8700.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-100"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": true,
+      "source": "employees-first",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-101",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 8957.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-101"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 30.0,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": false,
+          "reason": "attribute \"store_size\" was 8957; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-102",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 9214.0,
+        "tier": "member",
+        "user_id": "synthetic-user-102"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-103",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 9471.0,
+        "tier": "member",
+        "user_id": "synthetic-user-103"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-104",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 9728.0,
+        "tier": "member",
+        "user_id": "synthetic-user-104"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"member\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": false,
+          "reason": "stable bucket 6521 was outside 0..3500"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-105",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": true,
+        "kiosk": false,
+        "store_size": 9985.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-105"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 30.0,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": false,
+          "reason": "attribute \"store_size\" was 9985; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-106",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 10242.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-106"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-107",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 10499.0,
+        "tier": "member",
+        "user_id": "synthetic-user-107"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-108",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 10756.0,
+        "tier": "member",
+        "user_id": "synthetic-user-108"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"member\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": false,
+          "reason": "attribute \"kiosk\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-109",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 11013.0,
+        "tier": "member",
+        "user_id": "synthetic-user-109"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 30.0,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": false,
+          "reason": "attribute \"store_size\" was 11013; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-110",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 11270.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-110"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-111",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 11527.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-111"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"guest\"; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-112",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": true,
+        "kiosk": true,
+        "store_size": 11784.0,
+        "tier": "member",
+        "user_id": "synthetic-user-112"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"member\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": false,
+          "reason": "stable bucket 4112 was outside 0..3500"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-113",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 12041.0,
+        "tier": "member",
+        "user_id": "synthetic-user-113"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 30.0,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": false,
+          "reason": "attribute \"store_size\" was 12041; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-114",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 12298.0,
+        "tier": "member",
+        "user_id": "synthetic-user-114"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-115",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 12555.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-115"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-116",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 12812.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-116"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": true,
+      "source": "kiosk-rollout",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"guest\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": true,
+          "reason": "conditions matched; stable bucket 1492 was inside 0..3500"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-117",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 13069.0,
+        "tier": "member",
+        "user_id": "synthetic-user-117"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 30.0,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": false,
+          "reason": "attribute \"store_size\" was 13069; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-118",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 13326.0,
+        "tier": "member",
+        "user_id": "synthetic-user-118"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-119",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": true,
+        "kiosk": true,
+        "store_size": 13583.0,
+        "tier": "member",
+        "user_id": "synthetic-user-119"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-120",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 13840.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-120"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": true,
+      "source": "employees-first",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-121",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 14097.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-121"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 30.0,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": false,
+          "reason": "attribute \"store_size\" was 14097; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-122",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 14354.0,
+        "tier": "member",
+        "user_id": "synthetic-user-122"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-123",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 14611.0,
+        "tier": "member",
+        "user_id": "synthetic-user-123"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-124",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 14868.0,
+        "tier": "member",
+        "user_id": "synthetic-user-124"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": true,
+      "source": "kiosk-rollout",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"member\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": true,
+          "reason": "conditions matched; stable bucket 1747 was inside 0..3500"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-125",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 15125.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-125"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 30.0,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": false,
+          "reason": "attribute \"store_size\" was 15125; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-126",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": true,
+        "kiosk": false,
+        "store_size": 15382.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-126"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "large-print",
+      "source": "accessible-store",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-127",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 15639.0,
+        "tier": "member",
+        "user_id": "synthetic-user-127"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-128",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 15896.0,
+        "tier": "member",
+        "user_id": "synthetic-user-128"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"member\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": false,
+          "reason": "stable bucket 4367 was outside 0..3500"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-129",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 16153.0,
+        "tier": "member",
+        "user_id": "synthetic-user-129"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 30.0,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": false,
+          "reason": "attribute \"store_size\" was 16153; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-130",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 16410.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-130"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-131",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 16667.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-131"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"guest\"; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-132",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 16924.0,
+        "tier": "member",
+        "user_id": "synthetic-user-132"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"member\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": false,
+          "reason": "attribute \"kiosk\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-133",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": true,
+        "kiosk": true,
+        "store_size": 17181.0,
+        "tier": "member",
+        "user_id": "synthetic-user-133"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 30.0,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": false,
+          "reason": "attribute \"store_size\" was 17181; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-134",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 17438.0,
+        "tier": "member",
+        "user_id": "synthetic-user-134"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-135",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 17695.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-135"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-136",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 17952.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-136"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"guest\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": false,
+          "reason": "stable bucket 7722 was outside 0..3500"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-137",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 18209.0,
+        "tier": "member",
+        "user_id": "synthetic-user-137"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 30.0,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": false,
+          "reason": "attribute \"store_size\" was 18209; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-138",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 18466.0,
+        "tier": "member",
+        "user_id": "synthetic-user-138"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-139",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 18723.0,
+        "tier": "member",
+        "user_id": "synthetic-user-139"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-140",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": true,
+        "kiosk": true,
+        "store_size": 18980.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-140"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": true,
+      "source": "employees-first",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-141",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 19237.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-141"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 30.0,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": false,
+          "reason": "attribute \"store_size\" was 19237; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-142",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 19494.0,
+        "tier": "member",
+        "user_id": "synthetic-user-142"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-143",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 19751.0,
+        "tier": "member",
+        "user_id": "synthetic-user-143"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-144",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 20008.0,
+        "tier": "member",
+        "user_id": "synthetic-user-144"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"member\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": false,
+          "reason": "attribute \"kiosk\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-145",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 20265.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-145"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 50.0,
+      "source": "large-store",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-146",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 20522.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-146"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-147",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": true,
+        "kiosk": false,
+        "store_size": 20779.0,
+        "tier": "member",
+        "user_id": "synthetic-user-147"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-148",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 21036.0,
+        "tier": "member",
+        "user_id": "synthetic-user-148"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"member\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": false,
+          "reason": "stable bucket 5097 was outside 0..3500"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-149",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 21293.0,
+        "tier": "member",
+        "user_id": "synthetic-user-149"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 50.0,
+      "source": "large-store",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-150",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 21550.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-150"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-151",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 21807.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-151"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"guest\"; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-152",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 22064.0,
+        "tier": "member",
+        "user_id": "synthetic-user-152"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"member\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": false,
+          "reason": "stable bucket 8452 was outside 0..3500"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-153",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 22321.0,
+        "tier": "member",
+        "user_id": "synthetic-user-153"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 50.0,
+      "source": "large-store",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-154",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": true,
+        "kiosk": true,
+        "store_size": 22578.0,
+        "tier": "member",
+        "user_id": "synthetic-user-154"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "large-print",
+      "source": "accessible-store",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-155",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 22835.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-155"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-156",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 23092.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-156"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"guest\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": false,
+          "reason": "attribute \"kiosk\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-157",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 23349.0,
+        "tier": "member",
+        "user_id": "synthetic-user-157"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 50.0,
+      "source": "large-store",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-158",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 23606.0,
+        "tier": "member",
+        "user_id": "synthetic-user-158"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-159",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 23863.0,
+        "tier": "member",
+        "user_id": "synthetic-user-159"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-160",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 24120.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-160"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": true,
+      "source": "employees-first",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-161",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": true,
+        "kiosk": true,
+        "store_size": 24377.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-161"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 50.0,
+      "source": "large-store",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-162",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 24634.0,
+        "tier": "member",
+        "user_id": "synthetic-user-162"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-163",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 24891.0,
+        "tier": "member",
+        "user_id": "synthetic-user-163"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-164",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 25148.0,
+        "tier": "member",
+        "user_id": "synthetic-user-164"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": true,
+      "source": "kiosk-rollout",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"member\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": true,
+          "reason": "conditions matched; stable bucket 1807 was inside 0..3500"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-165",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 25405.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-165"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 50.0,
+      "source": "large-store",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-166",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 25662.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-166"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-167",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 25919.0,
+        "tier": "member",
+        "user_id": "synthetic-user-167"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-168",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": true,
+        "kiosk": false,
+        "store_size": 26176.0,
+        "tier": "member",
+        "user_id": "synthetic-user-168"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"member\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": false,
+          "reason": "attribute \"kiosk\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-169",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 26433.0,
+        "tier": "member",
+        "user_id": "synthetic-user-169"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 50.0,
+      "source": "large-store",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-170",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 26690.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-170"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-171",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 26947.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-171"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"guest\"; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-172",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 27204.0,
+        "tier": "member",
+        "user_id": "synthetic-user-172"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": true,
+      "source": "kiosk-rollout",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"member\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": true,
+          "reason": "conditions matched; stable bucket 402 was inside 0..3500"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-173",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 27461.0,
+        "tier": "member",
+        "user_id": "synthetic-user-173"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 50.0,
+      "source": "large-store",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-174",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 27718.0,
+        "tier": "member",
+        "user_id": "synthetic-user-174"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-175",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": true,
+        "kiosk": true,
+        "store_size": 27975.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-175"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-176",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 28232.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-176"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"guest\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": false,
+          "reason": "stable bucket 7782 was outside 0..3500"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-177",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 28489.0,
+        "tier": "member",
+        "user_id": "synthetic-user-177"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 50.0,
+      "source": "large-store",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-178",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 28746.0,
+        "tier": "member",
+        "user_id": "synthetic-user-178"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-179",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 29003.0,
+        "tier": "member",
+        "user_id": "synthetic-user-179"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-180",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 29260.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-180"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": true,
+      "source": "employees-first",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-181",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 29517.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-181"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 50.0,
+      "source": "large-store",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-182",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": true,
+        "kiosk": true,
+        "store_size": 29774.0,
+        "tier": "member",
+        "user_id": "synthetic-user-182"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "large-print",
+      "source": "accessible-store",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-183",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 30031.0,
+        "tier": "member",
+        "user_id": "synthetic-user-183"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-184",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 30288.0,
+        "tier": "member",
+        "user_id": "synthetic-user-184"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"member\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": false,
+          "reason": "stable bucket 6881 was outside 0..3500"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-185",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 30545.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-185"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 50.0,
+      "source": "large-store",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-186",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 30802.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-186"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-187",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 31059.0,
+        "tier": "member",
+        "user_id": "synthetic-user-187"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-188",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 31316.0,
+        "tier": "member",
+        "user_id": "synthetic-user-188"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"member\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": false,
+          "reason": "stable bucket 9501 was outside 0..3500"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-189",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": true,
+        "kiosk": false,
+        "store_size": 31573.0,
+        "tier": "member",
+        "user_id": "synthetic-user-189"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 50.0,
+      "source": "large-store",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-190",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 31830.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-190"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-191",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 32087.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-191"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"guest\"; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-192",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 32344.0,
+        "tier": "member",
+        "user_id": "synthetic-user-192"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"member\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": false,
+          "reason": "attribute \"kiosk\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-193",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 32601.0,
+        "tier": "member",
+        "user_id": "synthetic-user-193"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 50.0,
+      "source": "large-store",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-194",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 32858.0,
+        "tier": "member",
+        "user_id": "synthetic-user-194"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-195",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 8115.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-195"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-196",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": true,
+        "kiosk": true,
+        "store_size": 8372.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-196"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": true,
+      "source": "kiosk-rollout",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"guest\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": true,
+          "reason": "conditions matched; stable bucket 236 was inside 0..3500"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-197",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 8629.0,
+        "tier": "member",
+        "user_id": "synthetic-user-197"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 30.0,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": false,
+          "reason": "attribute \"store_size\" was 8629; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-198",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 8886.0,
+        "tier": "member",
+        "user_id": "synthetic-user-198"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-199",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 9143.0,
+        "tier": "member",
+        "user_id": "synthetic-user-199"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-200",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 9400.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-200"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": true,
+      "source": "employees-first",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-201",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 9657.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-201"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 30.0,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": false,
+          "reason": "attribute \"store_size\" was 9657; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-202",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 9914.0,
+        "tier": "member",
+        "user_id": "synthetic-user-202"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-203",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": true,
+        "kiosk": true,
+        "store_size": 10171.0,
+        "tier": "member",
+        "user_id": "synthetic-user-203"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-204",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 10428.0,
+        "tier": "member",
+        "user_id": "synthetic-user-204"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"member\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": false,
+          "reason": "attribute \"kiosk\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-205",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 10685.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-205"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 30.0,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": false,
+          "reason": "attribute \"store_size\" was 10685; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-206",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 10942.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-206"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-207",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 11199.0,
+        "tier": "member",
+        "user_id": "synthetic-user-207"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-208",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 11456.0,
+        "tier": "member",
+        "user_id": "synthetic-user-208"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"member\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": false,
+          "reason": "stable bucket 9046 was outside 0..3500"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-209",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 11713.0,
+        "tier": "member",
+        "user_id": "synthetic-user-209"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 30.0,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": false,
+          "reason": "attribute \"store_size\" was 11713; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-210",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": true,
+        "kiosk": false,
+        "store_size": 11970.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-210"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "large-print",
+      "source": "accessible-store",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-211",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 12227.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-211"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"guest\"; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-212",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 12484.0,
+        "tier": "member",
+        "user_id": "synthetic-user-212"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"member\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": false,
+          "reason": "stable bucket 6171 was outside 0..3500"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-213",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 12741.0,
+        "tier": "member",
+        "user_id": "synthetic-user-213"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 30.0,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": false,
+          "reason": "attribute \"store_size\" was 12741; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-214",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 12998.0,
+        "tier": "member",
+        "user_id": "synthetic-user-214"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-215",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 13255.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-215"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-216",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 13512.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-216"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"guest\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": false,
+          "reason": "attribute \"kiosk\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-217",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": true,
+        "kiosk": true,
+        "store_size": 13769.0,
+        "tier": "member",
+        "user_id": "synthetic-user-217"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 30.0,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": false,
+          "reason": "attribute \"store_size\" was 13769; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-218",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 14026.0,
+        "tier": "member",
+        "user_id": "synthetic-user-218"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-219",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 14283.0,
+        "tier": "member",
+        "user_id": "synthetic-user-219"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-220",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 14540.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-220"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": true,
+      "source": "employees-first",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-221",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 14797.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-221"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 30.0,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": false,
+          "reason": "attribute \"store_size\" was 14797; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-222",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 15054.0,
+        "tier": "member",
+        "user_id": "synthetic-user-222"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-223",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 15311.0,
+        "tier": "member",
+        "user_id": "synthetic-user-223"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-224",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": true,
+        "kiosk": true,
+        "store_size": 15568.0,
+        "tier": "member",
+        "user_id": "synthetic-user-224"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"member\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": false,
+          "reason": "stable bucket 5756 was outside 0..3500"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-225",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 15825.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-225"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 30.0,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": false,
+          "reason": "attribute \"store_size\" was 15825; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-226",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 16082.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-226"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-227",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 16339.0,
+        "tier": "member",
+        "user_id": "synthetic-user-227"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-228",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 16596.0,
+        "tier": "member",
+        "user_id": "synthetic-user-228"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"member\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": false,
+          "reason": "attribute \"kiosk\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-229",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 16853.0,
+        "tier": "member",
+        "user_id": "synthetic-user-229"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 30.0,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": false,
+          "reason": "attribute \"store_size\" was 16853; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-230",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 17110.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-230"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-231",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": true,
+        "kiosk": false,
+        "store_size": 17367.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-231"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"guest\"; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-232",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 17624.0,
+        "tier": "member",
+        "user_id": "synthetic-user-232"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": true,
+      "source": "kiosk-rollout",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"member\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": true,
+          "reason": "conditions matched; stable bucket 2401 was inside 0..3500"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-233",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 17881.0,
+        "tier": "member",
+        "user_id": "synthetic-user-233"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 30.0,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": false,
+          "reason": "attribute \"store_size\" was 17881; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-234",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 18138.0,
+        "tier": "member",
+        "user_id": "synthetic-user-234"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-235",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 18395.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-235"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-236",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 18652.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-236"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"guest\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": false,
+          "reason": "stable bucket 9781 was outside 0..3500"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-237",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 18909.0,
+        "tier": "member",
+        "user_id": "synthetic-user-237"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 30.0,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": false,
+          "reason": "attribute \"store_size\" was 18909; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-238",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": true,
+        "kiosk": true,
+        "store_size": 19166.0,
+        "tier": "member",
+        "user_id": "synthetic-user-238"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "large-print",
+      "source": "accessible-store",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-239",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 19423.0,
+        "tier": "member",
+        "user_id": "synthetic-user-239"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-240",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 19680.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-240"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": true,
+      "source": "employees-first",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-241",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 19937.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-241"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 30.0,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": false,
+          "reason": "attribute \"store_size\" was 19937; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-242",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 20194.0,
+        "tier": "member",
+        "user_id": "synthetic-user-242"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-243",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 20451.0,
+        "tier": "member",
+        "user_id": "synthetic-user-243"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-244",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 20708.0,
+        "tier": "member",
+        "user_id": "synthetic-user-244"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"member\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": false,
+          "reason": "stable bucket 6846 was outside 0..3500"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-245",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": true,
+        "kiosk": true,
+        "store_size": 20965.0,
+        "tier": "employee",
+        "user_id": "synthetic-user-245"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 50.0,
+      "source": "large-store",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-246",
+      "flag": "receipt_style",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 21222.0,
+        "tier": "guest",
+        "user_id": "synthetic-user-246"
+      }
+    },
+    "expected": {
+      "flag": "receipt_style",
+      "value": "compact",
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "accessible-store",
+          "matched": false,
+          "reason": "attribute \"accessibility_mode\" was false; condition did not match"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-247",
+      "flag": "support_prompt",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 21479.0,
+        "tier": "member",
+        "user_id": "synthetic-user-247"
+      }
+    },
+    "expected": {
+      "flag": "support_prompt",
+      "value": true,
+      "source": "non-guest",
+      "explanation": [
+        {
+          "rule_id": "non-guest",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-248",
+      "flag": "checkout_redesign",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": true,
+        "store_size": 21736.0,
+        "tier": "member",
+        "user_id": "synthetic-user-248"
+      }
+    },
+    "expected": {
+      "flag": "checkout_redesign",
+      "value": false,
+      "source": "default",
+      "explanation": [
+        {
+          "rule_id": "employees-first",
+          "matched": false,
+          "reason": "attribute \"tier\" was \"member\"; condition did not match"
+        },
+        {
+          "rule_id": "kiosk-rollout",
+          "matched": false,
+          "reason": "stable bucket 4706 was outside 0..3500"
+        },
+        {
+          "rule_id": "default",
+          "matched": true,
+          "reason": "no targeting rule matched"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "case_id": "golden-249",
+      "flag": "max_cart_items",
+      "context": {
+        "accessibility_mode": false,
+        "kiosk": false,
+        "store_size": 21993.0,
+        "tier": "member",
+        "user_id": "synthetic-user-249"
+      }
+    },
+    "expected": {
+      "flag": "max_cart_items",
+      "value": 50.0,
+      "source": "large-store",
+      "explanation": [
+        {
+          "rule_id": "large-store",
+          "matched": true,
+          "reason": "all conditions matched"
+        }
+      ]
+    }
+  }
+]

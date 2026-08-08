@@ -1,0 +1,1 @@
+{"schema_version":1,"config_id":"x","salt":"s","flags":{"f":{"default":false,"rules":[{"id":"r","conditions":[{"attribute":"x","op":"eq","value":true}],"serve":true},{"id":"r","conditions":[{"attribute":"x","op":"eq","value":false}],"serve":false}]}}}

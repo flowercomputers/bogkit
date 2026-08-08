@@ -1,0 +1,13 @@
+locale de
+fallback fr,en-US
+
+message greeting
+select gender
+branch male
+text Er sagt hallo zu {name}
+branch other
+text Sie sagen hallo zu {name}
+end
+
+message nested
+ref en-US shared

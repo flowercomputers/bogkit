@@ -1,0 +1,13 @@
+{
+  "passed": false,
+  "precision": 0.9990394428768686,
+  "recall": 0.9985598559855986,
+  "correct_links": 49923,
+  "accepted_links": 49971,
+  "expected_unambiguous_links": 49995,
+  "invariant_failures": 12,
+  "failure_summary": [
+    "12 accepted links targeted obsolete claim revisions",
+    "precision 0.999039 was below the required 0.999500"
+  ]
+}
