@@ -95,7 +95,7 @@ pub(crate) fn run_serve(
 
     let mut st = crate::open_store!(&db.path);
     let mut stored: Option<String> =
-        st.rtx(|(_, _, _, _, _, _, meta)| meta.get(&0).map(|m| m.last_modified));
+        st.rtx(|(_, _, _, _, _, _, meta, _)| meta.get(&0).map(|m| m.last_modified));
     let mut watcher = Watcher::new(stored.clone());
     let mut pull_backoff = BACKOFF_START;
     let tools = tool_registry();
@@ -142,7 +142,7 @@ pub(crate) fn run_serve(
                     })();
                     match pull_result {
                         Ok(_churn) => {
-                            stored = st.rtx(|(_, _, _, _, _, _, meta)| {
+                            stored = st.rtx(|(_, _, _, _, _, _, meta, _)| {
                                 meta.get(&0).map(|m| m.last_modified)
                             });
                             pull_backoff = BACKOFF_START;
@@ -169,7 +169,7 @@ pub(crate) fn run_serve(
 
         let mut handler = FnHandler(|name: &str, args: &Value| -> Result<Value, String> {
             match name {
-                "figmog_status" => st.rtx(|((nodes, _, _, _, _, _, _), _, _, _, _, _, meta)| {
+                "figmog_status" => st.rtx(|((nodes, _, _, _, _, _, _), _, _, _, _, _, meta, _)| {
                     query::status(&nodes, &meta)
                 }),
                 "figmog_pages" => {
@@ -234,7 +234,7 @@ pub(crate) fn run_serve(
                 "figmog_vars" => {
                     let id = arg_str(args, "id");
                     st.rtx(
-                        |((nodes, ..), _, _, _, variables, variable_collections, _)| {
+                        |((nodes, ..), _, _, _, variables, variable_collections, _, _)| {
                             query::vars(&nodes, &variables, &variable_collections, id)
                         },
                     )
@@ -269,7 +269,7 @@ pub(crate) fn run_serve(
                         }
                     };
                     stored =
-                        st.rtx(|(_, _, _, _, _, _, meta)| meta.get(&0).map(|m| m.last_modified));
+                        st.rtx(|(_, _, _, _, _, _, meta, _)| meta.get(&0).map(|m| m.last_modified));
                     pull_backoff = BACKOFF_START;
                     watcher = Watcher::new(stored.clone());
                     if let Some(k) = &db.key {

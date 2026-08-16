@@ -17,6 +17,10 @@ pub enum Id {
     Variable(String),
     VariableCollection(String),
     Meta,
+    /// Cached upstream proxy response, keyed by its hash (spec §12). APPEND
+    /// ONLY: postcard encodes variant indices, so inserting a variant
+    /// earlier in this enum would corrupt every existing store.
+    ProxyCache(String),
 }
 
 /// One mirrored record; variant always matches its [`Id`] variant.
@@ -29,6 +33,8 @@ pub enum Rec {
     Variable(VariableRec),
     VariableCollection(VariableCollectionRec),
     Meta(FileMeta),
+    /// See [`Id::ProxyCache`]. APPEND ONLY — see that variant's note.
+    ProxyCache(ProxyCacheRec),
 }
 
 /// One node of the document tree (children stripped from `raw`).
@@ -123,6 +129,23 @@ pub struct FileMeta {
     pub version: String,
     pub last_modified: String,
     pub synced_at_unix_ms: u64,
+}
+
+/// One cached upstream proxy response (spec §12). A hit requires
+/// `file_version` to equal the mirror's current [`FileMeta::version`]; a
+/// version bump makes the row stale and eligible for eviction
+/// (`store::stale_cache_ids` / `store::evict_stale_cache`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProxyCacheRec {
+    /// Hash of `tool` + `args_canonical`; identical to the [`Id::ProxyCache`] key.
+    pub key_hash: String,
+    pub tool: String,
+    /// Canonical JSON (`serde_json::to_string`) of the call arguments.
+    pub args_canonical: String,
+    /// File version this response was fetched at.
+    pub file_version: String,
+    /// Canonical JSON of the upstream MCP result content.
+    pub content: String,
 }
 
 #[cfg(test)]

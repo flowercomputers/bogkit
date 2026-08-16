@@ -10,6 +10,7 @@
 //! See `docs/superpowers/specs/2026-08-15-figmog-build-design.md`.
 
 pub mod api;
+pub mod cache;
 pub mod cli;
 pub mod flatten;
 pub mod ident;

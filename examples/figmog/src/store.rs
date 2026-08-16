@@ -11,7 +11,7 @@ use fold::stream::KeyedStream;
 use serde::Serialize;
 
 use crate::flatten::Flattened;
-use crate::model::{FileMeta, Id, NodeRec, Rec};
+use crate::model::{FileMeta, Id, NodeRec, ProxyCacheRec, Rec};
 
 // ---- pipeline branch functions (pure; fold requires determinism) ----
 
@@ -118,6 +118,12 @@ rec_branch!(
     VariableCollection,
     crate::model::VariableCollectionRec
 );
+rec_branch!(
+    proxy_cache_only,
+    ProxyCache,
+    ProxyCache,
+    crate::model::ProxyCacheRec
+);
 
 /// Feeds the `meta` table: the single [`FileMeta`] row, keyed by `0u8`
 /// (not `()`: `()` postcard-encodes to zero bytes and the store forbids
@@ -180,6 +186,10 @@ macro_rules! figmog_pipeline {
                 terminal::Table::new("variable_collections"),
             ),
             FilterMap::new($crate::store::meta_only, terminal::Table::new("meta")),
+            FilterMap::new(
+                $crate::store::proxy_cache_only,
+                terminal::Table::new("proxy_cache"),
+            ),
         )
     }};
 }
@@ -267,4 +277,39 @@ pub fn collect_sweepable<R: fold::stream::Readable>(
     out.extend(component_sets.iter().map(|(k, _)| Id::ComponentSet(k)));
     out.extend(styles.iter().map(|(k, _)| Id::Style(k)));
     out
+}
+
+// ---- proxy cache eviction (spec §12) ----
+//
+// Cache eviction is deliberately NOT folded into `sync`'s sweep: the sweep
+// removes ids that vanished from the *newly flattened file*, whereas cache
+// rows go stale only because the file *version* moved, independent of
+// which nodes/components/styles are still live. Keeping it a separate
+// pass means `sync`'s churn accounting (and every test that pins its
+// numbers) is untouched by this feature. Callers run a version-changing
+// pull, then `stale_cache_ids` + `evict_stale_cache` in a follow-up step.
+
+/// `ProxyCache` rows whose `file_version` no longer matches
+/// `current_version` — the sweep set for [`evict_stale_cache`].
+pub fn stale_cache_ids<R: fold::stream::Readable>(
+    cache: &fold::pipeline::terminal::TableReader<'_, R, String, ProxyCacheRec>,
+    current_version: &str,
+) -> Vec<Id> {
+    cache
+        .iter()
+        .filter(|(_, rec)| rec.file_version != current_version)
+        .map(|(k, _)| Id::ProxyCache(k))
+        .collect()
+}
+
+/// Remove `stale` cache rows in one write transaction. Never touches
+/// variables, collections, or the meta row — pass only ids gathered by
+/// [`stale_cache_ids`].
+pub fn evict_stale_cache<P: Push<Keyed<Id, Rec>>>(st: &mut KeyedStream<Id, Rec, P>, stale: &[Id]) {
+    st.wtx(|tx| {
+        for id in stale {
+            debug_assert!(matches!(id, Id::ProxyCache(_)));
+            tx.remove(id);
+        }
+    });
 }

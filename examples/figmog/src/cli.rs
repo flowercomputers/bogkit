@@ -186,7 +186,7 @@ fn dispatch(cli: Cli) -> Result<(), String> {
             let st = crate::open_store!(&db.path);
             let json = cli.json;
             match other {
-                Cmd::Status => st.rtx(|((nodes, _, _, _, _, _, _), _, _, _, _, _, meta)| {
+                Cmd::Status => st.rtx(|((nodes, _, _, _, _, _, _), _, _, _, _, _, meta, _)| {
                     cmd_status(&nodes, &meta, json)
                 }),
                 Cmd::Pages => st
@@ -232,7 +232,7 @@ fn dispatch(cli: Cli) -> Result<(), String> {
                     cmd_uses(&nodes, &styled_by, &bound_to, id, json)
                 }),
                 Cmd::Vars { id } => st.rtx(
-                    |((nodes, ..), _, _, _, variables, variable_collections, _)| {
+                    |((nodes, ..), _, _, _, variables, variable_collections, _, _)| {
                         cmd_vars(&nodes, &variables, &variable_collections, id, json)
                     },
                 ),
@@ -594,7 +594,7 @@ fn cmd_import_variables(db: &Db, path: PathBuf, json: bool) -> Result<(), String
 
 pub(crate) fn read_watermark(db: &Db) -> Option<String> {
     let st = crate::open_store!(&db.path);
-    st.rtx(|(_, _, _, _, _, _, meta)| meta.get(&0).map(|m| m.last_modified))
+    st.rtx(|(_, _, _, _, _, _, meta, _)| meta.get(&0).map(|m| m.last_modified))
 }
 
 // ---- core reads ----
