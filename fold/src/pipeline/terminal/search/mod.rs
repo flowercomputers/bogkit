@@ -54,15 +54,19 @@ const POSTING: u8 = 2;
 /// tokenized the same way by [`Bm25Reader::search`], which scores with the
 /// Lucene-style non-negative IDF `ln(1 + (N - df + 0.5) / (df + 0.5))`.
 ///
-/// Like [`InvertedIndex`](super::InvertedIndex), documents are set-semantic:
-/// within a transaction deltas accumulate, and the net sign decides — a
-/// positive delta (re)writes the document's postings, a non-positive one
-/// deletes them, without reading prior state. Corpus statistics do
-/// accumulate deltas, so insert each document once with delta `+1` and
-/// retract it once with `-1`. Like [`Map`](crate::pipeline::Map), this
-/// relies on determinism: a retraction must present the same `(key, text)`
-/// that was inserted, and the tokenizer must be a pure function, or index
-/// state will not cancel.
+/// Documents are set-semantic with last-write-wins inside a transaction:
+/// the final push for a `(term, key)` decides — an insert (re)writes that
+/// posting's absolute term frequency, a retraction deletes it, without
+/// reading prior state. (Net-sign accumulation, as in
+/// [`InvertedIndex`](super::InvertedIndex), is correct for presence but not
+/// for counted values: a same-transaction retract+insert whose term
+/// frequency or document length CHANGES — every `KeyedStream::upsert` of
+/// edited text — would store the difference as if it were the value.)
+/// Corpus statistics do accumulate deltas, so insert each document once
+/// with delta `+1` and retract it once with `-1`. Like
+/// [`Map`](crate::pipeline::Map), this relies on determinism: a retraction
+/// must present the same `(key, text)` that was inserted, and the tokenizer
+/// must be a pure function, or index state will not cancel.
 ///
 /// ```no_run
 /// use fold::pipeline::{Keyed, terminal::search::Bm25};
@@ -83,9 +87,10 @@ pub struct Bm25<K, V, T = fn(&str, &mut Vec<u8>)> {
     tokens: Vec<u8>,
     k1: f64,
     b: f64,
-    // pending accumulated deltas this tx, by encoded store key
-    postings: FxHashMap<Vec<u8>, i64>,
-    doc_lens: FxHashMap<Vec<u8>, i64>,
+    // pending writes this tx by encoded store key, last push wins:
+    // Some(v) = an insert saw absolute value v, None = a retraction
+    postings: FxHashMap<Vec<u8>, Option<i64>>,
+    doc_lens: FxHashMap<Vec<u8>, Option<i64>>,
     docs: i64,
     len: i64,
     _p: PhantomData<(K, V)>,
@@ -130,20 +135,20 @@ impl<K, V, T> Bm25<K, V, T> {
     }
 }
 
-// flush a pending delta map set-semantically, like `InvertedIndex`: the net
-// sign decides between writing the magnitude and deleting the key, with no
-// read of prior state — a read-modify-write here turns mass retraction into
-// a random point read per key
+// flush a pending map: the last push for a key decided between writing an
+// absolute value and deleting, with no read of prior state — a
+// read-modify-write here would turn mass retraction into a random point
+// read per key. The cost of not reading is one redundant same-value write
+// per unchanged shared term on a same-tx replace.
 fn fold(
     tx: &mut WriteTx<'_>,
     ks: &fjall::SingleWriterTxKeyspace,
-    pending: &mut FxHashMap<Vec<u8>, i64>,
+    pending: &mut FxHashMap<Vec<u8>, Option<i64>>,
 ) {
-    for (key, delta) in pending.drain() {
-        match delta {
-            1.. => tx.insert(ks, &key, delta.to_be_bytes()),
-            0 => {}
-            _ => tx.remove(ks, &key),
+    for (key, op) in pending.drain() {
+        match op {
+            Some(v) => tx.insert(ks, &key, v.to_be_bytes()),
+            None => tx.remove(ks, &key),
         }
     }
 }
@@ -175,18 +180,23 @@ where
             dl += 1;
         }
 
+        // an insert records the document's absolute values; a retraction
+        // marks for deletion — later pushes for the same key overwrite
+        // earlier ones, so a retract-old/insert-new edit lands on the new
+        // document's true numbers
+        let op = |v: i64| if delta > 0 { Some(v) } else { None };
         for (term, n) in tf {
             tx.buf.clear();
             tx.buf.push(POSTING);
             postcard::to_io(term, &mut tx.buf).unwrap();
             postcard::to_io(key, &mut tx.buf).unwrap();
-            *self.postings.entry(tx.buf.clone()).or_insert(0) += n * delta;
+            self.postings.insert(tx.buf.clone(), op(n));
         }
 
         tx.buf.clear();
         tx.buf.push(DOCLEN);
         postcard::to_io(key, &mut tx.buf).unwrap();
-        *self.doc_lens.entry(tx.buf.clone()).or_insert(0) += dl * delta;
+        self.doc_lens.insert(tx.buf.clone(), op(dl));
 
         self.docs += delta;
         self.len += dl * delta;

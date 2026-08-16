@@ -71,3 +71,56 @@ fn bm25_rank_and_retract() {
         assert!(idx.search("rust", 10).is_empty());
     });
 }
+
+// editing a document as retract-old + insert-new in ONE transaction — which
+// is exactly what `KeyedStream::upsert` emits — must leave the index
+// identical to one built directly with the final texts. Terms whose
+// frequency CHANGES between old and new text (and every changed document
+// length) are the trap: a net-delta store writes the difference as if it
+// were the absolute value.
+#[test]
+fn bm25_same_txn_replace_matches_direct_build() {
+    let finals: &[(u32, &str)] = &[
+        (1, "the cat lay on the mat by the door"), // "the" tf 2->3, sat->lay, dl 6->9
+        (2, "a quick brown fox"),                  // untouched
+        (3, "rust systems"),                       // "rust" tf 3->1
+    ];
+
+    let mut edited = Stream::new(
+        fresh_db("bm25_edit.db"),
+        terminal::search::Bm25::new("idx"),
+    );
+    edited.wtx(|tx| {
+        tx.insert(&Keyed::new(1u32, "the cat sat on the mat".to_string()));
+        tx.insert(&Keyed::new(2u32, "a quick brown fox".to_string()));
+        tx.insert(&Keyed::new(3u32, "rust rust rust systems".to_string()));
+    });
+    edited.wtx(|tx| {
+        tx.remove(&Keyed::new(1u32, "the cat sat on the mat".to_string()));
+        tx.insert(&Keyed::new(1u32, finals[0].1.to_string()));
+        tx.remove(&Keyed::new(3u32, "rust rust rust systems".to_string()));
+        tx.insert(&Keyed::new(3u32, finals[2].1.to_string()));
+    });
+
+    let mut direct = Stream::new(
+        fresh_db("bm25_direct.db"),
+        terminal::search::Bm25::new("idx"),
+    );
+    direct.wtx(|tx| {
+        for (id, text) in finals {
+            tx.insert(&Keyed::new(*id, text.to_string()));
+        }
+    });
+
+    for q in ["the", "cat", "sat", "lay door", "rust", "fox", "the rust cat"] {
+        let (a, b) = (
+            edited.rtx(|idx| idx.search(q, 10)),
+            direct.rtx(|idx| idx.search(q, 10)),
+        );
+        assert_eq!(
+            a.iter().map(|h| (h.val, h.score)).collect::<Vec<_>>(),
+            b.iter().map(|h| (h.val, h.score)).collect::<Vec<_>>(),
+            "query {q:?} diverged after same-txn replace"
+        );
+    }
+}
