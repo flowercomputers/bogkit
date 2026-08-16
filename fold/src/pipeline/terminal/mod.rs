@@ -165,6 +165,12 @@ impl<D: Clone> Push<D> for Count {
 /// running sum of that element's deltas, and elements whose multiplicity
 /// reaches 0 are removed. Deltas accumulate in memory so hot elements hit
 /// the store once per commit.
+///
+/// Negative running sums are preserved internally (a retraction may arrive
+/// before its matching insert — normal when deltas are replayed or
+/// replicated), so the stored state is a pure function of the net
+/// multiset regardless of delta arrival order. Readers surface only
+/// positive multiplicities.
 pub struct Bag<D> {
     name: String,
     ks: Option<fjall::SingleWriterTxKeyspace>,
@@ -195,13 +201,17 @@ pub struct BagReader<'tx, R: Readable, D> {
 
 impl<'tx, R: Readable, D: DeserializeOwned> BagReader<'tx, R, D> {
     /// Iterate all `(element, multiplicity)` pairs, ordered by the element's
-    /// `postcard` encoding. Multiplicities are always positive.
+    /// `postcard` encoding. Multiplicities are always positive; elements
+    /// currently at a negative running sum are skipped.
     pub fn iter(&self) -> impl Iterator<Item = (D, i64)> + '_ {
-        self.tx.iter(&self.ks).map(|kv| {
+        self.tx.iter(&self.ks).filter_map(|kv| {
             let (key, val) = kv.into_inner().unwrap();
-            let d: D = postcard::from_bytes(&key).unwrap();
             let n = i64::from_be_bytes(*val.as_array::<8>().unwrap());
-            (d, n)
+            if n <= 0 {
+                return None;
+            }
+            let d: D = postcard::from_bytes(&key).unwrap();
+            Some((d, n))
         })
     }
 
@@ -216,7 +226,11 @@ impl<'tx, R: Readable, D: DeserializeOwned> BagReader<'tx, R, D> {
         KEY_BUF.with_borrow_mut(|buf| {
             buf.clear();
             postcard::to_io(d, &mut *buf).unwrap();
-            self.tx.contains_key(&self.ks, &buf[..]).unwrap()
+            self.tx
+                .get(&self.ks, &buf[..])
+                .unwrap()
+                .map(|v| i64::from_be_bytes(v.as_ref().try_into().unwrap()) > 0)
+                .unwrap_or(false)
         })
     }
 }
@@ -246,7 +260,7 @@ impl<D: Clone + Serialize + DeserializeOwned> Push<D> for Bag<D> {
                 .map(|v| i64::from_be_bytes(v.as_ref().try_into().unwrap()))
                 .unwrap_or(0);
             let new = cur + delta;
-            if new > 0 {
+            if new != 0 {
                 tx.insert(&ks, &key, new.to_be_bytes());
             } else {
                 tx.remove(&ks, &key);
