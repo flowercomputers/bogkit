@@ -20,33 +20,37 @@
     --focus: #e8c27a;
   }
   * { box-sizing: border-box }
-  html, body { margin: 0; height: 100%; background: var(--peat); color: var(--ink); font: 16px/1.45 var(--sans) }
+  html, body { margin: 0; height: 100%; background: var(--peat); color: var(--ink); font: 18px/1.45 var(--sans) }
   header {
     display: flex; align-items: baseline; justify-content: space-between; gap: 16px;
     padding: 14px 22px 12px; border-bottom: 1px solid var(--line);
   }
-  header h1 { font: 600 30px/1 var(--serif); margin: 0; letter-spacing: -.02em }
-  header p { margin: 0; color: var(--dim); font-size: 13px }
+  header h1 { font: 600 36px/1 var(--serif); margin: 0; letter-spacing: -.02em }
+  header p { margin: 0; color: var(--dim); font-size: 15px }
+  header .tools { display: flex; align-items: center; gap: 12px; flex-shrink: 0 }
   .grid {
     display: grid;
     grid-template-columns: 220px minmax(0, 1fr) 232px;
-    height: calc(100% - 58px);
+    height: calc(100% - 62px);
   }
+  .grid.stage { grid-template-columns: minmax(0, 1fr) 240px }
+  .grid.stage .swamp { display: none }
   section { overflow: auto; padding: 16px 18px 28px }
   section + section { border-left: 1px solid var(--line) }
-  .hero { padding: 18px 28px 32px }
+  .hero { padding: 22px 36px 36px }
   h2 {
     font: 11px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase;
     color: var(--gold); margin: 0 0 12px;
   }
-  .hero h2 { font-size: 12px; letter-spacing: .16em; margin-bottom: 14px }
+  .hero h2 { font-size: 13px; letter-spacing: .16em; margin-bottom: 16px }
   .item, .line {
     border: 1px solid var(--line); background: var(--paper);
     border-radius: 12px; padding: 10px 12px; margin: 0 0 8px;
   }
-  .line { padding: 14px 16px; margin: 0 0 12px; border-radius: 14px }
+  .line { padding: 16px 18px; margin: 0 0 14px; border-radius: 16px }
   .item b { display: block; font-size: 13px; margin: 4px 0 2px }
-  .line b { display: block; font: 600 20px/1.25 var(--serif); margin: 8px 0 6px; letter-spacing: -.015em }
+  .line b { display: block; font: 600 28px/1.2 var(--serif); margin: 8px 0 8px; letter-spacing: -.02em }
+  .item.out { opacity: .55; text-decoration: line-through; text-decoration-color: #8a6a5a }
   .chip {
     display: inline-block; font: 10px/1 var(--mono); letter-spacing: .06em;
     text-transform: uppercase; padding: 3px 6px; border-radius: 999px;
@@ -58,10 +62,10 @@
   .chip.ticket { color: var(--dim) }
   .chip.delta { color: var(--gold); border-color: #7a6234 }
   .chip.why { text-transform: none; letter-spacing: 0; font-size: 11px; color: var(--gold) }
-  .line .body { color: var(--dim); font-size: 15px; line-height: 1.5; margin: 8px 0 0; white-space: pre-wrap }
+  .line .body { color: var(--dim); font-size: 18px; line-height: 1.5; margin: 8px 0 0; white-space: pre-wrap }
   .bar {
-    height: 16px; background: #2a241e; border-radius: 99px; overflow: hidden;
-    margin: 10px 0 18px; box-shadow: inset 0 0 0 1px var(--line);
+    height: 22px; background: #2a241e; border-radius: 99px; overflow: hidden;
+    margin: 10px 0 20px; box-shadow: inset 0 0 0 1px var(--line);
   }
   .bar > i { display: block; height: 100%; background: linear-gradient(90deg, var(--moss), var(--gold)); width: 0 }
   .ask { display: flex; gap: 8px; margin: 0 0 12px }
@@ -82,7 +86,10 @@
     outline: 2px solid var(--focus); outline-offset: 2px;
   }
   .meta { color: var(--dim); font: 12px/1.4 var(--mono); margin: 0 0 10px }
-  .hero .meta { font-size: 13px }
+  .hero .meta { font-size: 15px }
+  .beat {
+    font: 16px/1.3 var(--mono); color: var(--gold); min-height: 1.3em; margin: 0 0 12px;
+  }
   .ghost {
     border: 1px dashed #6a4a3a; color: #c4a090; background: #1c1612;
     border-radius: 12px; padding: 10px 12px; margin: 0 0 12px;
@@ -97,7 +104,8 @@
     button:active { transform: none }
   }
   @media (max-width: 900px) {
-    .grid { grid-template-columns: 1fr; height: auto }
+    .grid, .grid.stage { grid-template-columns: 1fr; height: auto }
+    .grid.stage .swamp { display: block }
     section + section { border-left: 0; border-top: 1px solid var(--line) }
   }
 </style>
@@ -106,15 +114,19 @@
 <header>
   <div>
     <h1>Sundew</h1>
-    <p>it only sticks to what matters · Alinery’s filesystem is the database · Fold is the query engine</p>
+    <p>it only sticks to what matters · Alinery’s filesystem is the database · Sundew is the query engine</p>
   </div>
-  <div class="meta" id="flags" aria-live="polite"></div>
+  <div class="tools">
+    <button id="stage" type="button" aria-pressed="false">Stage</button>
+    <div class="meta" id="flags" aria-live="polite"></div>
+  </div>
 </header>
-<div class="grid">
-  <section aria-labelledby="swamp-h">
+<div class="grid" id="layout">
+  <section class="swamp" aria-labelledby="swamp-h">
     <h2 id="swamp-h">Swamp</h2>
     <div class="meta" id="kinds"></div>
     <div id="ghost-swamp"></div>
+    <div id="departed"></div>
     <div id="swamp"></div>
   </section>
   <section class="hero" aria-labelledby="brief-h">
@@ -124,6 +136,7 @@
       <button id="ask" type="button">ask</button>
       <button id="copy" type="button">Copy briefing</button>
     </div>
+    <p class="beat" id="beat" role="status">seed</p>
     <div class="meta" id="packmeta"></div>
     <div class="bar" aria-hidden="true"><i id="bar"></i></div>
     <div id="ghost-brief"></div>
@@ -147,7 +160,9 @@ const send = (op, q) => ws.send(JSON.stringify({ op, q: q || "" }));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let lastSeed = "";
 let prevSwamp = new Set();
+let swampMeta = new Map();
 let firstPaint = true;
+let staged = false;
 
 const ghostEl = (g) => {
   if (!g) return null;
@@ -170,6 +185,18 @@ ws.onmessage = (event) => {
   $("bar").style.width = Math.min(100, (s.briefing.tokens / s.briefing.budget) * 100) + "%";
 
   const nowIds = new Set(s.swamp.map((item) => item.id));
+  s.swamp.forEach((item) => swampMeta.set(item.id, item));
+  const gone = firstPaint ? [] : [...prevSwamp].filter((id) => !nowIds.has(id));
+  $("departed").replaceChildren(...gone.map((id) => {
+    const item = swampMeta.get(id) || { id, kind: "wiki", title: id, task: "" };
+    const el = document.createElement("div");
+    el.className = "item out";
+    el.innerHTML =
+      `<span class="chip ${item.kind}">${item.kind}</span>` +
+      `<span class="chip delta">out</span>` +
+      `<b>${item.title}</b><span class="meta">${item.task || "wiki"} · ${item.id}</span>`;
+    return el;
+  }));
   $("swamp").replaceChildren(...s.swamp.map((item) => {
     const el = document.createElement("div");
     el.className = "item";
@@ -180,6 +207,9 @@ ws.onmessage = (event) => {
       `<b>${item.title}</b><span class="meta">${item.task || "wiki"} · ${item.id}</span>`;
     return el;
   }));
+  if (s.live.wiki_retracted && s.live.comment_landed) $("beat").textContent = "retracted · BM25 + HNSW + table";
+  else if (s.live.comment_landed) $("beat").textContent = "comment #1";
+  else $("beat").textContent = "seed";
   prevSwamp = nowIds;
   firstPaint = false;
 
@@ -208,6 +238,10 @@ ws.onmessage = (event) => {
 
 $("ask").onclick = () => send("ask", $("q").value);
 $("q").onkeydown = (e) => { if (e.key === "Enter") send("ask", $("q").value); };
+document.addEventListener("keydown", (e) => {
+  if (e.target === $("q") || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.key === "f" || e.key === "F") $("stage").click();
+});
 $("comment").onclick = () => send("comment");
 $("retract").onclick = () => send("retract");
 $("reset").onclick = () => send("reset");
@@ -220,16 +254,27 @@ $("copy").onclick = async () => {
     $("copied").textContent = "copy failed";
   }
 };
+$("stage").onclick = () => {
+  staged = !staged;
+  $("layout").classList.toggle("stage", staged);
+  $("stage").setAttribute("aria-pressed", staged ? "true" : "false");
+  $("stage").textContent = staged ? "Show swamp" : "Stage";
+};
 $("replay").onclick = async () => {
   const btn = $("replay");
   if (btn.disabled) return;
   btn.disabled = true;
-  btn.textContent = "Replay…";
   try {
+    $("beat").textContent = "reset";
+    btn.textContent = "reset…";
     send("reset");
     await sleep(900);
+    $("beat").textContent = "comment lands";
+    btn.textContent = "comment…";
     send("comment");
     await sleep(1100);
+    $("beat").textContent = "retract · BM25 + HNSW + table";
+    btn.textContent = "retract…";
     send("retract");
   } finally {
     btn.disabled = false;

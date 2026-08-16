@@ -28,10 +28,17 @@ cargo run -p sundew
 
 1. Ask is prefilled: *how should we store refresh tokens?*
 2. The briefing opens on the stale session-lifecycle wiki and the in-memory JWT design — not the filesystem wiki.
-3. Click **Replay** (or step **Human comment lands** then **Retract stale wiki**).
-4. The correcting comment jumps to #1. Retract leaves a ghost: `retracted: session-lifecycle · BM25 + HNSW + table`.
-5. **Copy briefing** puts the packed next-session seed on the clipboard.
+3. Click **Stage** (or press `f`) so the briefing fills the room. Replay stays on the right.
+4. Click **Replay** (or step **Human comment lands** then **Retract stale wiki**).
+5. The correcting comment jumps to #1. Retract leaves a ghost: `retracted: session-lifecycle · BM25 + HNSW + table`. Swamp rows that leave get an **out** chip.
+6. **Copy briefing** puts the packed next-session seed on the clipboard.
+
+90-second talk: `TALK.md`. Official PR body (do not file until Matthew says ready): `PR-DRAFT.md`.
 
 ## Category
 
 agent support
+
+## Team
+
+Matthew Ball (`matthewrball`) · Dustin Dannenhauer (`dtdannen`, write invite pending)
