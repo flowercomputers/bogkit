@@ -26,10 +26,11 @@ cargo run -p sundew
 
 ## Demo
 
-1. Ask *how should we store refresh tokens?*
-2. A stale wiki line and an in-memory-JWT design pack into the briefing.
-3. Click **Human comment lands** — the comment jumps to #1 (comments are the product loop).
-4. Click **Retract stale wiki** — Fold retracts BM25 and ANNy deletes the vector. The lie is gone.
+1. Ask is prefilled: *how should we store refresh tokens?*
+2. The briefing opens on the stale session-lifecycle wiki and the in-memory JWT design — not the filesystem wiki.
+3. Click **Replay** (or step **Human comment lands** then **Retract stale wiki**).
+4. The correcting comment jumps to #1. Retract leaves a ghost: `retracted: session-lifecycle · BM25 + HNSW + table`.
+5. **Copy briefing** puts the packed next-session seed on the clipboard.
 
 ## Category
 

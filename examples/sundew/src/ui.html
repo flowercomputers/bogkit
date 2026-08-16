@@ -17,99 +17,149 @@
     --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, sans-serif;
     --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
     --serif: "Iowan Old Style", Palatino, Georgia, serif;
+    --focus: #e8c27a;
   }
   * { box-sizing: border-box }
-  html, body { margin: 0; height: 100%; background: var(--peat); color: var(--ink); font: 15px/1.45 var(--sans) }
+  html, body { margin: 0; height: 100%; background: var(--peat); color: var(--ink); font: 16px/1.45 var(--sans) }
   header {
     display: flex; align-items: baseline; justify-content: space-between; gap: 16px;
-    padding: 16px 20px 12px; border-bottom: 1px solid var(--line);
+    padding: 14px 22px 12px; border-bottom: 1px solid var(--line);
   }
-  header h1 { font: 600 28px/1 var(--serif); margin: 0; letter-spacing: -.02em }
+  header h1 { font: 600 30px/1 var(--serif); margin: 0; letter-spacing: -.02em }
   header p { margin: 0; color: var(--dim); font-size: 13px }
   .grid {
     display: grid;
-    grid-template-columns: 280px 1fr 300px;
-    height: calc(100% - 62px);
+    grid-template-columns: 220px minmax(0, 1fr) 232px;
+    height: calc(100% - 58px);
   }
-  section { overflow: auto; padding: 14px 16px 24px; border-right: 1px solid var(--line) }
-  section:last-child { border-right: 0 }
+  section { overflow: auto; padding: 16px 18px 28px }
+  section + section { border-left: 1px solid var(--line) }
+  .hero { padding: 18px 28px 32px }
   h2 {
     font: 11px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase;
-    color: var(--gold); margin: 0 0 10px;
+    color: var(--gold); margin: 0 0 12px;
   }
+  .hero h2 { font-size: 12px; letter-spacing: .16em; margin-bottom: 14px }
   .item, .line {
     border: 1px solid var(--line); background: var(--paper);
-    border-radius: 10px; padding: 9px 10px; margin: 0 0 8px;
+    border-radius: 12px; padding: 10px 12px; margin: 0 0 8px;
   }
-  .item b, .line b { display: block; font-size: 13px; margin: 2px 0 2px }
+  .line { padding: 14px 16px; margin: 0 0 12px; border-radius: 14px }
+  .item b { display: block; font-size: 13px; margin: 4px 0 2px }
+  .line b { display: block; font: 600 20px/1.25 var(--serif); margin: 8px 0 6px; letter-spacing: -.015em }
   .chip {
     display: inline-block; font: 10px/1 var(--mono); letter-spacing: .06em;
     text-transform: uppercase; padding: 3px 6px; border-radius: 999px;
-    border: 1px solid var(--line); color: var(--dim); margin-right: 6px;
+    border: 1px solid var(--line); color: var(--dim); margin-right: 6px; margin-bottom: 4px;
   }
   .chip.comment { color: #f0c9a0; border-color: #8a5a38 }
   .chip.wiki { color: #cfe0cc; border-color: #4d6a4c }
   .chip.artifact { color: #c9d6e4; border-color: #4a5a6a }
   .chip.ticket { color: var(--dim) }
-  .line .body { color: var(--dim); font-size: 13px; margin: 6px 0 0; white-space: pre-wrap }
-  .bar { height: 8px; background: #2a241e; border-radius: 99px; overflow: hidden; margin: 8px 0 14px }
+  .chip.delta { color: var(--gold); border-color: #7a6234 }
+  .chip.why { text-transform: none; letter-spacing: 0; font-size: 11px; color: var(--gold) }
+  .line .body { color: var(--dim); font-size: 15px; line-height: 1.5; margin: 8px 0 0; white-space: pre-wrap }
+  .bar {
+    height: 16px; background: #2a241e; border-radius: 99px; overflow: hidden;
+    margin: 10px 0 18px; box-shadow: inset 0 0 0 1px var(--line);
+  }
   .bar > i { display: block; height: 100%; background: linear-gradient(90deg, var(--moss), var(--gold)); width: 0 }
   .ask { display: flex; gap: 8px; margin: 0 0 12px }
   input {
     flex: 1; background: #1b1612; color: var(--ink); border: 1px solid var(--line);
-    border-radius: 8px; padding: 8px 10px; font: 14px var(--sans);
+    border-radius: 8px; padding: 10px 12px; font: 15px var(--sans); min-height: 40px;
   }
   button {
     background: #2a211b; color: var(--ink); border: 1px solid var(--line);
-    border-radius: 8px; padding: 8px 10px; font: 12px/1 var(--mono); cursor: pointer;
+    border-radius: 8px; padding: 10px 12px; font: 12px/1 var(--mono); cursor: pointer;
+    min-height: 40px;
   }
   button.primary { background: #6a3c22; border-color: #a35a32; color: #ffe8d4 }
   button:hover { filter: brightness(1.08) }
+  button:active { transform: scale(0.96) }
+  button:disabled { opacity: .5; cursor: wait; transform: none }
+  button:focus-visible, input:focus-visible {
+    outline: 2px solid var(--focus); outline-offset: 2px;
+  }
   .meta { color: var(--dim); font: 12px/1.4 var(--mono); margin: 0 0 10px }
-  .gone { opacity: .35; text-decoration: line-through }
+  .hero .meta { font-size: 13px }
+  .ghost {
+    border: 1px dashed #6a4a3a; color: #c4a090; background: #1c1612;
+    border-radius: 12px; padding: 10px 12px; margin: 0 0 12px;
+    font: 13px/1.4 var(--mono); text-decoration: line-through;
+    text-decoration-color: #8a6a5a;
+  }
   .flag { font: 12px var(--mono); color: var(--moss) }
   .flag.off { color: #8a6a5a }
+  .mutate p { margin: 0 0 10px }
+  .mutate button { width: 100% }
+  @media (prefers-reduced-motion: reduce) {
+    button:active { transform: none }
+  }
+  @media (max-width: 900px) {
+    .grid { grid-template-columns: 1fr; height: auto }
+    section + section { border-left: 0; border-top: 1px solid var(--line) }
+  }
 </style>
 </head>
 <body>
 <header>
   <div>
     <h1>Sundew</h1>
-    <p>it only sticks to what matters · fold is the index, files stay the database</p>
+    <p>it only sticks to what matters · Alinery’s filesystem is the database · Fold is the query engine</p>
   </div>
-  <div class="meta" id="flags"></div>
+  <div class="meta" id="flags" aria-live="polite"></div>
 </header>
 <div class="grid">
-  <section>
-    <h2>Swamp</h2>
+  <section aria-labelledby="swamp-h">
+    <h2 id="swamp-h">Swamp</h2>
     <div class="meta" id="kinds"></div>
+    <div id="ghost-swamp"></div>
     <div id="swamp"></div>
   </section>
-  <section>
-    <h2>Briefing · next session</h2>
+  <section class="hero" aria-labelledby="brief-h">
+    <h2 id="brief-h">Briefing · next session</h2>
     <div class="ask">
-      <input id="q" value="how should we store refresh tokens?" />
-      <button id="ask">ask</button>
+      <input id="q" value="how should we store refresh tokens?" aria-label="Ask the briefing" />
+      <button id="ask" type="button">ask</button>
+      <button id="copy" type="button">Copy briefing</button>
     </div>
     <div class="meta" id="packmeta"></div>
-    <div class="bar"><i id="bar"></i></div>
-    <div id="briefing"></div>
+    <div class="bar" aria-hidden="true"><i id="bar"></i></div>
+    <div id="ghost-brief"></div>
+    <div id="briefing" role="status"></div>
   </section>
-  <section>
-    <h2>Mutate</h2>
+  <section class="mutate" aria-labelledby="mutate-h">
+    <h2 id="mutate-h">Mutate</h2>
     <p class="meta">The clap is a comment, then a retract. One delta resticks every view.</p>
-    <p><button class="primary" id="comment">Human comment lands</button></p>
-    <p><button id="retract">Retract stale wiki</button></p>
-    <p><button id="reset">Reset swamp</button></p>
+    <p><button class="primary" id="replay" type="button">Replay</button></p>
+    <p><button class="primary" id="comment" type="button">Human comment lands</button></p>
+    <p><button id="retract" type="button">Retract stale wiki</button></p>
+    <p><button id="reset" type="button">Reset swamp</button></p>
     <p class="meta">comment &gt; wiki &gt; artifact &gt; ticket · budget 1800 tokens</p>
+    <p class="meta" id="copied" aria-live="polite"></p>
   </section>
 </div>
 <script>
 const ws = new WebSocket(`ws://${location.host}/ws`);
 const $ = (id) => document.getElementById(id);
 const send = (op, q) => ws.send(JSON.stringify({ op, q: q || "" }));
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+let lastSeed = "";
+let prevSwamp = new Set();
+let firstPaint = true;
+
+const ghostEl = (g) => {
+  if (!g) return null;
+  const el = document.createElement("div");
+  el.className = "ghost";
+  el.textContent = `retracted: ${g.title} · ${g.left}`;
+  return el;
+};
+
 ws.onmessage = (event) => {
   const s = JSON.parse(event.data);
+  lastSeed = s.briefing.seed || "";
   $("q").value = s.briefing.query;
   $("kinds").textContent = s.kinds.map((k) => `${k.kind} ${k.n}`).join(" · ");
   $("flags").innerHTML =
@@ -118,29 +168,74 @@ ws.onmessage = (event) => {
   $("packmeta").textContent =
     `${s.briefing.tokens} / ${s.briefing.budget} tokens · ${s.briefing.pack_us} µs · ${s.briefing.lines.length} stuck`;
   $("bar").style.width = Math.min(100, (s.briefing.tokens / s.briefing.budget) * 100) + "%";
+
+  const nowIds = new Set(s.swamp.map((item) => item.id));
   $("swamp").replaceChildren(...s.swamp.map((item) => {
     const el = document.createElement("div");
-    el.className = "item" + (item.id === "wiki/session-lifecycle" ? "" : "");
-    el.innerHTML = `<span class="chip ${item.kind}">${item.kind}</span><b>${item.title}</b><span class="meta">${item.task || "wiki"} · ${item.id}</span>`;
+    el.className = "item";
+    const fresh = !firstPaint && !prevSwamp.has(item.id);
+    el.innerHTML =
+      `<span class="chip ${item.kind}">${item.kind}</span>` +
+      (fresh ? `<span class="chip delta">in</span>` : "") +
+      `<b>${item.title}</b><span class="meta">${item.task || "wiki"} · ${item.id}</span>`;
     return el;
   }));
+  prevSwamp = nowIds;
+  firstPaint = false;
+
+  const gBrief = $("ghost-brief");
+  const gSwamp = $("ghost-swamp");
+  gBrief.replaceChildren();
+  gSwamp.replaceChildren();
+  const ghost = ghostEl(s.ghost);
+  if (ghost) {
+    gBrief.appendChild(ghost);
+    gSwamp.appendChild(ghost.cloneNode(true));
+  }
+
   $("briefing").replaceChildren(...s.briefing.lines.map((line) => {
     const el = document.createElement("div");
     el.className = "line";
     el.innerHTML =
       `<span class="chip ${line.kind}">${line.kind}</span>` +
-      `<span class="chip">${line.score.toFixed(3)}</span>` +
       `<span class="chip">${line.tokens} tok</span>` +
+      `<span class="chip why">${line.why}</span>` +
       `<b>${line.title}</b>` +
       `<div class="body">${line.body}</div>`;
     return el;
   }));
 };
+
 $("ask").onclick = () => send("ask", $("q").value);
 $("q").onkeydown = (e) => { if (e.key === "Enter") send("ask", $("q").value); };
 $("comment").onclick = () => send("comment");
 $("retract").onclick = () => send("retract");
 $("reset").onclick = () => send("reset");
+$("copy").onclick = async () => {
+  if (!lastSeed) return;
+  try {
+    await navigator.clipboard.writeText(lastSeed);
+    $("copied").textContent = "copied next-session seed";
+  } catch {
+    $("copied").textContent = "copy failed";
+  }
+};
+$("replay").onclick = async () => {
+  const btn = $("replay");
+  if (btn.disabled) return;
+  btn.disabled = true;
+  btn.textContent = "Replay…";
+  try {
+    send("reset");
+    await sleep(900);
+    send("comment");
+    await sleep(1100);
+    send("retract");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Replay";
+  }
+};
 </script>
 </body>
 </html>

@@ -25,7 +25,7 @@ use axum::{
     response::Html,
     routing::get,
 };
-use fold::pipeline::{Keyed, Map, Scored, terminal};
+use fold::pipeline::{Aggregate, KeyBy, Keyed, Map, Scored, Unkey, terminal};
 use fold::stream::KeyedStream;
 use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
@@ -99,6 +99,7 @@ struct PackedLine {
     body: String,
     score: f64,
     tokens: usize,
+    why: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -108,6 +109,7 @@ struct Briefing {
     tokens: usize,
     budget: usize,
     pack_us: u64,
+    seed: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -125,11 +127,19 @@ struct KindCount {
 }
 
 #[derive(Debug, Clone, Serialize)]
+struct RetractGhost {
+    id: String,
+    title: String,
+    left: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
 struct Snapshot {
     swamp: Vec<SwampItem>,
     briefing: Briefing,
     kinds: Vec<KindCount>,
     live: LiveFlags,
+    ghost: Option<RetractGhost>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -155,7 +165,7 @@ enum Ingest {
 macro_rules! snapshot {
     ($st:expr, $query:expr) => {{
         let query: String = $query;
-        $st.rtx(|(bm25, vecs, docs)| {
+        $st.rtx(|(bm25, vecs, docs, kind_counts)| {
             let mut chunks: Vec<Chunk> = docs.iter().map(|(_, c)| c).collect();
             chunks.sort_by(|a, b| a.id.cmp(&b.id));
 
@@ -169,15 +179,11 @@ macro_rules! snapshot {
                 ..briefing
             };
 
-            let mut counts: HashMap<&str, usize> = HashMap::new();
-            for c in &chunks {
-                *counts.entry(c.kind.as_str()).or_default() += 1;
-            }
-            let mut kinds: Vec<KindCount> = counts
-                .into_iter()
+            let mut kinds: Vec<KindCount> = kind_counts
+                .iter()
                 .map(|(kind, n)| KindCount {
-                    kind: kind.to_string(),
-                    n,
+                    kind,
+                    n: n.max(0) as usize,
                 })
                 .collect();
             kinds.sort_by(|a, b| a.kind.cmp(&b.kind));
@@ -193,14 +199,20 @@ macro_rules! snapshot {
                 .collect();
 
             let ids: Vec<&str> = chunks.iter().map(|c| c.id.as_str()).collect();
+            let wiki_retracted = !ids.contains(&STALE_WIKI_ID);
             Snapshot {
                 swamp,
                 briefing,
                 kinds,
                 live: LiveFlags {
                     comment_landed: ids.contains(&COMMENT_ID),
-                    wiki_retracted: !ids.contains(&STALE_WIKI_ID),
+                    wiki_retracted,
                 },
+                ghost: wiki_retracted.then(|| RetractGhost {
+                    id: STALE_WIKI_ID.to_string(),
+                    title: "session-lifecycle".to_string(),
+                    left: "BM25 + HNSW + table".to_string(),
+                }),
             }
         })
     }};
@@ -252,6 +264,14 @@ macro_rules! open_db {
                     terminal::search::Hnsw::<String, f32, Cosine, DIM>::new("vecs", Cosine, 42),
                 ),
                 terminal::Table::new("docs"),
+                Unkey::new(KeyBy::new(
+                    |c: &Chunk| c.kind.as_str().to_string(),
+                    Aggregate::new(
+                        "by_kind",
+                        |acc: &mut i64, _c: &Chunk, delta| *acc += delta as i64,
+                        terminal::Table::new("kind_counts"),
+                    ),
+                )),
             ),
         )
     }};
@@ -306,13 +326,25 @@ fn print_snap(label: &str, snap: &Snapshot) {
         snap.live.comment_landed,
         snap.live.wiki_retracted
     );
+    let kinds = snap
+        .kinds
+        .iter()
+        .map(|k| format!("{} {}", k.kind, k.n))
+        .collect::<Vec<_>>()
+        .join(" · ");
+    println!("kinds: {kinds}");
+    if let Some(ghost) = &snap.ghost {
+        println!("ghost: retracted: {} · {}", ghost.title, ghost.left);
+    }
     for line in snap.briefing.lines.iter().take(5) {
         println!(
-            "  {:>6.3}  {:>8}  {}",
+            "  {:>6.3}  {:>8}  {} — {}",
             line.score,
             line.kind.as_str(),
+            line.id,
             line.title
         );
+        println!("           {}", line.why);
     }
     println!();
 }
@@ -390,12 +422,14 @@ fn empty_snapshot() -> Snapshot {
             tokens: 0,
             budget: TOKEN_BUDGET,
             pack_us: 0,
+            seed: String::new(),
         },
         kinds: vec![],
         live: LiveFlags {
             comment_landed: false,
             wiki_retracted: false,
         },
+        ghost: None,
     }
 }
 
@@ -407,34 +441,38 @@ fn pack(
 ) -> Briefing {
     let by_id: HashMap<&str, &Chunk> = chunks.iter().map(|c| (c.id.as_str(), c)).collect();
     let mut fused: HashMap<String, f64> = HashMap::new();
+    let mut bm25_at: HashMap<String, usize> = HashMap::new();
+    let mut hnsw_at: HashMap<String, usize> = HashMap::new();
     for (rank, hit) in keyword.iter().enumerate() {
         *fused.entry(hit.val.clone()).or_default() += 1.0 / (RRF_K + rank as f64 + 1.0);
+        bm25_at.entry(hit.val.clone()).or_insert(rank);
     }
     for (rank, hit) in semantic.iter().enumerate() {
         *fused.entry(hit.val.clone()).or_default() += 1.0 / (RRF_K + rank as f64 + 1.0);
+        hnsw_at.entry(hit.val.clone()).or_insert(rank);
     }
 
-    let mut ranked: Vec<(String, f64)> = fused
+    let mut ranked: Vec<(String, f64, bool)> = fused
         .into_iter()
         .filter_map(|(id, score)| {
             let chunk = by_id.get(id.as_str())?;
             let mut score = score * chunk.kind.prior();
             let hay = chunk.search_text().to_ascii_lowercase();
-            if hay.contains("rejected")
+            let phrase = hay.contains("rejected")
                 || hay.contains("do not")
                 || hay.contains("don't")
-                || hay.contains("decided")
-            {
+                || hay.contains("decided");
+            if phrase {
                 score *= 1.25;
             }
-            Some((id, score))
+            Some((id, score, phrase))
         })
         .collect();
     ranked.sort_by(|a, b| b.1.total_cmp(&a.1));
 
     let mut lines = Vec::new();
     let mut tokens = 0usize;
-    for (id, score) in ranked {
+    for (id, score, phrase) in ranked {
         let Some(chunk) = by_id.get(id.as_str()) else {
             continue;
         };
@@ -452,29 +490,63 @@ fn pack(
             body: chunk.body.clone(),
             score,
             tokens: t,
+            why: why_stuck(
+                chunk,
+                bm25_at.get(&id).copied(),
+                hnsw_at.get(&id).copied(),
+                phrase,
+            ),
         });
         if tokens >= TOKEN_BUDGET {
             break;
         }
     }
 
+    let seed = seed_text(query, tokens, &lines);
     Briefing {
         query: query.to_string(),
         lines,
         tokens,
         budget: TOKEN_BUDGET,
         pack_us: 0,
+        seed,
     }
 }
 
-fn chunk(
-    id: &str,
-    kind: Kind,
-    task: &str,
-    phase: &str,
-    title: &str,
-    body: &str,
-) -> Chunk {
+fn why_stuck(chunk: &Chunk, bm25: Option<usize>, hnsw: Option<usize>, phrase: bool) -> String {
+    let mut parts = Vec::new();
+    if let Some(rank) = bm25 {
+        parts.push(format!("BM25 #{}", rank + 1));
+    }
+    if let Some(rank) = hnsw {
+        parts.push(format!("HNSW #{}", rank + 1));
+    }
+    parts.push(format!(
+        "{} ×{:.2}",
+        chunk.kind.as_str(),
+        chunk.kind.prior()
+    ));
+    if phrase {
+        parts.push("phrase".to_string());
+    }
+    parts.join(" · ")
+}
+
+fn seed_text(query: &str, tokens: usize, lines: &[PackedLine]) -> String {
+    let mut out =
+        format!("# next-session seed\n# query: {query}\n# {tokens} / {TOKEN_BUDGET} tokens\n\n");
+    for line in lines {
+        out.push_str(&format!(
+            "## {} · {}\n{}\n\n",
+            line.kind.as_str(),
+            line.title,
+            line.body
+        ));
+    }
+    out
+}
+
+fn chunk(id: &str, kind: Kind, task: &str, phase: &str, title: &str, body: &str) -> Chunk {
     Chunk {
         id: id.to_string(),
         kind,
@@ -505,9 +577,9 @@ fn stale_wiki() -> Chunk {
         "",
         "",
         "session-lifecycle.md",
-        "Resume tokens for refresh live in alineryd memory only. There is no durable \
-         store. If the daemon restarts, the user pastes a token again. This is the \
-         accepted decision for how we store refresh tokens.",
+        "Accepted decision: store refresh tokens only in alineryd process memory. \
+         There is no durable store for refresh tokens. If the daemon restarts, the \
+         user pastes a refresh token again. Do not look elsewhere.",
     )
 }
 
@@ -539,7 +611,7 @@ fn seed_chunks() -> Vec<Chunk> {
             "research",
             "01-research.md",
             "Options considered: (1) in-process HashMap on alineryd — fast, dies with the process. \
-             (2) SQLite — HumanLayer does this; we rejected a SQL store for v1. \
+             (2) SQLite — HumanLayer does this; we set a SQL layer aside for v1. \
              (3) Redis — out of process, survives the daemon, still local if we run it ourselves. \
              (4) a file beside sessions/<id>.meta.json — closest to filesystem-as-database.",
         ),
@@ -549,9 +621,9 @@ fn seed_chunks() -> Vec<Chunk> {
             "auth-refresh",
             "design",
             "03-design.md",
-            "Design: keep refresh tokens in process memory as a HashMap on alineryd keyed by \
-             session id. No extra service. Resume reads the map. This is simple and we can \
-             ship it this week.",
+            "Design: store refresh tokens as in-memory JWTs — a HashMap on alineryd keyed \
+             by session id. No extra service. Resume reads that map. This is how we store \
+             refresh tokens this week.",
         ),
         stale_wiki(),
         chunk(
@@ -571,7 +643,7 @@ fn seed_chunks() -> Vec<Chunk> {
             "",
             "sandboxing.md",
             "Alinery can target a local sandbox. Network stays off by default. Do not confuse \
-             sandbox policy with session resume or token storage.",
+             sandbox policy with session resume or credential handling.",
         ),
         chunk(
             "daemon-locks/ticket",
@@ -606,9 +678,10 @@ fn seed_chunks() -> Vec<Chunk> {
             "",
             "",
             "index.md",
-            "The filesystem is the database. Repo data lives under <repo>/.alinery/. \
-             Add a query index only when a directory scan of the board is measurably slow. \
-             Agents and MCP read files by path; do not hide the files behind a SQL store.",
+            "The board is a directory. Task cards, artifacts, comments, and wiki pages \
+             live under <repo>/.alinery/. Agents and MCP open them by path. A later \
+             query index is allowed only when listing the board is measurably slow. \
+             Do not hide the files behind a SQL layer.",
         ),
         chunk(
             "phase-complete/artifact/04-tdd",
