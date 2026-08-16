@@ -1,0 +1,18 @@
+[package]
+name = "figmog"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+fold = { path = "../../fold" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = { version = "2", features = ["json"] }
+clap = { version = "4", features = ["derive"] }
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"
+assert_cmd = "2"
+postcard = { version = "1", features = ["use-std"] }
