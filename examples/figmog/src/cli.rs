@@ -487,7 +487,26 @@ pub(crate) fn do_pull(
     let prior: BTreeSet<Id> = st.rtx(|((nodes, ..), components, component_sets, styles, ..)| {
         collect_sweepable(&nodes, &components, &component_sets, &styles)
     });
+    let prior_version =
+        st.rtx(|(_, _, _, _, _, _, meta, _)| meta.get(&0).map(|m| m.version.clone()));
     let churn = sync(&mut st, &prior, &flattened, now_ms());
+
+    // Every caller of `do_pull` (`pull`, `watch`'s per-tick pull, and
+    // `figmog call figmog_sync`) goes through here, so eviction lives here
+    // rather than duplicated at each call site (build design §12: a
+    // version-changing pull sweeps stale `proxy_cache` rows). `figmog
+    // serve`'s own pull paths don't call `do_pull` — they keep their own
+    // inline eviction blocks, since they already hold `st` open and
+    // re-opening it here would hit the same single-open-per-process wall
+    // `figmog call figmog_sync` used to.
+    if prior_version.as_deref() != Some(flattened.file.version.as_str()) {
+        let stale = st.rtx(|(_, _, _, _, _, _, _, cache)| {
+            crate::store::stale_cache_ids(&cache, &flattened.file.version)
+        });
+        if !stale.is_empty() {
+            crate::store::evict_stale_cache(&mut st, &stale);
+        }
+    }
 
     if let Some(key) = &db.key {
         write_current(key)?;
@@ -734,14 +753,26 @@ fn cmd_call(
         None => json!({}),
     };
 
+    // `figmog_sync` delegates entirely to `do_pull`, which opens its own
+    // `open_store!` handle at `db.path`. fjall allows only one open handle
+    // per process for a given store, so this has to return *before* this
+    // function opens its own `st` below — opening both in the same process
+    // deadlocks/panics on the second open's file lock (this is why this
+    // branch can't just join the `if tool == "figmog_sync"` chain further
+    // down, the way `figmog serve`'s handler can: `run_serve` never opens a
+    // second handle for `figmog_sync`, since it reuses its own long-lived
+    // `st` instead of calling `do_pull`).
+    if tool == "figmog_sync" {
+        let result = do_pull(db, None, None, false)
+            .map(|(churn, _name, _version)| serde_json::to_value(&churn).unwrap_or_default())
+            .map_err(|e| e.to_string());
+        return print_call_result(result, json);
+    }
+
     let (mut upstream, upstream_status) = attach_upstream(upstream_url, no_upstream);
     let mut st = crate::open_store!(&db.path);
 
-    let result: Result<Value, String> = if tool == "figmog_sync" {
-        do_pull(db, None, None, false)
-            .map(|(churn, _name, _version)| serde_json::to_value(&churn).unwrap_or_default())
-            .map_err(|e| e.to_string())
-    } else if proxy::is_local_tool(&tool) {
+    let result: Result<Value, String> = if proxy::is_local_tool(&tool) {
         match st.rtx(|r| dispatch::dispatch_read_tool(&tool, &args, upstream_status, r)) {
             Some(r) => r,
             None => Err(format!("unknown tool: {tool}")),
@@ -772,6 +803,14 @@ fn cmd_call(
         })
     };
 
+    print_call_result(result, json)
+}
+
+/// Shared `figmog call` output: pretty-printed JSON on success; on
+/// failure, `{"error": ...}` on stdout (exit 0) under `--json`, otherwise
+/// the plain error via the normal `figmog: <message>` / exit-1 path (see
+/// `run`).
+fn print_call_result(result: Result<Value, String>, json: bool) -> Result<(), String> {
     match result {
         Ok(v) => {
             println!(

@@ -121,7 +121,13 @@ pub(crate) fn proxy_call<U: UpstreamMcp, P: Push<Keyed<Id, Rec>>>(
     let result = upstream.call(name, args).map_err(|e| e.to_string())?;
 
     if is_cacheable(name, args) {
-        if let Some(version) = &version {
+        // Never cache a tool-level failure (spec §12's cache is a response
+        // cache, not an error cache): an upstream `isError: true` result
+        // still passes through to the client verbatim (its own `isError`
+        // preserved), it just isn't written to `proxy_cache`, so the next
+        // identical call gets a fresh attempt instead of a stuck failure.
+        let is_error = result.get("isError") == Some(&Value::Bool(true));
+        if !is_error && let Some(version) = &version {
             let args_canonical = canonical_args(args);
             cache::store(st, name, &args_canonical, version, &result);
         }
@@ -315,6 +321,44 @@ mod tests {
         assert_eq!(value, json!({"selection": true}));
         assert!(!poll);
         assert_eq!(upstream.call_count, 1);
+    }
+
+    #[test]
+    fn proxy_call_cacheable_tool_error_is_forwarded_but_not_cached() {
+        // An upstream tool-level failure (isError: true in a successful
+        // Ok(...) result — not an UpstreamError) must reach the client
+        // verbatim, but must NOT be written to the cache: otherwise a
+        // transient failure would be replayed forever on every later call
+        // for the same node.
+        let dir = tempfile::tempdir().unwrap();
+        let mut st = crate::open_store!(dir.path().join("db"));
+        let mut upstream = FakeUpstream::new(vec![]);
+        let error_result = json!({
+            "content": [{"type": "text", "text": "node not found"}],
+            "isError": true,
+        });
+        upstream.push_result(Ok(error_result.clone()));
+
+        let (value, poll) = proxy_call(
+            &mut st,
+            &mut upstream,
+            "get_code",
+            &json!({"nodeId": "1:2"}),
+            (Some("100".to_string()), None),
+        )
+        .unwrap();
+        assert_eq!(value, error_result);
+        assert!(!poll);
+
+        let stored = st.rtx(|(_, _, _, _, _, _, _, cache)| {
+            cache::lookup(
+                &cache,
+                "get_code",
+                &canonical_args(&json!({"nodeId": "1:2"})),
+                "100",
+            )
+        });
+        assert_eq!(stored, None, "an isError result must never be cached");
     }
 
     #[test]

@@ -34,10 +34,28 @@ pub struct ToolDef {
     pub input_schema: Value,
 }
 
-/// Executes a `tools/call`. `Ok(v)` becomes success content; `Err(msg)`
-/// becomes `isError` content.
+/// What a `tools/call` handler produces on success (spec §11/§12: local
+/// `figmog_*` tools own their own JSON shape and answer it as MCP text
+/// content the way figmog always has; proxied tools' results are already a
+/// complete, correctly-shaped MCP `CallToolResult` produced by the
+/// upstream — re-wrapping that as ANOTHER text block would double-encode
+/// it and, for a non-text content type such as `get_screenshot`'s image
+/// block, make it unrenderable).
+pub enum ToolOutput {
+    /// figmog's own JSON, serialized into a single text content block —
+    /// today's (v1/v2) behavior, still used for every local `figmog_*`
+    /// tool.
+    Json(Value),
+    /// A complete MCP `tools/call` result, emitted verbatim as the
+    /// JSON-RPC `result` member. Used for proxied calls, whose shape (and
+    /// `isError`) is the upstream's to own.
+    Raw(Value),
+}
+
+/// Executes a `tools/call`. `Ok(output)` becomes the success result per
+/// [`ToolOutput`]'s two shapes; `Err(msg)` becomes `isError` text content.
 pub trait ToolHandler {
-    fn call(&mut self, name: &str, args: &Value) -> Result<Value, String>;
+    fn call(&mut self, name: &str, args: &Value) -> Result<ToolOutput, String>;
 }
 
 /// Adapts a closure to [`ToolHandler`]. `figmog serve`'s store handle has
@@ -48,8 +66,8 @@ pub trait ToolHandler {
 /// whatever concrete type it was defined against.
 pub struct FnHandler<F>(pub F);
 
-impl<F: FnMut(&str, &Value) -> Result<Value, String>> ToolHandler for FnHandler<F> {
-    fn call(&mut self, name: &str, args: &Value) -> Result<Value, String> {
+impl<F: FnMut(&str, &Value) -> Result<ToolOutput, String>> ToolHandler for FnHandler<F> {
+    fn call(&mut self, name: &str, args: &Value) -> Result<ToolOutput, String> {
         (self.0)(name, args)
     }
 }
@@ -147,10 +165,11 @@ fn tools_call_result(params: &Value, tools: &[ToolDef], handler: &mut dyn ToolHa
 
     let args = params.get("arguments").cloned().unwrap_or(json!({}));
     match handler.call(name, &args) {
-        Ok(v) => json!({
+        Ok(ToolOutput::Json(v)) => json!({
             "content": [{"type": "text", "text": serde_json::to_string(&v).unwrap()}],
             "isError": false,
         }),
+        Ok(ToolOutput::Raw(v)) => v,
         Err(msg) => error_content(&msg),
     }
 }
@@ -166,16 +185,21 @@ fn error_content(msg: &str) -> Value {
 mod tests {
     use super::*;
 
-    /// A `ToolHandler` test double: returns `Ok({"ok":true})` for a tool
-    /// named `"ok"`, `Err("boom")` for a tool named `"err"`, and panics for
-    /// any other name (the dispatch contract guarantees unknown names never
-    /// reach the handler).
+    /// A `ToolHandler` test double: returns `Ok(Json({"ok":true}))` for a
+    /// tool named `"ok"`, `Ok(Raw(...))` for `"raw"` (an already-complete
+    /// MCP result, as a proxied call would produce), `Err("boom")` for
+    /// `"err"`, and panics for any other name (the dispatch contract
+    /// guarantees unknown names never reach the handler).
     struct FakeHandler;
 
     impl ToolHandler for FakeHandler {
-        fn call(&mut self, name: &str, _args: &Value) -> Result<Value, String> {
+        fn call(&mut self, name: &str, _args: &Value) -> Result<ToolOutput, String> {
             match name {
-                "ok" => Ok(json!({"ok": true})),
+                "ok" => Ok(ToolOutput::Json(json!({"ok": true}))),
+                "raw" => Ok(ToolOutput::Raw(json!({
+                    "content": [{"type": "image", "data": "base64==", "mimeType": "image/png"}],
+                    "isError": false,
+                }))),
                 "err" => Err("boom".to_string()),
                 other => panic!("handler should not be called for {other}"),
             }
@@ -187,6 +211,11 @@ mod tests {
             ToolDef {
                 name: "ok",
                 description: "always succeeds",
+                input_schema: json!({"type": "object"}),
+            },
+            ToolDef {
+                name: "raw",
+                description: "returns a raw passthrough result",
                 input_schema: json!({"type": "object"}),
             },
             ToolDef {
@@ -311,6 +340,7 @@ mod tests {
                 "result": {
                     "tools": [
                         {"name": "ok", "description": "always succeeds", "inputSchema": {"type": "object"}},
+                        {"name": "raw", "description": "returns a raw passthrough result", "inputSchema": {"type": "object"}},
                         {"name": "err", "description": "always fails", "inputSchema": {"type": "object"}},
                     ],
                 },
@@ -336,6 +366,34 @@ mod tests {
                 "id": 1,
                 "result": {
                     "content": [{"type": "text", "text": "{\"ok\":true}"}],
+                    "isError": false,
+                },
+            })
+        );
+    }
+
+    #[test]
+    fn tools_call_raw_output_is_emitted_verbatim_as_the_result_member() {
+        // A proxied call's result is already a complete MCP `CallToolResult`
+        // (e.g. an image content block for a screenshot tool) — `Raw` must
+        // pass it through untouched, NOT re-wrap it in another text block
+        // (which would double-encode it and make it unrenderable).
+        let raw = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": "raw", "arguments": {}},
+        })
+        .to_string();
+        let tools = fake_tools();
+        let resp = handle_message(&raw, &tools, &mut FakeHandler).unwrap();
+        assert_eq!(
+            resp,
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "content": [{"type": "image", "data": "base64==", "mimeType": "image/png"}],
                     "isError": false,
                 },
             })

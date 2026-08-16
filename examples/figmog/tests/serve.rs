@@ -441,17 +441,14 @@ fn serve_e2e_proxied_tool_lists_round_trips_and_second_call_is_cache_served() {
     assert_eq!(result_json(&resp)["upstream"], json!("connected"));
 
     // -- first get_code call with an explicit nodeId: round-trips the
-    // fake's canned content, and is cacheable (get_* + string nodeId). --
+    // fake's canned content verbatim (the proxied result is a complete MCP
+    // `CallToolResult` already — figmog emits it as-is, NOT re-wrapped in
+    // another text content block, so native output formats like an image
+    // block survive unmangled) and is cacheable (get_* + string nodeId). --
     let resp = call(&mut stdin, &rx, 4, "get_code", json!({"nodeId": "1:2"}));
-    assert_eq!(resp["result"]["isError"], json!(false));
     assert_eq!(
-        resp["result"]["content"][0]["text"],
-        json!(
-            serde_json::to_string(
-                &json!({"content": [{"type": "text", "text": "CODE_HERE"}], "isError": false})
-            )
-            .unwrap()
-        )
+        resp["result"],
+        json!({"content": [{"type": "text", "text": "CODE_HERE"}], "isError": false})
     );
 
     // -- second identical call: served from the version-keyed cache — the

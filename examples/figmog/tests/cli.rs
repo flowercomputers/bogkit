@@ -390,3 +390,119 @@ fn failed_pull_does_not_persist_current_or_create_store() {
     assert!(stderr.contains("no mirror here"), "stderr: {stderr}");
     assert!(!dir.path().join(".figmog").exists());
 }
+
+#[test]
+fn call_figmog_sync_fails_cleanly_not_panicking() {
+    // Regression test: `cmd_call`'s `figmog_sync` branch used to open its
+    // own store handle unconditionally, then delegate to `do_pull`, which
+    // opens the *same* path again — fjall allows only one open handle per
+    // store per process, so a real sync would panic on the second open's
+    // file lock (after the Tier-1 fetch was already spent). `cmd_call` now
+    // checks for `figmog_sync` and returns before ever opening its own
+    // handle, so this call — which fails during `do_pull`'s own key
+    // resolution, since `--db` alone establishes no file key — has to fail
+    // cleanly (exit 1, one plain stderr line), never panic, for the fix to
+    // hold: a panic would print a backtrace banner and a different exit
+    // status instead.
+    let (_dir, db) = fixture_db();
+    let out = Command::cargo_bin("figmog")
+        .unwrap()
+        .env_remove("FIGMA_TOKEN")
+        .args(["call", "figmog_sync", "--db", &db])
+        .assert()
+        .failure()
+        .code(1);
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr).to_string();
+    assert!(
+        stderr.starts_with("figmog:"),
+        "expected a clean `figmog: ...` error, got: {stderr}"
+    );
+    assert!(
+        !stderr.to_lowercase().contains("panic"),
+        "must not panic: {stderr}"
+    );
+}
+
+#[test]
+fn cli_pull_evicts_stale_cache_rows_on_version_change() {
+    // I4: eviction lives inside `do_pull` itself (not just `figmog
+    // serve`'s two inline blocks), so it covers `figmog pull`, `figmog
+    // watch`, and `figmog call figmog_sync` — all three delegate to
+    // `do_pull`. Exercised here through the actual `figmog pull` CLI
+    // command (the store handle used to hand-insert the cache row is
+    // dropped before each CLI invocation — fjall allows only one open
+    // handle per store per process).
+    use figmog::cache;
+
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("db");
+    let db_str = db.display().to_string();
+
+    let response_v1 = dir.path().join("v1.json");
+    std::fs::write(
+        &response_v1,
+        serde_json::to_string(&common::fixture_v1()).unwrap(),
+    )
+    .unwrap();
+    Command::cargo_bin("figmog")
+        .unwrap()
+        .args([
+            "pull",
+            "--from-file",
+            response_v1.to_str().unwrap(),
+            "--db",
+            &db_str,
+        ])
+        .assert()
+        .success();
+
+    // Hand-store a proxy_cache row tagged at v1's version ("100"), scoped
+    // so the store handle closes before the next `figmog pull` subprocess
+    // opens its own.
+    {
+        let mut st = figmog::open_store!(&db);
+        cache::store(
+            &mut st,
+            "get_code",
+            "{}",
+            "100",
+            &serde_json::json!({"cached": true}),
+        );
+        let hit = st.rtx(|(_, _, _, _, _, _, _, cache_reader)| {
+            cache::lookup(&cache_reader, "get_code", "{}", "100")
+        });
+        assert!(
+            hit.is_some(),
+            "sanity: the hand-stored row must be readable before the v2 pull"
+        );
+    }
+
+    // v2 (version "101") via `figmog pull` — this is the version-changing
+    // pull that must sweep the stale row.
+    let response_v2 = dir.path().join("v2.json");
+    std::fs::write(
+        &response_v2,
+        serde_json::to_string(&common::fixture_v2()).unwrap(),
+    )
+    .unwrap();
+    Command::cargo_bin("figmog")
+        .unwrap()
+        .args([
+            "pull",
+            "--from-file",
+            response_v2.to_str().unwrap(),
+            "--db",
+            &db_str,
+        ])
+        .assert()
+        .success();
+
+    let st = figmog::open_store!(&db);
+    let evicted = st.rtx(|(_, _, _, _, _, _, _, cache_reader)| {
+        cache::lookup(&cache_reader, "get_code", "{}", "100")
+    });
+    assert_eq!(
+        evicted, None,
+        "the v1-tagged cache row must be evicted by the v2 `figmog pull`"
+    );
+}

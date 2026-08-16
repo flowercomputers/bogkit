@@ -47,7 +47,7 @@ use crate::cli::{
 use crate::dispatch;
 use crate::flatten::flatten_file;
 use crate::ident::parse_file_ref;
-use crate::mcp::{self, FnHandler};
+use crate::mcp::{self, FnHandler, ToolOutput};
 use crate::model::Id;
 use crate::proxy;
 use crate::store::{self, collect_sweepable};
@@ -238,7 +238,7 @@ pub(crate) fn run_serve(
             continue;
         };
 
-        let mut handler = FnHandler(|name: &str, args: &Value| -> Result<Value, String> {
+        let mut handler = FnHandler(|name: &str, args: &Value| -> Result<ToolOutput, String> {
             if name == "figmog_sync" {
                 let sync_key = key
                     .clone()
@@ -286,13 +286,14 @@ pub(crate) fn run_serve(
                 if let Some(k) = &db.key {
                     let _ = write_current(k);
                 }
-                return serde_json::to_value(&churn).map_err(|e| e.to_string());
+                let churn_value = serde_json::to_value(&churn).map_err(|e| e.to_string())?;
+                return Ok(ToolOutput::Json(churn_value));
             }
 
             if let Some(result) =
                 st.rtx(|r| dispatch::dispatch_read_tool(name, args, upstream_status, r))
             {
-                return result;
+                return result.map(ToolOutput::Json);
             }
 
             if proxy::is_local_tool(name) {
@@ -319,7 +320,11 @@ pub(crate) fn run_serve(
             if trigger_poll && !no_watch {
                 next_deadline = Instant::now();
             }
-            Ok(value)
+            // A proxied result is already a complete MCP `CallToolResult`
+            // from the upstream — emit it verbatim (spec §11/§12; see
+            // `mcp::ToolOutput::Raw`'s doc comment) rather than re-wrapping
+            // it as figmog's own text-block shape.
+            Ok(ToolOutput::Raw(value))
         });
 
         if let Some(resp) = mcp::handle_message(&line, &tools, &mut handler) {
