@@ -1,30 +1,26 @@
 //! Command-line surface. Read commands never touch the network: they open
 //! the local store and read one snapshot.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use clap::{Parser, Subcommand};
 use serde_json::{Value, json};
 
-use fold::pipeline::terminal::search::Bm25Reader;
 use fold::pipeline::terminal::{InvertedIndexReader, MultimapReader, TableReader};
 use fold::stream::Readable;
 
 use crate::api::{ApiError, FigmaApi, UreqApi};
 use crate::flatten::flatten_file;
-use crate::ident::{normalize_node_id, parse_file_ref};
+use crate::ident::parse_file_ref;
 use crate::model::{
     ComponentRec, ComponentSetRec, FileMeta, Id, NodeRec, StyleRec, VariableCollectionRec,
     VariableRec,
 };
+use crate::query::{self, TextReader};
 use crate::store::{Churn, collect_sweepable, sync};
 use crate::watch::{BACKOFF_CAP, BACKOFF_START, Tick, Watcher};
-
-/// Read handle for the pipeline's `text` BM25 sink (its tokenizer type
-/// param makes the full type unwieldy at every call site).
-type TextReader<'tx, R> = Bm25Reader<'tx, R, String, fn(&str, &mut Vec<u8>)>;
 
 #[derive(Parser)]
 #[command(name = "figmog", about = "fold-backed local mirror of a Figma file")]
@@ -523,23 +519,16 @@ fn cmd_status<R: Readable>(
     meta: &TableReader<'_, R, u8, FileMeta>,
     json: bool,
 ) -> Result<(), String> {
-    let m = meta
-        .get(&0)
-        .ok_or_else(|| "no mirror here — run `figmog pull <file-url>` first".to_string())?;
-    let count = nodes.iter().count();
+    let v = query::status(nodes, meta)?;
     if json {
-        let v = json!({
-            "name": m.name,
-            "version": m.version,
-            "last_modified": m.last_modified,
-            "synced_at_unix_ms": m.synced_at_unix_ms,
-            "nodes": count,
-        });
         println!("{}", serde_json::to_string(&v).map_err(|e| e.to_string())?);
     } else {
         println!(
-            "{} v{} — {count} nodes (last modified {})",
-            m.name, m.version, m.last_modified
+            "{} v{} — {} nodes (last modified {})",
+            v["name"].as_str().unwrap_or_default(),
+            v["version"].as_str().unwrap_or_default(),
+            v["nodes"].as_u64().unwrap_or_default(),
+            v["last_modified"].as_str().unwrap_or_default(),
         );
     }
     Ok(())
@@ -550,75 +539,22 @@ fn cmd_pages<R: Readable>(
     by_type: &InvertedIndexReader<'_, R, String, String>,
     json: bool,
 ) -> Result<(), String> {
-    let mut ids = by_type.search(&"CANVAS".to_string());
-    ids.sort();
-
-    let mut pages: Vec<(u32, String, String)> = ids
-        .into_iter()
-        .filter_map(|id| nodes.get(&id).map(|n| (n.child_index, n.id, n.name)))
-        .collect();
-    pages.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
-
+    let v = query::pages(nodes, by_type)?;
     if json {
-        let arr: Vec<Value> = pages
-            .iter()
-            .map(|(_, id, name)| json!({"id": id, "name": name}))
-            .collect();
-        println!(
-            "{}",
-            serde_json::to_string(&arr).map_err(|e| e.to_string())?
-        );
+        println!("{}", serde_json::to_string(&v).map_err(|e| e.to_string())?);
     } else {
-        for (_, id, name) in &pages {
-            println!("{name}  {id}");
+        for row in v.as_array().into_iter().flatten() {
+            println!(
+                "{}  {}",
+                row["name"].as_str().unwrap_or_default(),
+                row["id"].as_str().unwrap_or_default(),
+            );
         }
     }
     Ok(())
 }
 
-/// One level of a `tree` outline; JSON shape `{id, name, type, children}`.
-struct TreeNode {
-    id: String,
-    name: String,
-    node_type: String,
-    children: Vec<TreeNode>,
-}
-
-fn build_tree<R: Readable>(
-    nodes: &TableReader<'_, R, String, NodeRec>,
-    children: &MultimapReader<'_, R, String, (u32, String)>,
-    node: &NodeRec,
-    depth: Option<usize>,
-) -> TreeNode {
-    let mut kids = Vec::new();
-    if depth != Some(0) {
-        let mut edges = children.get(&node.id);
-        edges.sort();
-        let next_depth = depth.map(|d| d - 1);
-        for (_, child_id) in edges {
-            if let Some(child) = nodes.get(&child_id) {
-                kids.push(build_tree(nodes, children, &child, next_depth));
-            }
-        }
-    }
-    TreeNode {
-        id: node.id.clone(),
-        name: node.name.clone(),
-        node_type: node.node_type.clone(),
-        children: kids,
-    }
-}
-
-fn tree_to_json(t: &TreeNode) -> Value {
-    json!({
-        "id": t.id,
-        "name": t.name,
-        "type": t.node_type,
-        "children": t.children.iter().map(tree_to_json).collect::<Vec<_>>(),
-    })
-}
-
-fn print_tree_human(t: &TreeNode, indent: usize) {
+fn print_tree_human(t: &query::TreeNode, indent: usize) {
     println!(
         "{}{}  [{}]  {}",
         "  ".repeat(indent),
@@ -639,28 +575,12 @@ fn cmd_tree<R: Readable>(
     depth: Option<usize>,
     json: bool,
 ) -> Result<(), String> {
-    let start = match id {
-        Some(raw) => normalize_node_id(&raw),
-        None => {
-            let mut docs = by_type.search(&"DOCUMENT".to_string());
-            docs.sort();
-            docs.into_iter()
-                .next()
-                .ok_or_else(|| "no DOCUMENT node in the mirror".to_string())?
-        }
-    };
-    let root = nodes
-        .get(&start)
-        .ok_or_else(|| format!("no node {start} in the mirror"))?;
-    let tree = build_tree(nodes, children, &root, depth);
-
     if json {
-        println!(
-            "{}",
-            serde_json::to_string(&tree_to_json(&tree)).map_err(|e| e.to_string())?
-        );
+        let v = query::tree(nodes, children, by_type, id, depth)?;
+        println!("{}", serde_json::to_string(&v).map_err(|e| e.to_string())?);
     } else {
-        print_tree_human(&tree, 0);
+        let t = query::tree_nodes(nodes, children, by_type, id, depth)?;
+        print_tree_human(&t, 0);
     }
     Ok(())
 }
@@ -672,28 +592,7 @@ fn cmd_get<R: Readable>(
     with_children: bool,
     _json: bool,
 ) -> Result<(), String> {
-    let id = normalize_node_id(&id);
-    let node = nodes
-        .get(&id)
-        .ok_or_else(|| format!("no node {id} in the mirror"))?;
-    let mut value: Value = serde_json::from_str(&node.raw).map_err(|e| e.to_string())?;
-
-    if with_children {
-        let mut edges = children.get(&id);
-        edges.sort();
-        let kids: Vec<Value> = edges
-            .into_iter()
-            .filter_map(|(_, child_id)| {
-                nodes
-                    .get(&child_id)
-                    .map(|n| json!({"id": n.id, "name": n.name, "type": n.node_type}))
-            })
-            .collect();
-        if let Some(obj) = value.as_object_mut() {
-            obj.insert("children".to_string(), Value::Array(kids));
-        }
-    }
-
+    let value = query::node(nodes, children, id, with_children)?;
     // Get's output is always JSON, whether or not --json was passed.
     println!(
         "{}",
@@ -709,32 +608,17 @@ fn cmd_find<R: Readable>(
     page: Option<String>,
     json: bool,
 ) -> Result<(), String> {
-    // Figma node types are stored uppercase; normalize so `--type frame`
-    // matches the same as `--type FRAME`.
-    let mut ids = by_type.search(&node_type.to_uppercase());
-    ids.sort();
-    let page = page.as_deref().map(normalize_node_id);
-
-    let mut rows: Vec<(String, String, String)> = ids
-        .into_iter()
-        .filter_map(|id| nodes.get(&id))
-        .filter(|n| page.as_deref().is_none_or(|p| n.page_id == p))
-        .map(|n| (n.id, n.name, n.page_id))
-        .collect();
-    rows.sort();
-
+    let v = query::find(nodes, by_type, node_type, page)?;
     if json {
-        let arr: Vec<Value> = rows
-            .iter()
-            .map(|(id, name, page_id)| json!({"id": id, "name": name, "page_id": page_id}))
-            .collect();
-        println!(
-            "{}",
-            serde_json::to_string(&arr).map_err(|e| e.to_string())?
-        );
+        println!("{}", serde_json::to_string(&v).map_err(|e| e.to_string())?);
     } else {
-        for (id, name, page_id) in &rows {
-            println!("{id}  {name}  ({page_id})");
+        for row in v.as_array().into_iter().flatten() {
+            println!(
+                "{}  {}  ({})",
+                row["id"].as_str().unwrap_or_default(),
+                row["name"].as_str().unwrap_or_default(),
+                row["page_id"].as_str().unwrap_or_default(),
+            );
         }
     }
     Ok(())
@@ -749,34 +633,11 @@ fn cmd_search<R: Readable>(
     limit: usize,
     json: bool,
 ) -> Result<(), String> {
-    // BM25's own ranking order is deterministic; keep it (do not re-sort).
-    let hits = text.search(&query, limit);
-    let rows: Vec<Value> = hits
-        .iter()
-        .filter_map(|hit| {
-            let node = nodes.get(&hit.val)?;
-            let snippet = node
-                .text
-                .as_ref()
-                .map(|t| t.chars().take(80).collect::<String>());
-            Some(json!({
-                "id": node.id,
-                "score": hit.score,
-                "type": node.node_type,
-                "name": node.name,
-                "page_id": node.page_id,
-                "snippet": snippet,
-            }))
-        })
-        .collect();
-
+    let v = query::search(text, nodes, &query, limit)?;
     if json {
-        println!(
-            "{}",
-            serde_json::to_string(&rows).map_err(|e| e.to_string())?
-        );
+        println!("{}", serde_json::to_string(&v).map_err(|e| e.to_string())?);
     } else {
-        for row in &rows {
+        for row in v.as_array().into_iter().flatten() {
             println!(
                 "{}  {:.3}  [{}]  {}",
                 row["id"].as_str().unwrap_or_default(),
@@ -789,52 +650,6 @@ fn cmd_search<R: Readable>(
     Ok(())
 }
 
-/// Resolve a target (node id, component key, or component/set name) to the
-/// component node ids it names, in priority order: exact node id, then key,
-/// then set name (all variants), then component name (all matches).
-fn resolve_component_ids<R: Readable>(
-    components: &TableReader<'_, R, String, ComponentRec>,
-    component_sets: &TableReader<'_, R, String, ComponentSetRec>,
-    target: &str,
-) -> Vec<String> {
-    if components.contains(&target.to_string()) {
-        return vec![target.to_string()];
-    }
-
-    let mut ids: Vec<String> = components
-        .iter()
-        .filter(|(_, c)| c.key == target)
-        .map(|(id, _)| id)
-        .collect();
-    if !ids.is_empty() {
-        return ids;
-    }
-
-    let set_ids: Vec<String> = component_sets
-        .iter()
-        .filter(|(_, s)| s.name == target)
-        .map(|(id, _)| id)
-        .collect();
-    if !set_ids.is_empty() {
-        ids = components
-            .iter()
-            .filter(|(_, c)| {
-                c.component_set_id
-                    .as_deref()
-                    .is_some_and(|s| set_ids.iter().any(|sid| sid == s))
-            })
-            .map(|(id, _)| id)
-            .collect();
-        return ids;
-    }
-
-    components
-        .iter()
-        .filter(|(_, c)| c.name == target)
-        .map(|(id, _)| id)
-        .collect()
-}
-
 fn cmd_instances<R: Readable>(
     nodes: &TableReader<'_, R, String, NodeRec>,
     instances_of: &InvertedIndexReader<'_, R, String, String>,
@@ -843,27 +658,11 @@ fn cmd_instances<R: Readable>(
     target: String,
     json: bool,
 ) -> Result<(), String> {
-    let target = normalize_node_id(&target);
-    let component_ids = resolve_component_ids(components, component_sets, &target);
-
-    let mut instance_ids: BTreeSet<String> = BTreeSet::new();
-    for cid in &component_ids {
-        instance_ids.extend(instances_of.search(cid));
-    }
-
-    let rows: Vec<Value> = instance_ids
-        .iter()
-        .filter_map(|id| nodes.get(id))
-        .map(|n| json!({"id": n.id, "name": n.name, "page_id": n.page_id, "component_id": n.component_id}))
-        .collect();
-
+    let v = query::instances(nodes, components, component_sets, instances_of, &target)?;
     if json {
-        println!(
-            "{}",
-            serde_json::to_string(&rows).map_err(|e| e.to_string())?
-        );
+        println!("{}", serde_json::to_string(&v).map_err(|e| e.to_string())?);
     } else {
-        for row in &rows {
+        for row in v.as_array().into_iter().flatten() {
             println!(
                 "{}  {}  ({})",
                 row["id"].as_str().unwrap_or_default(),
@@ -881,57 +680,18 @@ fn cmd_components<R: Readable>(
     nodes: &TableReader<'_, R, String, NodeRec>,
     json: bool,
 ) -> Result<(), String> {
-    let mut sets: Vec<(String, ComponentSetRec)> = component_sets.iter().collect();
-    sets.sort_by(|a, b| a.0.cmp(&b.0));
-
-    let mut all_components: Vec<(String, ComponentRec)> = components.iter().collect();
-    all_components.sort_by(|a, b| a.0.cmp(&b.0));
-
-    let sets_json: Vec<Value> = sets
-        .iter()
-        .map(|(set_id, set)| {
-            let variants: Vec<Value> = all_components
-                .iter()
-                .filter(|(_, c)| c.component_set_id.as_deref() == Some(set_id.as_str()))
-                .map(|(cid, c)| json!({"node_id": cid, "name": c.name, "key": c.key}))
-                .collect();
-            let property_definitions: Value = nodes
-                .get(set_id)
-                .and_then(|n| n.property_definitions.clone())
-                .and_then(|s| serde_json::from_str(&s).ok())
-                .unwrap_or(Value::Null);
-            json!({
-                "node_id": set_id,
-                "name": set.name,
-                "key": set.key,
-                "variants": variants,
-                "property_definitions": property_definitions,
-            })
-        })
-        .collect();
-
-    let standalone: Vec<Value> = all_components
-        .iter()
-        .filter(|(_, c)| c.component_set_id.is_none())
-        .map(|(cid, c)| json!({"node_id": cid, "name": c.name, "key": c.key}))
-        .collect();
-
-    let out = json!({"sets": sets_json, "components": standalone});
-
+    let v = query::components(nodes, components, component_sets)?;
     if json {
-        println!(
-            "{}",
-            serde_json::to_string(&out).map_err(|e| e.to_string())?
-        );
+        println!("{}", serde_json::to_string(&v).map_err(|e| e.to_string())?);
     } else {
-        for s in &sets_json {
+        for s in v["sets"].as_array().into_iter().flatten() {
             println!(
                 "{}  {} variants",
                 s["name"].as_str().unwrap_or_default(),
                 s["variants"].as_array().map(Vec::len).unwrap_or(0),
             );
         }
-        for c in &standalone {
+        for c in v["components"].as_array().into_iter().flatten() {
             println!(
                 "{}  {}",
                 c["node_id"].as_str().unwrap_or_default(),
@@ -950,43 +710,11 @@ fn cmd_styles<R: Readable>(
     values: bool,
     json: bool,
 ) -> Result<(), String> {
-    let mut rows: Vec<(String, StyleRec)> = styles.iter().collect();
-    rows.sort_by(|a, b| a.0.cmp(&b.0));
-    if let Some(t) = &style_type {
-        rows.retain(|(_, s)| s.style_type.eq_ignore_ascii_case(t));
-    }
-
-    let out: Vec<Value> = rows
-        .iter()
-        .map(|(style_id, s)| {
-            let mut consumers = styled_by.search(style_id);
-            consumers.sort();
-            let mut obj = json!({
-                "style_id": style_id,
-                "name": s.name,
-                "key": s.key,
-                "type": s.style_type,
-                "uses": consumers.len(),
-            });
-            if values {
-                let value = consumers
-                    .first()
-                    .and_then(|nid| nodes.get(nid))
-                    .and_then(|n| crate::vars::style_value_from_consumer(&s.style_type, &n.raw))
-                    .unwrap_or(Value::Null);
-                obj["value"] = value;
-            }
-            obj
-        })
-        .collect();
-
+    let v = query::styles(nodes, styles, styled_by, style_type, values)?;
     if json {
-        println!(
-            "{}",
-            serde_json::to_string(&out).map_err(|e| e.to_string())?
-        );
+        println!("{}", serde_json::to_string(&v).map_err(|e| e.to_string())?);
     } else {
-        for row in &out {
+        for row in v.as_array().into_iter().flatten() {
             println!(
                 "{}  {}  [{}]  uses={}",
                 row["style_id"].as_str().unwrap_or_default(),
@@ -1006,25 +734,11 @@ fn cmd_uses<R: Readable>(
     id: String,
     json: bool,
 ) -> Result<(), String> {
-    let mut ids = styled_by.search(&id);
-    if ids.is_empty() {
-        ids = bound_to.search(&id);
-    }
-    ids.sort();
-
-    let rows: Vec<Value> = ids
-        .iter()
-        .filter_map(|nid| nodes.get(nid))
-        .map(|n| json!({"id": n.id, "name": n.name, "page_id": n.page_id}))
-        .collect();
-
+    let v = query::uses(nodes, styled_by, bound_to, &id)?;
     if json {
-        println!(
-            "{}",
-            serde_json::to_string(&rows).map_err(|e| e.to_string())?
-        );
+        println!("{}", serde_json::to_string(&v).map_err(|e| e.to_string())?);
     } else {
-        for row in &rows {
+        for row in v.as_array().into_iter().flatten() {
             println!(
                 "{}  {}  ({})",
                 row["id"].as_str().unwrap_or_default(),
@@ -1043,65 +757,11 @@ fn cmd_vars<R: Readable>(
     id: Option<String>,
     json: bool,
 ) -> Result<(), String> {
-    let owned_nodes: Vec<NodeRec> = nodes.iter().map(|(_, n)| n).collect();
-    let inferred = crate::vars::infer_from_nodes(owned_nodes.iter());
-    let mut inferred_by_id: HashMap<String, crate::vars::VarUsage> = inferred
-        .into_iter()
-        .map(|u| (u.variable_id.clone(), u))
-        .collect();
-
-    let mut all_ids: BTreeSet<String> = inferred_by_id.keys().cloned().collect();
-    all_ids.extend(variables.iter().map(|(k, _)| k));
-    if let Some(target) = &id {
-        all_ids.retain(|v| v == target);
-    }
-
-    let rows: Vec<Value> = all_ids
-        .iter()
-        .map(|vid| {
-            let usage = inferred_by_id.remove(vid);
-            let (sites, observed) = usage.map(|u| (u.sites, u.observed)).unwrap_or_default();
-
-            if let Some(var) = variables.get(vid) {
-                let collection = variable_collections.get(&var.collection_id);
-                let mut values_by_mode = serde_json::Map::new();
-                for (mode_id, val_str) in &var.values_by_mode {
-                    let mode_name = collection
-                        .as_ref()
-                        .and_then(|c| c.modes.iter().find(|(mid, _)| mid == mode_id))
-                        .map(|(_, name)| name.clone())
-                        .unwrap_or_else(|| mode_id.clone());
-                    let val: Value = serde_json::from_str(val_str).unwrap_or(Value::Null);
-                    values_by_mode.insert(mode_name, val);
-                }
-                json!({
-                    "variable_id": vid,
-                    "source": "imported",
-                    "name": var.name,
-                    "resolved_type": var.resolved_type,
-                    "collection": collection.map(|c| c.name),
-                    "values_by_mode": Value::Object(values_by_mode),
-                    "sites": sites,
-                    "observed": observed,
-                })
-            } else {
-                json!({
-                    "variable_id": vid,
-                    "source": "inferred",
-                    "sites": sites,
-                    "observed": observed,
-                })
-            }
-        })
-        .collect();
-
+    let v = query::vars(nodes, variables, variable_collections, id)?;
     if json {
-        println!(
-            "{}",
-            serde_json::to_string(&rows).map_err(|e| e.to_string())?
-        );
+        println!("{}", serde_json::to_string(&v).map_err(|e| e.to_string())?);
     } else {
-        for row in &rows {
+        for row in v.as_array().into_iter().flatten() {
             println!(
                 "{}  [{}]  sites={}",
                 row["variable_id"].as_str().unwrap_or_default(),

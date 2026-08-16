@@ -14,6 +14,7 @@ pub mod cli;
 pub mod flatten;
 pub mod ident;
 pub mod model;
+pub mod query;
 pub mod store;
 pub mod vars;
 pub mod watch;
