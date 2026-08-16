@@ -41,8 +41,8 @@ data it needs is mirrored and queryable.
 ### Non-goals (v1)
 
 - Image renders / thumbnails.
-- MCP server (v2; it becomes a second binary over the same DB — the schema
-  is designed so this needs no migration).
+- MCP server in v1 (see §11 for the v2 design: a `serve` subcommand with
+  integrated sync — same store, no schema migration).
 - Multi-file / team mirroring (the store layout is per-file-key, so this is
   additive later).
 - Embeddings / HNSW semantic search (BM25 over names + text is enough for
@@ -468,3 +468,97 @@ already fast.
   the serialized tree are not resolved (documented).
 - **Branching files:** `branch_data` ignored in v1; mirroring a branch =
   mirroring its own file key.
+
+## 11. v2: `figmog serve` — the MCP server
+
+The point of the whole project: agents talk MCP, so the mirror gets an MCP
+face. **Revision of the v1 non-goal sketch:** this is a `serve` subcommand
+of the same binary, not a second binary — fjall is single-writer, so a
+standalone MCP process would fight `figmog watch` for the store lock.
+`figmog serve` is therefore **one process that owns the store**: an MCP
+stdio server with the sync loop integrated. Agents get always-fresh reads;
+there is nothing else to run.
+
+### Architecture
+
+```
+stdin ──▶ reader thread ──▶ mpsc<String> ──▶ main loop ──▶ stdout (responses)
+                                              │  recv_timeout(next poll tick)
+                                              ├─ on line:    JSON-RPC dispatch → query::*
+                                              └─ on timeout: Watcher::tick → maybe pull
+```
+
+- **`query.rs` (refactor):** the read logic currently inlined in the CLI's
+  `cmd_*` printers moves into pure functions that take readers and return
+  `serde_json::Value` — `query::status`, `query::pages`, `query::tree`,
+  `query::node`, `query::find`, `query::search`, `query::instances`,
+  `query::components`, `query::styles`, `query::uses`, `query::vars`. The
+  CLI commands become thin printers over `query::*` (this also retires the
+  deferred "json/human boilerplate" debt); MCP tools call the same
+  functions. One source of truth for every answer.
+- **`mcp.rs`:** minimal JSON-RPC 2.0 over newline-delimited stdio. Handles
+  `initialize` (echo the client's `protocolVersion`; `capabilities:
+  {tools: {}}`; `serverInfo {name: "figmog", version}`),
+  `notifications/initialized` (ignore), `ping`, `tools/list`,
+  `tools/call`. Everything else → JSON-RPC `-32601`. Malformed JSON →
+  `-32700` with `id: null`. Logging to stderr only; stdout carries nothing
+  but protocol frames.
+- **`serve.rs`:** the loop above. Store owned by the main thread (no
+  `Send` requirements on fold types). Poll ticks run only between
+  requests; a pull blocks request handling for its duration (documented —
+  seconds at worst, and only when the file actually changed).
+
+### Tools
+
+Read tools mirror the CLI one-to-one, each returning the `query::*` JSON
+as an MCP text content block. Names and inputs:
+
+| tool | input schema (all fields optional unless noted) |
+|---|---|
+| `figma_status` | — |
+| `figma_pages` | — |
+| `figma_tree` | `id`, `depth` (integer) |
+| `figma_get_node` | `id` (required), `children` (bool) |
+| `figma_find` | `type` (required), `page` |
+| `figma_search` | `query` (required), `limit` (integer, default 10) |
+| `figma_instances` | `target` (required) |
+| `figma_components` | — |
+| `figma_styles` | `type`, `values` (bool) |
+| `figma_uses` | `id` (required) |
+| `figma_vars` | `id` |
+| `figma_sync` | — (forces one pull; returns churn; the only tool that spends rate budget) |
+
+Tool-level failures (unknown node, no mirror, sync error) return an MCP
+result with `isError: true` and the message as text — JSON-RPC errors are
+reserved for protocol-level problems. Every tool description states
+whether it reads locally (all of them) or spends Figma budget (`figma_sync`
+only), so agents can reason about cost.
+
+### CLI surface
+
+`figmog serve [file] [--interval N] [--no-watch]` — `--no-watch` disables
+the poll loop (offline/fixture use; also what tests run). File/db
+resolution identical to the other commands.
+
+### Testing
+
+- **Protocol unit tests** (`mcp.rs`): dispatch table over scripted
+  request values — initialize echo, tools/list shape (12 tools, valid
+  JSON-Schema inputs), unknown method `-32601`, parse error `-32700`,
+  tools/call routing incl. `isError` on a bad tool name.
+- **`query` equivalence:** the CLI smoke tests keep passing unchanged
+  after the refactor (the printers now consume `query::*`), proving the
+  refactor moved logic without changing it.
+- **End-to-end serve test** (`tests/serve.rs`): build a fixture DB via
+  `pull --from-file`, spawn `figmog serve --no-watch --db …` as a child
+  process, drive initialize → tools/list → several tools/call over
+  stdin/stdout, assert JSON-RPC ids, tool result contents (e.g.
+  `figma_search` finds node 1:2), and `isError` for an unknown node.
+- **Live check addendum:** point Claude Code at the server
+  (`claude mcp add figmog -- <path>/figmog serve <url>`) and ask it about
+  the file.
+
+### Non-goals (v2)
+
+MCP resources/prompts capabilities; HTTP/SSE transports; multi-file
+serving; auth on the socket (stdio only, inherits process trust).
