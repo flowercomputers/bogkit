@@ -1,6 +1,7 @@
 //! Synthetic Figma file fixtures. Deliberately NOT derived from any real
 //! file. Shape mirrors GET /v1/files/:key responses.
 
+use assert_cmd::Command;
 use serde_json::{Value, json};
 
 /// 12 nodes over 3 pages: a hero frame with a text, a variant'd button
@@ -96,4 +97,28 @@ pub fn fixture_v2() -> Value {
         "characters": "Planting season", "children": []
     }));
     v
+}
+
+/// Materialize [`fixture_v1`] into a DB via `pull --from-file` and return the
+/// (tempdir, db-path) pair every read command — CLI or `serve` — needs.
+/// Shared so `tests/cli.rs` and `tests/serve.rs` build the same fixture the
+/// same way.
+#[allow(dead_code)] // not every test binary that includes this module calls it
+pub fn fixture_db() -> (tempfile::TempDir, std::path::PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let response = dir.path().join("resp.json");
+    std::fs::write(&response, serde_json::to_string(&fixture_v1()).unwrap()).unwrap();
+    let db = dir.path().join("db");
+    Command::cargo_bin("figmog")
+        .unwrap()
+        .args([
+            "pull",
+            "--from-file",
+            response.to_str().unwrap(),
+            "--db",
+            db.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    (dir, db)
 }

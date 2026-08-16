@@ -537,7 +537,7 @@ pub fn stats<R: Readable>(
 
 /// Ancestor chain root→node, as `[{id, name, type}]`. Unknown id → Err.
 /// A `parent_id` cycle (a corrupted store) is also an `Err` rather than an
-/// infinite loop — see [`depth_of`]'s doc comment for why that matters here.
+/// infinite loop — see `depth_of`'s doc comment for why that matters here.
 pub fn path<R: Readable>(
     nodes: &TableReader<'_, R, String, NodeRec>,
     id: String,

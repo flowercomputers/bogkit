@@ -30,6 +30,7 @@ store location (default `.figmog/<file-key>/db`).
 |---|---|---|
 | `figmog pull [file] [--from-file <json>] [--fresh]` | — | sync now; prints a churn summary (`+added ~changed -removed`). `file` is optional after the first pull. `--from-file` ingests a saved `GET /v1/files/:key` response instead of the network (offline ingestion, and what keeps the CLI tests hermetic). `--fresh` wipes the store and rebuilds from scratch. |
 | `figmog watch [file] [--interval N]` | — | poll loop: cheap metadata check every `N` seconds (default 10), full pull only on an actual change |
+| `figmog serve [file] [--interval N] [--no-watch]` | — | MCP stdio server (see "Use from agents (MCP)" below); `--no-watch` disables the poll loop for a read-only, offline server |
 | `figmog status` | meta + nodes | file name, version, last modified, node count |
 | `figmog pages` | by_type + nodes | list CANVAS pages (id, name) |
 | `figmog tree [id] [--depth N]` | children + nodes (+ by_type to find the root) | indented outline: `name  [type]  id`; root defaults to the DOCUMENT node |
@@ -68,6 +69,83 @@ plan**, and there is no delta API — this polling design is what makes
 that budget workable for an agent that wants to treat the file as live.
 The Tier-3 meta poll itself is capped around **50 requests/min on
 Starter**, well above any sane `--interval`.
+
+## Use from agents (MCP)
+
+`figmog serve` is figmog's other head onto the same store: an MCP stdio
+server with the sync loop built in. It's one process — fjall is
+single-writer, so a standalone MCP server would fight `figmog watch` for
+the store lock — that owns the mirror, polls for changes exactly like
+`watch`, and answers 17 `figmog_*` tools from whatever's currently in the
+store. There's nothing else to run alongside it.
+
+```console
+$ cargo build -p figmog
+$ claude mcp add figmog -- /absolute/path/to/clog/target/debug/figmog serve "https://www.figma.com/design/<key>/<name>"
+```
+
+Read-only / offline, once a store already exists (no `FIGMA_TOKEN`
+needed):
+
+```console
+$ claude mcp add figmog -- /absolute/path/to/clog/target/debug/figmog serve --db .figmog/<key>/db --no-watch
+```
+
+`--interval N` (default 10s) controls the poll cadence, same as `watch`.
+
+### Core read tools
+
+Each mirrors a CLI read command one-to-one and answers instantly from the
+local store — zero Figma API cost, zero rate-limit exposure.
+
+| tool | input | reads |
+|---|---|---|
+| `figmog_status` | — | file name, version, last modified, node count |
+| `figmog_pages` | — | list CANVAS pages (id, name), in document order |
+| `figmog_tree` | `id`, `depth` | subtree outline rooted at a node; root defaults to the document |
+| `figmog_node` | `id` (required), `children` | full `raw` JSON of one node; `children` inlines a one-level summary |
+| `figmog_find` | `type` (required), `page` | nodes by Figma node type, optionally scoped to one page |
+| `figmog_search` | `query` (required), `limit` | BM25 search over layer names and text content |
+| `figmog_instances` | `target` (required) | instances of a component, resolved by node id, key, or (set) name |
+| `figmog_components` | — | design-system inventory: sets with variant axes, standalone components |
+| `figmog_styles` | `type`, `values` | styles with usage counts; `values` derives each definition from a consumer |
+| `figmog_uses` | `id` (required) | nodes using a style id or bound to a variable id |
+| `figmog_vars` | `id` | variables: authoritative if imported, else inferred from bindings |
+| `figmog_sync` | — | forces one pull and returns the churn — the **only** tool that spends Figma's rate budget |
+
+### Whole-file structural queries
+
+The local mirror's unfair advantage: full-file answers no rate-limited API
+surface could offer, each a read-only scan/join over the same indexes.
+Every one has a matching CLI subcommand, so the CLI/tool surface stays
+one-to-one.
+
+| tool | CLI equivalent | input | answer |
+|---|---|---|---|
+| `figmog_stats` | `figmog stats` | — | node counts by type/page, component/set/style/variable totals, text-node count, max tree depth |
+| `figmog_path` | `figmog path <id>` | `id` (required) | ancestor chain root→node as `[{id, name, type}]` |
+| `figmog_text` | `figmog text [--page id]` | `page` | every TEXT node's `(id, characters, page_id)`, sorted by id |
+| `figmog_where` | `figmog where --pointer /p --equals <json>` | `pointer` (required, RFC 6901 into `raw`), `equals`, `page` | matching `[{id, name, type, page_id, value}]`, sorted by id |
+| `figmog_at` | `figmog at --x N --y N` | `x`, `y` (required) | nodes whose `abs_bounds` contain the point, sorted by area ascending (deepest/smallest first) |
+
+### Relationship to Figma's official MCP server
+
+figmog is a second, separate MCP server — connect it alongside Figma's
+official one, not instead of it. Every figmog tool lives in the
+`figmog_*` namespace, so the two servers' tools never collide by name.
+figmog's `initialize` response carries steering `instructions` telling an
+agent when to reach for which:
+
+> figmog is a local, instant, rate-limit-free mirror of one Figma file.
+> Use figmog tools for ALL structure, search, components, styles, and
+> variables. Use the official Figma MCP only for code generation or
+> screenshots — never for reads figmog can answer.
+
+The two servers have zero capability overlap: figmog only ever reads its
+local mirror and only ever writes to it via `figmog_sync`, which is the
+one tool among the 17 that spends Figma's Tier-1 rate budget (a forced
+pull) — every other tool call is instant, free, and backed by the same
+fold-materialized indexes the CLI reads.
 
 ## Variables on a free plan
 
