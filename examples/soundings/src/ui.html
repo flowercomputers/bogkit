@@ -87,6 +87,10 @@
   #hud .wall { margin-left: auto; white-space: nowrap; }
   #hud .stage .lbl { color: var(--pl-dim); font-size: 9px; letter-spacing: .06em; }
   #hud .wall .note { color: var(--pl-dim); font-size: 9.5px; margin-left: 10px; }
+  #hudmode { position: absolute; right: 10px; top: -22px; font-family: ui-monospace, Menlo, monospace; font-size: 9.5px;
+    letter-spacing: .06em; cursor: pointer; border: 1px solid var(--line); border-bottom: none; background: var(--ink);
+    color: #d8d2c4; padding: 3px 10px; border-radius: 4px 4px 0 0; }
+  #hud { position: fixed; }
   #hud .ledger .entry { white-space: nowrap; }
   #hud .ledger .entry .n { color: var(--pl-dim); }
   #hud .ledger .entry.newest { color: var(--pl-cream); }
@@ -250,12 +254,12 @@
   <div id="referee"></div>
 </div>
 <div id="moral"><div class="card" id="moralcard"></div></div>
-<div id="hud"><div class="row" id="hudl"><span class="empty">connecting…</span></div><div class="row ledger" id="hudr"></div></div>
+<div id="hud"><button id="hudmode"></button><div class="row" id="hudl"><span class="empty">connecting…</span></div><div class="row ledger" id="hudr"></div></div>
 
 <script>
 let state = { rows: [], hud: {} };
 let canon = "";
-let lens = "axis";
+let lens = localStorage.getItem("soundings.lens") || "off";
 let dirtyAt = 0, syncTimer = null, lastSyncedDom = "";
 
 const $ = (id) => document.getElementById(id);
@@ -369,13 +373,57 @@ function deltaLabel(st) {
   return mixed || st.retracts ? ` (${parts.join(" ")})` : "";
 }
 
+// ---- the strip speaks two registers: plain words for people, the Meter
+// tape for engineers and the demo. Same facts either way.
+let hudMode = localStorage.getItem("soundings.hudmode") || "words";
+$("hudmode").onclick = () => {
+  hudMode = hudMode === "words" ? "tape" : "words";
+  localStorage.setItem("soundings.hudmode", hudMode);
+  renderHud();
+};
+const usWords = (n) => (n >= 1000 ? (n / 1000).toFixed(1) + " ms" : n + " µs");
+function hudWords(h) {
+  const others = Math.max(0, (h.rows || 0) - (h.keys || 0));
+  const rest = h.rows && others > 0
+    ? ` The other ${others} sentence${others === 1 ? " was" : "s were"} never touched.`
+    : "";
+  const knn = h.voice_us ? ` The library was asked once for nearest voices (${usWords(h.voice_us)}).` : "";
+  switch (h.op) {
+    case "upsert": return `You changed a sentence. The old version was subtracted and the new one added — re-read, re-scored, and every view refreshed in ${usWords(h.wall_us)}.${knn}${rest}`;
+    case "insert": return `A new sentence entered — read, scored, and placed in ${usWords(h.wall_us)}.${knn}${rest}`;
+    case "retract": return `A sentence was withdrawn. To erase its traces exactly, it was re-read once and subtracted from every view (${usWords(h.wall_us)}).${rest}`;
+    case "restore": return `A withdrawn sentence returned — same fingerprint as before, every view updated (${usWords(h.wall_us)}).${rest}`;
+    case "resume": return `Picked up exactly where you left off — the document was already on disk (${usWords(h.wall_us)}).`;
+    case "seed": return `The starting document was read and scored (${usWords(h.wall_us)}).`;
+    case "lens": return `A new lens was taught to the whole document in one stroke — ${esc(h.note || "")} (${usWords(h.wall_us)}).`;
+    case "unlens": return `A lens was removed from every sentence at once (${usWords(h.wall_us)}).`;
+    default: return "";
+  }
+}
+function canonWords(c) {
+  const m = /^canon ready · (\d+) sentences · ([\d.]+)s/.exec(c);
+  return m ? `the library — ${(+m[1]).toLocaleString()} sentences from 20 classics — opened in ${m[2]}s` : c;
+}
+function recordLedger(h) {
+  if (h.seq === lastLedgerSeq) return;
+  lastLedgerSeq = h.seq;
+  ledger.unshift({ seq: h.seq, op: h.op, key: h.key, us: h.wall_us });
+  ledger = ledger.slice(0, LEDGER_MAX);
+}
 function renderHud() {
   const h = state.hud || {};
   const verbs = { seed: "seeded", resume: "RESUMED FROM DISK", upsert: "upsert", insert: "insert", retract: "retract", restore: "restored", lens: "lens authored", unlens: "lens retracted" };
   const l = $("hudl"), r = $("hudr");
+  $("hudmode").textContent = hudMode === "words" ? "engineer view" : "in words";
   if (!h.op) {
     l.innerHTML = '<span class="empty">…</span>';
-    r.innerHTML = `<span class="canon">${esc(canon)}</span>`;
+    r.innerHTML = `<span class="canon">${esc(hudMode === "words" ? canonWords(canon) : canon)}</span>`;
+    return;
+  }
+  if (hudMode === "words") {
+    recordLedger(h);
+    l.innerHTML = `<span class="head">fold</span><span class="stage">${hudWords(h)}</span>`;
+    r.innerHTML = `<span class="canon">${esc(canonWords(canon))}</span>`;
     return;
   }
   const st = Object.fromEntries((h.stages || []).map((s) => [s.name, s]));
@@ -415,11 +463,7 @@ function renderHud() {
     `<span class="note">counted by Meter ops in the pipeline · wall = stopwatch</span></span>`;
 
   // ledger
-  if (h.seq !== lastLedgerSeq) {
-    lastLedgerSeq = h.seq;
-    ledger.unshift({ seq: h.seq, op: h.op, key: h.key, us: h.wall_us });
-    ledger = ledger.slice(0, LEDGER_MAX);
-  }
+  recordLedger(h);
   r.innerHTML =
     ledger
       .map((e, i) => {
@@ -574,6 +618,7 @@ document.querySelector(".chips").addEventListener("click", (e) => {
   const c = e.target.closest(".chip[data-lens]");
   if (!c) return;
   lens = c.dataset.lens;
+  localStorage.setItem("soundings.lens", lens);
   document.querySelectorAll(".chip[data-lens]").forEach((y) => y.classList.toggle("on", y === c));
   render();
 });
@@ -727,7 +772,7 @@ function renderLensChips() {
     pendingLensSelect = false; demoLensSelect = false;
   }
   knownLensIds = ids;
-  if (lens.startsWith("user:") && !ids.includes(+lens.slice(5))) lens = "axis";
+  if (lens.startsWith("user:") && !ids.includes(+lens.slice(5))) lens = "off";
   box.replaceChildren(...defs.map((d, i) => {
     const b = document.createElement("button");
     b.className = "chip user" + (lens === "user:" + d.id ? " on" : "");
