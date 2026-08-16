@@ -349,10 +349,13 @@ pub struct Library {
     pub snap: &'static str,
     pub len_db: &'static str,
 }
-pub static LIBRARIES: [Library; 3] = [
+pub static LIBRARIES: [Library; 4] = [
     Library { id: "canon", label: "novel", jsonl: "data/canon.jsonl", db: "data/trial.db", snap: "data/trial.hnswsnap", len_db: "data/canon_len.db" },
     Library { id: "screen", label: "screenplay", jsonl: "data/screen.jsonl", db: "data/lib-screen.db", snap: "data/lib-screen.hnswsnap", len_db: "data/len-screen.db" },
     Library { id: "contracts", label: "contract", jsonl: "data/contracts.jsonl", db: "data/lib-contracts.db", snap: "data/lib-contracts.hnswsnap", len_db: "data/len-contracts.db" },
+    // the personal shelf: prep_self.py over your own writing — never
+    // committed, never uploaded; ese embeds it inside the binary's own math
+    Library { id: "self", label: "your voice", jsonl: "data/self.jsonl", db: "data/lib-self.db", snap: "data/lib-self.hnswsnap", len_db: "data/len-self.db" },
 ];
 pub fn lib_by_id(id: &str) -> Option<&'static Library> {
     LIBRARIES.iter().find(|l| l.id == id)

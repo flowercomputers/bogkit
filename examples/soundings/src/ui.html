@@ -328,7 +328,7 @@ let canon = "";
 let lib = { id: "canon", label: "novel" };
 let insp = null;      // pinned inspiration: { title, text } from the voices
 let lastHits = [];    // most recent voice-card hits
-const LIB_NOUN = { canon: "the canon", screen: "1,172 films", contracts: "10-K contracts" };
+const LIB_NOUN = { canon: "the canon", screen: "1,172 films", contracts: "10-K contracts", self: "your own writing" };
 const libNoun = () => LIB_NOUN[lib.id] || "the library";
 let lens = localStorage.getItem("soundings.lens") || "off";
 let dirtyAt = 0, syncTimer = null, lastSyncedDom = "";
