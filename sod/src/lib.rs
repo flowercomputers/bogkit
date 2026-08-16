@@ -21,6 +21,7 @@
 //!
 //! Design spec: `docs/superpowers/specs/2026-08-15-sod-design.md`.
 
+pub mod engine;
 pub mod frame;
 pub mod log_file;
 pub mod store;
