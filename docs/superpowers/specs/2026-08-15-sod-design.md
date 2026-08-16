@@ -17,6 +17,15 @@ Sod lives in this workspace as a crate (`sod/`) with a path dependency on
 compiled against it, so fold changes break sod at `cargo build` time and get
 fixed in-tree — never a lagging external binding chasing a moving API.
 
+The goal is that both **client↔server patterns and decentralized p2p
+patterns** can be enabled against **different bog machinery** — fold today,
+other engines tomorrow — with replicas running in browsers, native apps,
+React Native, and on servers. The protocol and core never assume a topology,
+an engine, or a platform; those are all ports. The first shipped
+implementations of the ports are native (std filesystem log, websocket
+transport, fold engine), but `sod`'s core compiles for `wasm32-unknown-unknown`
+from day one and this is enforced in the test suite.
+
 Sod has nothing to do with clog.
 
 ### Why symmetric replication is correct for fold
@@ -69,8 +78,9 @@ Each invariant is enforced by a named test.
   the local log is created, and never outlives the log: deleting or resetting
   the log requires generating a new id. Ids are never reused, configured, or
   derived from hardware.
-- **SOD-4 (convergence).** Two replicas running the same schema version whose
-  version vectors are equal have byte-identical exact views. Approximate
+- **SOD-4 (convergence).** Two replicas running the same schema version, the
+  same engine, and the same pipeline, whose version vectors are equal, have
+  byte-identical exact views. Approximate
   indexes (HNSW) converge on the vector *set*; their query results are
   order-sensitive and may differ until rebuilt from the store (see Known
   deviations).
@@ -93,24 +103,71 @@ Each invariant is enforced by a named test.
 
 ## Architecture
 
-```
-sod/                          workspace crate, path-dep on fold
-├── replica.rs                Replica<T>: write path, open/recovery, apply
-├── log.rs                    append-only frame log: append, scan, truncate-torn-tail
-├── frame.rs                  frame encoding, BLAKE3 hashing, chain verification
-├── vector.rs                 version vectors: compare, diff, merge
-├── sync.rs                   session state machine over a Transport trait
-├── transport/ws.rs           websocket transport (first implementation)
-└── time.rs                   watermark clock, wired into fold Retain via with_clock
+The crate splits into a **portable core** (pure logic, no I/O, no fold, no
+std-only dependencies) and **port implementations** behind feature flags.
+Everything platform- or engine-specific enters through a port.
 
-examples/sod-demo/            two-replica demo; one side packaged as a
-                              napi-rs Node addon (doubles as the app template)
+```
+sod/                          workspace crate
+├── frame.rs        core      frame encoding, BLAKE3 hashing, chain verification
+├── vector.rs       core      version vectors: compare, diff, merge
+├── store.rs        core      LogStore port (append/scan/truncate) + MemLog impl
+├── replica.rs      core      Replica<E>: write path, open/recovery, apply, dedup,
+│                             poisoning; generic over the Engine port
+├── engine.rs       core      Engine port ("the bog machinery") + MemEngine, a
+│                             minimal deterministic multiset engine for tests,
+│                             wasm builds, and non-fold deployments
+├── sync.rs         core      sans-io session state machine: consumes/produces
+│                             protocol messages, owns no sockets
+├── time.rs         core      watermark clock
+├── log_file.rs     [std]     filesystem LogStore with torn-tail recovery
+├── transport/ws.rs [ws]      blocking websocket peer + listener
+└── engine_fold.rs  [fold]    fold-backed Engine: Stream, applied-cursor,
+                              watermark wired into Retain via with_clock
+
+examples/sod-demo/            two-replica convergence demo over websocket;
+                              doubles as the app template
 ```
 
-`Replica<T>` is generic over the app's datum type `T: Serialize +
-DeserializeOwned` — the same bound fold's sinks already require. The app
-constructs its fold pipeline exactly as today and hands it to
-`Replica::open(dir, pipeline)`.
+### The Engine port
+
+An engine is whatever materializes deltas into readable state:
+
+```rust
+pub trait Engine {
+    /// Apply one frame's deltas plus the new watermark, atomically,
+    /// together with the applied-cursor update for `(origin, seq)`.
+    fn apply(&mut self, frame: &Frame, watermark: u64) -> Result<...>;
+    /// The cursor the engine has durably applied through, per origin —
+    /// read at open to replay exactly the un-applied log suffix.
+    fn applied(&self) -> VersionVector;
+}
+```
+
+`engine::MemEngine` (always compiled) is a deterministic in-memory multiset —
+the differential oracle for property tests and the engine available on targets
+fold cannot reach yet. `engine_fold::FoldEngine<T>` (feature `fold-engine`,
+default on) wraps a fold `Stream` with the app's pipeline; `T: Serialize +
+DeserializeOwned` is the same bound fold's sinks already require. Because
+engines differ in what views they materialize, cross-replica convergence
+claims (SOD-4) apply between replicas running the *same* engine and pipeline.
+
+### Targets
+
+- **Server / native apps / Node.js**: full stack — fold engine, file log,
+  websocket transport. Node packaging is a per-app napi-rs addon (below).
+- **Browser**: `sod` core + `MemEngine` compile to `wasm32-unknown-unknown`
+  today (`cargo check --target wasm32-unknown-unknown --no-default-features`
+  is part of the test suite). A persistent browser LogStore (OPFS/IndexedDB)
+  and a WebSocket/WebRTC transport are follow-on port implementations, not
+  core changes. The fold engine reaches the browser only when fold grows a
+  storage port to replace fjall — recorded as fold future work, not sod's.
+- **React Native**: native Rust via a UniFFI/JSI binding — same full stack as
+  native apps (phones have real filesystems and threads, so fjall works).
+  Packaging follow-on; no core changes.
+- **Topologies**: client↔server is a star of pairwise symmetric sessions;
+  p2p is any other graph of the same sessions. The protocol cannot tell the
+  difference — that is the point.
 
 ## The log
 
@@ -149,9 +206,11 @@ Local commit of a batch of deltas:
    *observed* by the pipeline).
 2. Encode the frame, chain it to the previous local frame, append, fsync per
    policy.
-3. Open one fold write transaction: push the deltas, and write the
-   applied-cursor — `(origin, seq)` per origin, kept in a sod-owned keyspace
-   inside fold's store — in the same transaction. Commit.
+3. Hand the frame to the engine's `apply`, which must commit the deltas and
+   the applied-cursor advance for `(origin, seq)` atomically. In the fold
+   engine this is one fold write transaction, with the cursor kept in a
+   sod-owned keyspace inside fold's store; in `MemEngine` it is a plain
+   in-memory update.
 
 Remote frames (from sync) follow the same steps 2–3 after chain verification
 and dedup. On open, sod compares the log against the applied-cursor and
@@ -213,9 +272,13 @@ and sync catches up when a peer is reachable.
 - **Convergence property tests** (the heart): N in-memory replicas, random
   interleaved writes, random pairwise syncs, partitions, and session kills →
   whenever two replicas' vectors are equal, their exact-view bytes are equal
-  (SOD-4, SOD-6, SOD-8). Sink coverage across fold's terminals; any
-  order-sensitivity found in a fold sink is a fold bug, filed and fixed
-  in-tree.
+  (SOD-4, SOD-6, SOD-8). Run against `MemEngine` and the fold engine, with
+  `MemEngine` doubling as the differential oracle for fold-engine multiset
+  state. Sink coverage across fold's terminals; any order-sensitivity found
+  in a fold sink is a fold bug, filed and fixed in-tree.
+- **Portability gate.** `cargo check --target wasm32-unknown-unknown
+  --no-default-features` for the `sod` crate must pass (skipped with a notice
+  if the target isn't installed).
 - **Crash tests.** Kill between every pair of write-path steps (torn append,
   post-append pre-apply, mid-apply), reopen, assert equivalence with clean
   replay (SOD-5).
@@ -252,8 +315,12 @@ and sync catches up when a peer is reachable.
   untrusting peers. The chain format is already compatible.
 - **Swarming.** Hash-verified frames + relay already permit mesh topologies;
   a gossip/peer-discovery layer would exploit them.
-- **Browser / React Native targets.** Deliberately out of scope; Node.js
-  first. Nothing in the log or protocol is Node-specific.
+- **Browser persistence and transports.** An OPFS/IndexedDB LogStore and a
+  browser WebSocket/WebRTC transport, implementing the existing ports. The
+  core already compiles for wasm32; these are additive.
+- **React Native packaging.** A UniFFI/JSI binding of the same native stack.
+- **Fold on wasm.** Requires fold to grow a storage port replacing fjall;
+  tracked as fold future work. Until then, browser replicas run `MemEngine`.
 
 ## Non-goals
 
