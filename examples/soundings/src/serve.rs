@@ -74,6 +74,19 @@ pub struct Score {
     pub t: f32, // concrete 0 —— 1 abstract
 }
 
+/// Sentence values pack their paragraph: `"<para>\u{1}<text>"`. A bare
+/// string (no separator) decodes as paragraph 0, so documents written
+/// before paragraphs existed load unchanged.
+pub fn enc_val(para: u32, text: &str) -> String {
+    format!("{para}\u{0001}{text}")
+}
+pub fn dec_val(val: &str) -> (u32, &str) {
+    match val.split_once('\u{0001}') {
+        Some((p, t)) => (p.parse().unwrap_or(0), t),
+        None => (0, val),
+    }
+}
+
 /// The concrete——abstract axis: mean anchor embeddings, projection onto the
 /// A→B segment. ONE scoring function for both arms — the fold pipeline's
 /// `Map` and the naive arm's full rescan (gale.rs) call the same code.
@@ -110,6 +123,8 @@ impl Axis {
 #[derive(Debug, Clone, Serialize)]
 pub struct Row {
     pub id: u32,
+    /// paragraph this sentence belongs to (grouping only — order is id order)
+    pub para: u32,
     pub text: String,
     pub words: u32,
     pub t: f32,
@@ -223,12 +238,21 @@ pub struct DocState {
 #[serde(tag = "op", rename_all = "lowercase")]
 pub enum EditOp {
     Edit { id: u32, text: String },
-    Add { text: String },
+    Add {
+        text: String,
+        #[serde(default)]
+        para: u32,
+    },
     Remove { id: u32 },
     /// The un-retcon: put a retracted sentence back under its old id — an
     /// upsert on an absent key, i.e. one mutation. Same path as `Edit`,
     /// distinct verb so the HUD can say "restored".
-    Restore { id: u32, text: String },
+    Restore {
+        id: u32,
+        text: String,
+        #[serde(default)]
+        para: u32,
+    },
     /// Author a lens from two anchor sentences: one backfill wtx over the doc.
     Lens { a: String, b: String, name: String },
     /// Retract a lens: one wtx removing every `(id, sentence)` key.
@@ -317,10 +341,12 @@ macro_rules! doc_snapshot {
             let cdf = $len.borrow().clone();
             let mut rows: Vec<Row> = sents
                 .iter()
-                .map(|(id, text)| {
+                .map(|(id, val)| {
+                    let (para, text) = dec_val(&val);
+                    let text = text.to_string();
                     let s: Score = scores.get(&id).unwrap_or_default();
                     let pct = cdf.as_ref().map(|c| c.percentile(s.words));
-                    Row { id, text, words: s.words, t: s.t, voice: $voices.get(&id).cloned(), lens_t: Vec::new(), pct }
+                    Row { id, para, text, words: s.words, t: s.t, voice: $voices.get(&id).cloned(), lens_t: Vec::new(), pct }
                 })
                 .collect();
             rows.sort_by_key(|r| r.id);
@@ -369,7 +395,7 @@ fn doc_ingest(
                     &reg,
                     "embed",
                     Map::new(
-                        move |d: &Keyed<u32, String>| Keyed::new(d.key, axis.score(&d.val)),
+                        move |d: &Keyed<u32, String>| Keyed::new(d.key, axis.score(dec_val(&d.val).1)),
                         Meter::new(&reg, "scored", terminal::Table::<u32, Score>::new("scores")),
                     ),
                 ),
@@ -418,7 +444,8 @@ fn doc_ingest(
         let t = Instant::now();
         st.wtx(|tx| {
             for (i, s) in SEED.iter().enumerate() {
-                tx.upsert(&(i as u32), &s.to_string());
+                let para = match i { 0..=3 => 0, 4..=5 => 1, _ => 2 };
+                tx.upsert(&(i as u32), &enc_val(para, s));
             }
         });
         if !lens_defs.is_empty() {
@@ -475,13 +502,15 @@ fn doc_ingest(
         let mut lens_hud: Option<(u32, String)> = None; // (keys, note) for lens ops
         let (name, key) = match &op {
             EditOp::Edit { id, text } => {
-                st.wtx(|tx| tx.upsert(id, text));
+                // an edit keeps its sentence's paragraph
+                let para = st.rtx(|(sents, _)| sents.get(id).map(|v| dec_val(&v).0)).unwrap_or(0);
+                st.wtx(|tx| tx.upsert(id, &enc_val(para, text)));
                 mirror = Some((*id, Some(text.clone())));
                 ("upsert", Some(*id))
             }
-            EditOp::Add { text } => {
+            EditOp::Add { text, para } => {
                 let id = st.rtx(|(sents, _)| sents.iter().map(|(id, _)| id).max().map_or(0, |m| m + 1));
-                st.wtx(|tx| tx.upsert(&id, text));
+                st.wtx(|tx| tx.upsert(&id, &enc_val(*para, text)));
                 mirror = Some((id, Some(text.clone())));
                 ("insert", Some(id))
             }
@@ -502,8 +531,8 @@ fn doc_ingest(
                 // the backfill: every sentence in the doc, ONE wtx
                 let sents: Vec<(u32, String)> = st.rtx(|(sents, _)| sents.iter().collect());
                 lens_st.wtx(|tx| {
-                    for (sid, text) in &sents {
-                        tx.upsert(&(id, *sid), text);
+                    for (sid, val) in &sents {
+                        tx.upsert(&(id, *sid), &dec_val(val).1.to_string());
                     }
                 });
                 lens_hud = Some((sents.len() as u32, format!("{lname} · {} keys → 1 wtx", sents.len())));
@@ -525,8 +554,8 @@ fn doc_ingest(
                 lens_hud = Some((sids.len() as u32, format!("{name_of} · {} keys retracted → 1 wtx", sids.len())));
                 ("unlens", None)
             }
-            EditOp::Restore { id, text } => {
-                st.wtx(|tx| tx.upsert(id, text));
+            EditOp::Restore { id, text, para } => {
+                st.wtx(|tx| tx.upsert(id, &enc_val(*para, text)));
                 mirror = Some((*id, Some(text.clone())));
                 ("restore", Some(*id))
             }
@@ -554,8 +583,8 @@ fn doc_ingest(
         // refresh the voice for the edited key only — one HNSW query, when
         // the canon is open (never block on a shelf that's still reshelving)
         let touched: Option<(u32, &str)> = match &op {
-            EditOp::Edit { id, text } | EditOp::Restore { id, text } => Some((*id, text.as_str())),
-            EditOp::Add { text } => st
+            EditOp::Edit { id, text } | EditOp::Restore { id, text, .. } => Some((*id, text.as_str())),
+            EditOp::Add { text, .. } => st
                 .rtx(|(sents, _)| sents.iter().map(|(id, _)| id).max())
                 .map(|id| (id, text.as_str())),
             EditOp::Remove { id } => {

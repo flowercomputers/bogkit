@@ -199,14 +199,14 @@ pub fn naive_ingest(
     let mut strides: Vec<u64> = Vec::new();
 
     let apply = |doc: &mut Vec<(u32, String)>, op: &EditOp| match op {
-        EditOp::Edit { id, text } | EditOp::Restore { id, text } => {
+        EditOp::Edit { id, text } | EditOp::Restore { id, text, .. } => {
             if let Some(r) = doc.iter_mut().find(|r| r.0 == *id) {
                 r.1 = text.clone();
             } else {
                 doc.push((*id, text.clone()));
             }
         }
-        EditOp::Add { text } => {
+        EditOp::Add { text, .. } => {
             let id = doc.iter().map(|r| r.0).max().map_or(0, |m| m + 1);
             doc.push((id, text.clone()));
         }

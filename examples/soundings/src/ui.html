@@ -31,6 +31,7 @@
   .chip.on { color: var(--ink); border-color: var(--ink); }
   .lenskey { font-family: ui-monospace, Menlo, monospace; font-size: 10.5px; color: var(--faint); min-height: 16px; margin-bottom: 26px; }
   #doc { font-size: 18.5px; line-height: 1.85; }
+  #doc .para { margin: 0 0 15px; }
   .s {
     cursor: pointer; border-radius: 3px; padding: 1px 2px;
     transition: background .25s ease;
@@ -296,15 +297,24 @@ function render() {
   $("lenskey").textContent = lensKey();
   const doc = $("doc");
   const maxW = Math.max(1, ...state.rows.map((r) => r.words));
-  doc.replaceChildren(...state.rows.map((r) => {
+  // sentences group into paragraphs; a change in r.para opens a new <p>
+  doc.replaceChildren();
+  let curP = null, lastPara = null;
+  for (const r of state.rows) {
+    if (curP === null || r.para !== lastPara) {
+      curP = document.createElement("p");
+      curP.className = "para";
+      doc.appendChild(curP);
+      lastPara = r.para;
+    }
     const s = document.createElement("span");
     s.className = "s" + (r.id === selId ? " sel" : "");
     s.textContent = r.text + " ";
     s.style.background = paint(r, maxW);
     s.title = `t=${r.t.toFixed(2)} · ${r.words} words` + (r.pct != null ? ` · ${ordinal(r.pct)} pct of canon` : "");
     s.onclick = () => beginEdit(r);
-    return s;
-  }));
+    curP.appendChild(s);
+  }
   renderGhosts(doc);
   renderChips(doc);
   renderHud();
@@ -455,12 +465,23 @@ const composer = $("composer");
 function autogrow() { composer.style.height = "auto"; composer.style.height = composer.scrollHeight + "px"; }
 // a completed sentence = terminal punctuation (not an honorific) followed by
 // whitespace — the writer moved on. Commit completed segments, keep the rest.
+const DEFAULT_PH = composer.placeholder;
+let pendingBreak = false;
+function curPara() { return state.rows.length ? Math.max(...state.rows.map((r) => r.para || 0)) : 0; }
 function harvest(force) {
-  const text = composer.value;
+  // a blank line is a paragraph break: chunks before the last are complete
+  const chunks = composer.value.split(/\n\s*\n/);
+  let base = curPara() + (pendingBreak ? 1 : 0);
+  let committed = null;
+  for (let ci = 0; ci < chunks.length - 1; ci++) {
+    for (const sSeg of splitSentences(chunks[ci])) { send({ op: "add", text: sSeg, para: base }); committed = sSeg; }
+    pendingBreak = false;
+    base = curPara() + 1 + ci + 1;
+  }
+  const text = chunks[chunks.length - 1];
   const segs = splitSentences(text);
-  if (!segs.length) return;
   let keep = "";
-  if (!force) {
+  if (segs.length && !force) {
     const last = segs[segs.length - 1];
     const done = /[.!?]["\u201d]?\s*$/.test(last) && !/\b(Mr|Mrs|Ms|Dr|St)\.$/.test(last.trim());
     const moved = /\s$/.test(text) || segs.length > 1;
@@ -469,12 +490,15 @@ function harvest(force) {
       keep = segs.pop() + (keep ? " " + keep : "");
     }
   }
-  for (const sSeg of segs) send({ op: "add", text: sSeg });
-  if (segs.length) {
+  for (const sSeg of segs) { send({ op: "add", text: sSeg, para: base }); committed = sSeg; pendingBreak = false; }
+  if (committed !== null || chunks.length > 1) {
     composer.value = keep;
     autogrow();
+    composer.placeholder = DEFAULT_PH;
+  }
+  if (committed !== null) {
     $("voicehead").textContent = "Nearest voices — your last sentence";
-    fetchVoice(segs[segs.length - 1], null);
+    fetchVoice(committed, null);
   }
 }
 let penTimer = null;
@@ -492,7 +516,13 @@ composer.addEventListener("input", () => {
   }
 });
 composer.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); harvest(true); }
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    // Enter means what it means in an editor: end the paragraph.
+    if (composer.value.trim()) harvest(true);
+    pendingBreak = true;
+    composer.placeholder = "¶ new paragraph…";
+  }
 });
 // one delegated handler: seeded chips, user-lens chips (dynamic), their × and + lens
 document.querySelector(".chips").addEventListener("click", (e) => {
@@ -518,7 +548,7 @@ const galeActive = () => { const g = gale || {}; return !!g.running || (!!g.fini
 
 function noteRetract(r) {
   ghosts = ghosts.filter((g) => g.id !== r.id);
-  const g = { id: r.id, text: r.text, t: r.t, words: r.words, seq: null, wall_us: null, released: 0, timer: null };
+  const g = { id: r.id, text: r.text, para: r.para || 0, t: r.t, words: r.words, seq: null, wall_us: null, released: 0, timer: null };
   g.timer = setTimeout(() => dropGhost(g.id, true), GHOST_TTL_MS);
   ghosts.push(g);
   while (ghosts.length > GHOST_MAX) { const old = ghosts.shift(); clearTimeout(old.timer); }
@@ -544,7 +574,7 @@ function dropGhost(id, fade) {
 function restoreGhost(id) {
   const g = ghosts.find((x) => x.id === id);
   if (!g) return;
-  send({ op: "restore", id: g.id, text: g.text });
+  send({ op: "restore", id: g.id, text: g.text, para: g.para || 0 });
   dropGhost(id, false);
 }
 
@@ -569,7 +599,12 @@ function renderGhosts(doc) {
     el.textContent = g.text + " ";
     el.title = `s${g.id} withdrawn — the line stays struck, never deleted`;
     const idx = rowIds.findIndex((id) => id > g.id);
-    if (idx >= 0 && spans[idx]) doc.insertBefore(el, spans[idx]); else doc.appendChild(el);
+    if (idx >= 0 && spans[idx]) {
+      spans[idx].parentNode.insertBefore(el, spans[idx]);
+    } else {
+      const tail = doc.lastElementChild;
+      (tail && tail.classList.contains("para") ? tail : doc).appendChild(el);
+    }
   }
 }
 
