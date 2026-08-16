@@ -13,6 +13,7 @@ pub mod api;
 pub mod cli;
 pub mod flatten;
 pub mod ident;
+pub mod mcp;
 pub mod model;
 pub mod query;
 pub mod store;
