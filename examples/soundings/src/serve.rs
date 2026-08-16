@@ -292,14 +292,38 @@ pub struct VoiceHit {
     pub text: String,
 }
 
-pub type VoiceReq = (String, oneshot::Sender<Vec<VoiceHit>>);
+/// A request to the library thread: a nearest-voices query, or a switch to
+/// another reference library.
+pub enum LibReq {
+    Voice(String, oneshot::Sender<Vec<VoiceHit>>),
+    Switch(String),
+}
+
+/// A reference library: the corpus the voices, percentiles, and restyle
+/// targets aim at. Config, not code — same pipeline, different shelves.
+pub struct Library {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub jsonl: &'static str,
+    pub db: &'static str,
+    pub snap: &'static str,
+    pub len_db: &'static str,
+}
+pub static LIBRARIES: [Library; 3] = [
+    Library { id: "canon", label: "novel", jsonl: "data/canon.jsonl", db: "data/trial.db", snap: "data/trial.hnswsnap", len_db: "data/canon_len.db" },
+    Library { id: "screen", label: "screenplay", jsonl: "data/screen.jsonl", db: "data/lib-screen.db", snap: "data/lib-screen.hnswsnap", len_db: "data/len-screen.db" },
+    Library { id: "contracts", label: "contract", jsonl: "data/contracts.jsonl", db: "data/lib-contracts.db", snap: "data/lib-contracts.hnswsnap", len_db: "data/len-contracts.db" },
+];
+pub fn lib_by_id(id: &str) -> Option<&'static Library> {
+    LIBRARIES.iter().find(|l| l.id == id)
+}
 
 #[derive(Clone)]
 struct AppState {
     edit_tx: mpsc::Sender<Edit>,
     doc_rx: watch::Receiver<DocState>,
     status_rx: watch::Receiver<String>,
-    voice_tx: mpsc::Sender<VoiceReq>,
+    voice_tx: mpsc::Sender<LibReq>,
     naive_tx: mpsc::Sender<NaiveMsg>,
     naive_rx: watch::Receiver<NaiveState>,
     gale_tx: watch::Sender<GaleState>,
@@ -307,13 +331,15 @@ struct AppState {
     ledger: Ledger,
     gale_running: Arc<Mutex<bool>>,
     len_rx: watch::Receiver<Option<Arc<crate::pct::LenCdf>>>,
+    lib_rx: watch::Receiver<(String, String)>,
 }
 
 pub fn run() {
     let (edit_tx, edit_rx) = mpsc::channel::<Edit>();
     let (doc_tx, doc_rx) = watch::channel(DocState::default());
-    let (status_tx, status_rx) = watch::channel("opening canon…".to_string());
-    let (voice_tx, voice_rx) = mpsc::channel::<VoiceReq>();
+    let (status_tx, status_rx) = watch::channel("opening the library…".to_string());
+    let (voice_tx, voice_rx) = mpsc::channel::<LibReq>();
+    let (lib_tx, lib_rx) = watch::channel(("canon".to_string(), "novel".to_string()));
     let (naive_tx, naive_rx_ch) = mpsc::channel::<NaiveMsg>();
     let (naive_state_tx, naive_rx) = watch::channel(NaiveState::default());
     let (gale_tx, gale_rx) = watch::channel(GaleState { phase: "idle".into(), ..Default::default() });
@@ -326,7 +352,7 @@ pub fn run() {
         let (voice_tx, status_rx, ledger, len_rx) = (voice_tx.clone(), status_rx.clone(), ledger.clone(), len_rx.clone());
         std::thread::spawn(move || doc_ingest(edit_rx, doc_tx, voice_tx, status_rx, ledger, len_rx));
     }
-    std::thread::spawn(move || canon_ingest(voice_rx, status_tx, len_tx));
+    std::thread::spawn(move || library_ingest(voice_rx, status_tx, len_tx, lib_tx));
     {
         let ledger = ledger.clone();
         std::thread::spawn(move || gale::naive_ingest(naive_rx_ch, naive_state_tx, ledger, canon_step()));
@@ -343,6 +369,7 @@ pub fn run() {
         ledger,
         gale_running: Arc::new(Mutex::new(false)),
         len_rx,
+        lib_rx,
     });
 }
 
@@ -386,7 +413,7 @@ macro_rules! doc_snapshot {
 fn doc_ingest(
     rx: mpsc::Receiver<Edit>,
     state_tx: watch::Sender<DocState>,
-    voice_tx: mpsc::Sender<VoiceReq>,
+    voice_tx: mpsc::Sender<LibReq>,
     status_rx: watch::Receiver<String>,
     ledger: Ledger,
     len_rx: watch::Receiver<Option<Arc<crate::pct::LenCdf>>>,
@@ -618,9 +645,9 @@ fn doc_ingest(
         let mut voice_us = 0u64;
         if let Some((key, text)) = touched {
             let tv = Instant::now();
-            if status_rx.borrow().starts_with("canon ready") {
+            if status_rx.borrow().contains("ready ·") {
                 let (otx, orx) = oneshot::channel();
-                if voice_tx.send((text.to_string(), otx)).is_ok()
+                if voice_tx.send(LibReq::Voice(text.to_string(), otx)).is_ok()
                     && let Ok(mut hits) = orx.blocking_recv()
                         && !hits.is_empty() {
                             voices.insert(key, hits.remove(0));
@@ -658,90 +685,126 @@ fn doc_ingest(
     }
 }
 
-// ---------- canon thread ----------
+// ---------- the library thread ----------
+// Owns whichever reference library is active. Voice queries answer from it;
+// a Switch drops the stream and opens another — first use builds the index
+// and checkpoints the HNSW graph, every later open is a snapshot fast-load.
+// The doc and lens streams never notice: writing continues during a switch.
 
-fn canon_ingest(
-    rx: mpsc::Receiver<VoiceReq>,
+fn library_ingest(
+    rx: mpsc::Receiver<LibReq>,
     status: watch::Sender<String>,
     len_tx: watch::Sender<Option<Arc<crate::pct::LenCdf>>>,
+    lib_tx: watch::Sender<(String, String)>,
 ) {
-    // the length histogram first: seconds to build, ms to reopen, and the
-    // doc thread paints percentiles as soon as it lands
-    crate::pct::open_or_build(&status, &len_tx);
+    let mut next = "canon".to_string();
+    'lib: loop {
+        let lib = lib_by_id(&next).unwrap_or(&LIBRARIES[0]);
+        let _ = lib_tx.send((lib.id.to_string(), lib.label.to_string()));
 
-    let db = std::path::Path::new("data/trial.db");
-    let snap = std::path::Path::new("data/trial.hnswsnap");
-    let fresh = !db.exists();
-    // graph snapshot (Séance's contribution, bogkit PR #6): reopen adopts the
-    // serialized HNSW instead of re-inserting every row
-    let pipeline = || {
-        (
-            Map::new(
-                |d: &Keyed<u32, (String, String)>| Keyed::new(d.key, ese::encode_single(&d.val.1)),
-                terminal::search::Hnsw::<u32, f32, Cosine, DIM>::new("vecs", Cosine, 42)
-                    .with_graph_snapshot(snap),
-            ),
-            terminal::Table::<u32, (String, String)>::new("docs"),
-        )
-    };
-
-    let t0 = Instant::now();
-    let st = if fresh {
-        let Ok(raw) = std::fs::read_to_string("data/canon.jsonl") else {
-            let _ = status.send("no canon — run scripts/prep_corpus.py".into());
-            for (_, reply) in rx {
-                let _ = reply.send(vec![]);
+        let db = std::path::Path::new(lib.db);
+        let snap = std::path::PathBuf::from(lib.snap);
+        let fresh = !db.exists();
+        if fresh && !std::path::Path::new(lib.jsonl).exists() {
+            let _ = status.send(format!("no {} library yet — run its prep script", lib.label));
+            while let Ok(req) = rx.recv() {
+                match req {
+                    LibReq::Voice(_, reply) => {
+                        let _ = reply.send(vec![]);
+                    }
+                    LibReq::Switch(id) => {
+                        if id != lib.id && lib_by_id(&id).is_some() {
+                            next = id;
+                            continue 'lib;
+                        }
+                    }
+                }
             }
             return;
-        };
-        let rows: Vec<(String, String)> = raw
-            .lines()
-            .step_by(canon_step())
-            .filter_map(|l| serde_json::from_str::<crate::CanonRow>(l).ok())
-            .map(|r| (r.title, r.text))
-            .collect();
-        let n = rows.len();
-        let mut st = KeyedStream::new(db, pipeline());
-        for (i, chunk) in rows.chunks(2048).enumerate() {
-            let base = i * 2048;
-            st.wtx(|tx| {
-                for (j, r) in chunk.iter().enumerate() {
-                    tx.upsert(&((base + j) as u32), r);
-                }
-            });
-            let _ = status.send(format!("indexing canon {}/{n}…", base + chunk.len()));
         }
-        st
-    } else {
-        let _ = status.send("reshelving canon (reopen)…".into());
-        KeyedStream::new(db, pipeline())
-    };
-    let opened = t0.elapsed();
-    // a slow open means the snapshot was absent or stale and the graph was
-    // rebuilt row-by-row — capture it so the next open is instant
-    if fresh || opened.as_secs_f64() > 2.0 {
-        let _ = status.send("checkpointing canon graph…".into());
-        let _ = st.rtx(|(vecs, _)| vecs.save_graph());
-    }
-    let n = st.rtx(|(_, docs)| docs.iter().count());
-    let _ = status.send(format!(
-        "canon ready · {n} sentences · {:.2}s{}",
-        opened.as_secs_f64(),
-        if opened.as_secs_f64() < 2.0 { " (snapshot fast-load)" } else { "" }
-    ));
 
-    for (text, reply) in rx {
-        let hits = st.rtx(|(vecs, docs)| {
-            vecs.search(&ese::encode_single(&text))
-                .into_iter()
-                .take(3)
-                .map(|h| {
-                    let (title, text) = docs.get(&h.val).unwrap_or_default();
-                    VoiceHit { id: h.val, score: h.score, title, text }
-                })
-                .collect::<Vec<_>>()
-        });
-        let _ = reply.send(hits);
+        // the length distribution first: seconds to build, ms to reopen, and
+        // the doc thread paints this library's percentiles as soon as it lands
+        crate::pct::open_or_build(lib.label, lib.len_db, lib.jsonl, &status, &len_tx);
+
+        // graph snapshot (Séance's contribution, bogkit PR #6): reopen adopts
+        // the serialized HNSW instead of re-inserting every row
+        let pipeline = || {
+            (
+                Map::new(
+                    |d: &Keyed<u32, (String, String)>| Keyed::new(d.key, ese::encode_single(&d.val.1)),
+                    terminal::search::Hnsw::<u32, f32, Cosine, DIM>::new("vecs", Cosine, 42)
+                        .with_graph_snapshot(snap.clone()),
+                ),
+                terminal::Table::<u32, (String, String)>::new("docs"),
+            )
+        };
+
+        let t0 = Instant::now();
+        let st = if fresh {
+            let raw = std::fs::read_to_string(lib.jsonl).unwrap_or_default();
+            // the canon honors SOUNDINGS_CANON_STEP; prepped libraries are
+            // already sampled to size
+            let step = if lib.id == "canon" { canon_step() } else { 1 };
+            let rows: Vec<(String, String)> = raw
+                .lines()
+                .step_by(step)
+                .filter_map(|l| serde_json::from_str::<crate::CanonRow>(l).ok())
+                .map(|r| (r.title, r.text))
+                .collect();
+            let n = rows.len();
+            let mut st = KeyedStream::new(db, pipeline());
+            for (i, chunk) in rows.chunks(2048).enumerate() {
+                let base = i * 2048;
+                st.wtx(|tx| {
+                    for (j, r) in chunk.iter().enumerate() {
+                        tx.upsert(&((base + j) as u32), r);
+                    }
+                });
+                let _ = status.send(format!("shelving the {} library · {}/{n}…", lib.label, base + chunk.len()));
+            }
+            st
+        } else {
+            let _ = status.send(format!("reshelving the {} library…", lib.label));
+            KeyedStream::new(db, pipeline())
+        };
+        let opened = t0.elapsed();
+        if fresh || opened.as_secs_f64() > 2.0 {
+            let _ = status.send(format!("checkpointing the {} graph…", lib.label));
+            let _ = st.rtx(|(vecs, _)| vecs.save_graph());
+        }
+        let n = st.rtx(|(_, docs)| docs.iter().count());
+        let _ = status.send(format!(
+            "{} ready · {n} sentences · {:.2}s{}",
+            lib.label,
+            opened.as_secs_f64(),
+            if opened.as_secs_f64() < 2.0 { " (snapshot fast-load)" } else { "" }
+        ));
+
+        while let Ok(req) = rx.recv() {
+            match req {
+                LibReq::Voice(text, reply) => {
+                    let hits = st.rtx(|(vecs, docs)| {
+                        vecs.search(&ese::encode_single(&text))
+                            .into_iter()
+                            .take(3)
+                            .map(|h| {
+                                let (title, text) = docs.get(&h.val).unwrap_or_default();
+                                VoiceHit { id: h.val, score: h.score, title, text }
+                            })
+                            .collect::<Vec<_>>()
+                    });
+                    let _ = reply.send(hits);
+                }
+                LibReq::Switch(id) => {
+                    if id != lib.id && lib_by_id(&id).is_some() {
+                        next = id;
+                        continue 'lib;
+                    }
+                }
+            }
+        }
+        return;
     }
 }
 
@@ -755,6 +818,7 @@ async fn serve_http(state: AppState) {
         .route("/voice", get(voice))
         .route("/restyle", axum::routing::post(restyle_route))
         .route("/pct", get(pct))
+        .route("/library", get(library))
         .route("/gale", get(gale_start))
         .with_state(state);
 
@@ -774,6 +838,27 @@ async fn pct(State(st): State<AppState>, Query(params): Query<HashMap<String, St
     }
 }
 
+/// `/library` — the reference-library selector: `?set=<id>` switches (the
+/// library thread does the shelving; status streams over the ws), bare GET
+/// reports what's on offer.
+async fn library(State(app): State<AppState>, Query(params): Query<HashMap<String, String>>) -> Json<serde_json::Value> {
+    if let Some(id) = params.get("set") {
+        let _ = app.voice_tx.send(LibReq::Switch(id.clone()));
+    }
+    let (id, label) = app.lib_rx.borrow().clone();
+    let libs: Vec<serde_json::Value> = LIBRARIES
+        .iter()
+        .map(|l| {
+            serde_json::json!({
+                "id": l.id,
+                "label": l.label,
+                "prepped": std::path::Path::new(l.jsonl).exists() || std::path::Path::new(l.db).exists(),
+            })
+        })
+        .collect();
+    Json(serde_json::json!({ "active": { "id": id, "label": label }, "libs": libs }))
+}
+
 async fn index() -> Html<&'static str> {
     Html(include_str!("ui.html"))
 }
@@ -787,11 +872,11 @@ async fn voice(
     Query(params): Query<HashMap<String, String>>,
 ) -> Json<serde_json::Value> {
     let text = params.get("text").cloned().unwrap_or_default();
-    if text.is_empty() || !app.status_rx.borrow().starts_with("canon ready") {
+    if text.is_empty() || !app.status_rx.borrow().contains("ready ·") {
         return Json(serde_json::json!({ "status": "loading", "hits": [] }));
     }
     let (otx, orx) = oneshot::channel();
-    if app.voice_tx.send((text, otx)).is_err() {
+    if app.voice_tx.send(LibReq::Voice(text, otx)).is_err() {
         return Json(serde_json::json!({ "status": "gone", "hits": [] }));
     }
     match orx.await {
@@ -809,7 +894,7 @@ async fn gale_start(State(app): State<AppState>, Query(params): Query<HashMap<St
         secs: num("secs", 10).clamp(1, 120) as u32,
         seed: num("seed", 42),
     };
-    if !app.status_rx.borrow().starts_with("canon ready") || !app.naive_rx.borrow().ready {
+    if !app.status_rx.borrow().contains("ready ·") || !app.naive_rx.borrow().ready {
         return Json(serde_json::json!({ "status": "loading" }));
     }
     {
@@ -833,15 +918,16 @@ async fn ws_upgrade(State(state): State<AppState>, ws: WebSocketUpgrade) -> impl
 }
 
 async fn handle_socket(mut socket: WebSocket, app: AppState) {
-    let AppState { edit_tx, mut doc_rx, mut status_rx, mut naive_rx, mut gale_rx, .. } = app;
-    let combined = |d: &DocState, c: &str, n: &NaiveState, g: &GaleState| {
-        serde_json::json!({ "doc": d, "canon": c, "naive": n, "gale": g }).to_string()
+    let AppState { edit_tx, mut doc_rx, mut status_rx, mut naive_rx, mut gale_rx, mut lib_rx, .. } = app;
+    let combined = |d: &DocState, c: &str, n: &NaiveState, g: &GaleState, l: &(String, String)| {
+        serde_json::json!({ "doc": d, "canon": c, "naive": n, "gale": g, "lib": { "id": l.0, "label": l.1 } }).to_string()
     };
     let hello = combined(
         &doc_rx.borrow_and_update(),
         &status_rx.borrow_and_update(),
         &naive_rx.borrow_and_update(),
         &gale_rx.borrow_and_update(),
+        &lib_rx.borrow_and_update(),
     );
     if socket.send(Message::text(hello)).await.is_err() {
         return;
@@ -850,22 +936,27 @@ async fn handle_socket(mut socket: WebSocket, app: AppState) {
         tokio::select! {
             changed = doc_rx.changed() => {
                 if changed.is_err() { return; }
-                let msg = combined(&doc_rx.borrow_and_update(), &status_rx.borrow(), &naive_rx.borrow(), &gale_rx.borrow());
+                let msg = combined(&doc_rx.borrow_and_update(), &status_rx.borrow(), &naive_rx.borrow(), &gale_rx.borrow(), &lib_rx.borrow());
                 if socket.send(Message::text(msg)).await.is_err() { return; }
             }
             changed = status_rx.changed() => {
                 if changed.is_err() { return; }
-                let msg = combined(&doc_rx.borrow(), &status_rx.borrow_and_update(), &naive_rx.borrow(), &gale_rx.borrow());
+                let msg = combined(&doc_rx.borrow(), &status_rx.borrow_and_update(), &naive_rx.borrow(), &gale_rx.borrow(), &lib_rx.borrow());
                 if socket.send(Message::text(msg)).await.is_err() { return; }
             }
             changed = naive_rx.changed() => {
                 if changed.is_err() { return; }
-                let msg = combined(&doc_rx.borrow(), &status_rx.borrow(), &naive_rx.borrow_and_update(), &gale_rx.borrow());
+                let msg = combined(&doc_rx.borrow(), &status_rx.borrow(), &naive_rx.borrow_and_update(), &gale_rx.borrow(), &lib_rx.borrow());
                 if socket.send(Message::text(msg)).await.is_err() { return; }
             }
             changed = gale_rx.changed() => {
                 if changed.is_err() { return; }
-                let msg = combined(&doc_rx.borrow(), &status_rx.borrow(), &naive_rx.borrow(), &gale_rx.borrow_and_update());
+                let msg = combined(&doc_rx.borrow(), &status_rx.borrow(), &naive_rx.borrow(), &gale_rx.borrow_and_update(), &lib_rx.borrow());
+                if socket.send(Message::text(msg)).await.is_err() { return; }
+            }
+            changed = lib_rx.changed() => {
+                if changed.is_err() { return; }
+                let msg = combined(&doc_rx.borrow(), &status_rx.borrow(), &naive_rx.borrow(), &gale_rx.borrow(), &lib_rx.borrow_and_update());
                 if socket.send(Message::text(msg)).await.is_err() { return; }
             }
             incoming = socket.recv() => {

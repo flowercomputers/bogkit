@@ -44,16 +44,22 @@ impl LenCdf {
     }
 }
 
-/// Open the length histogram, building it from canon.jsonl if empty, and
-/// publish the CDF on `out` (None if there is no canon to build from).
-pub fn open_or_build(status: &watch::Sender<String>, out: &watch::Sender<Option<Arc<LenCdf>>>) {
+/// Open a library's length histogram, building it from its jsonl if empty,
+/// and publish the CDF on `out` (None if there is nothing to build from).
+pub fn open_or_build(
+    label: &str,
+    len_db: &str,
+    jsonl: &str,
+    status: &watch::Sender<String>,
+    out: &watch::Sender<Option<Arc<LenCdf>>>,
+) {
     let mut st = Stream::new(
-        std::path::Path::new("data/canon_len.db"),
+        std::path::Path::new(len_db),
         ScoreBy::new(|w: &u32| *w, terminal::Histogram::new("len", |w: &u32| *w)),
     );
     let total = st.rtx(|hist| hist.total());
     if total == 0 {
-        let Ok(raw) = std::fs::read_to_string("data/canon.jsonl") else {
+        let Ok(raw) = std::fs::read_to_string(jsonl) else {
             let _ = out.send(None);
             return;
         };
@@ -62,7 +68,7 @@ pub fn open_or_build(status: &watch::Sender<String>, out: &watch::Sender<Option<
             .filter_map(|l| serde_json::from_str::<crate::CanonRow>(l).ok())
             .map(|r| r.text.split_whitespace().count() as u32)
             .collect();
-        let _ = status.send(format!("building length histogram · {} sentences…", words.len()));
+        let _ = status.send(format!("building the {label} length histogram · {} sentences…", words.len()));
         for chunk in words.chunks(8192) {
             st.wtx(|tx| {
                 for w in chunk {
@@ -84,7 +90,7 @@ pub fn open_or_build(status: &watch::Sender<String>, out: &watch::Sender<Option<
             .collect();
         LenCdf { buckets, total }
     });
-    let _ = status.send(format!("length histogram · {} sentences (Histogram sink, {})", cdf.total, if total == 0 { "built" } else { "from disk" }));
+    let _ = status.send(format!("{label} length histogram · {} sentences (Histogram sink, {})", cdf.total, if total == 0 { "built" } else { "from disk" }));
     let _ = out.send(Some(Arc::new(cdf)));
 }
 

@@ -29,6 +29,26 @@
     padding: 4px 10px; border-radius: 999px;
   }
   .chip.on { color: var(--ink); border-color: var(--ink); }
+  #mast { display: flex; gap: 46px; margin: 18px 0 10px; flex-wrap: wrap; }
+  .slot { position: relative; cursor: pointer; min-width: 120px; }
+  .slot .sl { font-style: italic; font-size: 12.5px; color: var(--faint); margin-bottom: 3px; }
+  .slot .sv { font-weight: 700; font-size: 15.5px; color: var(--ink); }
+  .slot .sv .caret { font-size: 10px; color: var(--faint); }
+  .slot .sv .none { font-weight: 400; color: var(--faint); font-style: italic; font-size: 13.5px; }
+  .slot .sv .sub2 { display: block; font-weight: 400; font-family: ui-monospace, Menlo, monospace; font-size: 9.5px; color: var(--faint); margin-top: 2px; max-width: 260px; }
+  .slot .sv .x { font-weight: 400; color: var(--faint); margin-left: 6px; cursor: pointer; }
+  .slot .sv .x:hover { color: #8c3b2e; }
+  .sm { display: none; position: absolute; z-index: 30; top: calc(100% + 6px); left: -8px; min-width: 230px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 5px; box-shadow: 0 10px 30px rgba(40,30,10,.14); padding: 5px; }
+  .slot.open .sm { display: block; }
+  .sm .mi { display: flex; align-items: baseline; gap: 8px; padding: 6px 9px; border-radius: 3px; cursor: pointer; font-size: 13.5px; }
+  .sm .mi:hover { background: rgba(40,30,10,.05); }
+  .sm .mi.on { font-weight: 700; }
+  .sm .mi .k { font-family: ui-monospace, Menlo, monospace; font-size: 9.5px; color: var(--faint); margin-left: auto; white-space: nowrap; }
+  .sm .mi.dis { color: var(--faint); cursor: default; font-style: italic; }
+  .sm .mi .hue { display: inline-block; width: 14px; height: 8px; border-radius: 2px; }
+  .sm .mi .x2 { color: var(--faint); padding: 0 4px; }
+  .sm .mi .x2:hover { color: #8c3b2e; }
   .lenskey { font-family: ui-monospace, Menlo, monospace; font-size: 10.5px; color: var(--faint); min-height: 16px; margin-bottom: 26px; }
   #doc { font-size: 18.5px; line-height: 1.85; }
   #doc .para { margin: 0 0 15px; }
@@ -239,11 +259,25 @@
   <div id="galebar"></div>
   <main>
     <h1>Soundings</h1>
-    <div class="sub">it reads while you write — it never writes<button id="instru" title="surface the machinery: fold's instrument plate, the ledger, the gale">◉ instruments</button></div>
+    <div class="sub">it reads while you write — it writes only where you point<button id="instru" title="surface the machinery: fold's instrument plate, the ledger, the gale">◉ instruments</button></div>
+    <div id="mast">
+      <div class="slot" id="slot-lib">
+        <div class="sl">Type of writing</div>
+        <div class="sv" id="libval">novel <span class="caret">▾</span></div>
+        <div class="sm" id="libmenu"></div>
+      </div>
+      <div class="slot" id="slot-feel">
+        <div class="sl">What should it feel like?</div>
+        <div class="sv" id="feelval">quiet <span class="caret">▾</span></div>
+        <div class="sm" id="feelmenu"></div>
+      </div>
+      <div class="slot" id="slot-insp">
+        <div class="sl">Who are your inspirations?</div>
+        <div class="sv" id="inspval"><span class="none">— pick from the voices</span></div>
+        <div class="sm" id="inspmenu"></div>
+      </div>
+    </div>
     <div class="chips">
-      <button class="chip" data-lens="off">plain</button>
-      <button class="chip on" data-lens="axis">concrete —— abstract</button>
-      <button class="chip" data-lens="len">length</button>
       <button id="galechip" title="replay scripted edits at 60/s for 10s against a naive full-rescan arm">▶ gale</button>
     </div>
     <div class="lenskey" id="lenskey"></div>
@@ -273,6 +307,11 @@
 <script>
 let state = { rows: [], hud: {} };
 let canon = "";
+let lib = { id: "canon", label: "novel" };
+let insp = null;      // pinned inspiration: { title, text } from the voices
+let lastHits = [];    // most recent voice-card hits
+const LIB_NOUN = { canon: "the canon", screen: "1,172 films", contracts: "10-K contracts" };
+const libNoun = () => LIB_NOUN[lib.id] || "the library";
 let lens = localStorage.getItem("soundings.lens") || "off";
 let dirtyAt = 0, syncTimer = null, lastSyncedDom = "";
 
@@ -281,7 +320,7 @@ const $ = (id) => document.getElementById(id);
 const LENSKEY = {
   off: "",
   axis: "cool wash = concrete, amber wash = abstract — projection onto a sentence-anchored axis",
-  len: "deeper moss = longer sentence (words, relative to this document) · the margin lane shows your caret sentence's percentile vs 129,097 canon sentences",
+  len: "deeper moss = longer sentence (words, relative to this document) · the margin lane shows your caret sentence's percentile vs the active library",
 };
 
 function paint(r, maxW) {
@@ -415,8 +454,8 @@ function hudWords(h) {
   }
 }
 function canonWords(c) {
-  const m = /^canon ready · (\d+) sentences · ([\d.]+)s/.exec(c);
-  return m ? `the library — ${(+m[1]).toLocaleString()} sentences from 20 classics — opened in ${m[2]}s` : c;
+  const m = /^(.+?) ready · (\d+) sentences · ([\d.]+)s/.exec(c);
+  return m ? `the ${m[1]} library — ${(+m[2]).toLocaleString()} sentences — opened in ${m[3]}s` : c;
 }
 function recordLedger(h) {
   if (h.seq === lastLedgerSeq) return;
@@ -633,6 +672,18 @@ function renderPullRow() {
     b.onclick = () => askRestyle({ mode: "axis", dir });
     box.appendChild(b);
   }
+  if (insp) {
+    const b = document.createElement("button");
+    const short = insp.title.length > 22 ? insp.title.slice(0, 22) + "…" : insp.title;
+    b.textContent = `→ toward ${short}`;
+    b.title = `redraft toward your pinned inspiration's nearest exemplar — verified by cos-dist`;
+    b.onclick = () => {
+      // the freshest exemplar from the pinned title, else the pinned sample
+      const hit = lastHits.find((h) => h.title === insp.title) || insp;
+      askRestyle({ mode: "voice", target_text: hit.text, target_title: insp.title });
+    };
+    box.appendChild(b);
+  }
 }
 function paraTextOf(pi) {
   const block = blocks()[pi];
@@ -688,17 +739,10 @@ $("instru").onclick = () => {
   localStorage.setItem("soundings.instruments", on ? "1" : "0");
 };
 
-// one delegated handler: seeded chips, user-lens chips (dynamic), their × and + lens
+// the chips row keeps lens authoring and the gale; lens selection lives in
+// the masthead's feel slot
 document.querySelector(".chips").addEventListener("click", (e) => {
-  const x = e.target.closest("[data-unlens]");
-  if (x) { e.stopPropagation(); send({ op: "unlens", id: +x.dataset.unlens }); return; }
   if (e.target.closest("#lensadd")) { openLensCard(); return; }
-  const c = e.target.closest(".chip[data-lens]");
-  if (!c) return;
-  lens = c.dataset.lens;
-  localStorage.setItem("soundings.lens", lens);
-  document.querySelectorAll(".chip[data-lens]").forEach((y) => y.classList.toggle("on", y === c));
-  render();
 });
 
 // ---- corrigendum (branch C): retract = strike, never delete ----
@@ -789,7 +833,7 @@ let demoFired = false;
 function maybeDemo() {
   if (demoFired || new URLSearchParams(location.search).get("demo") !== "retract") return;
   const r = state.rows.find((x) => x.id === 9);
-  if (!r || !canon.startsWith("canon ready")) return;
+  if (!r || !canon.includes("ready ·")) return;
   demoFired = true;
   fetchVoice(r.text, r.id).then(() => { noteRetract(r); send({ op: "remove", id: r.id }); });
   // dry-run hygiene: the un-retcon fires by itself after 12s so a screenshot pass leaves the doc as it was
@@ -827,20 +871,32 @@ const DEMO_LENS = new URLSearchParams(location.search).get("demo") === "lens";
 let demoLensDone = false, demoLensSelect = false;
 const DEMO_A = "The rain hit the tin roof all night.", DEMO_B = "Meaning is what survives translation.";
 
+const FEELS = [
+  { lens: "off", word: "quiet", k: "no paint" },
+  { lens: "axis", word: "textured", k: "concrete —— abstract" },
+  { lens: "len", word: "measured", k: "length" },
+];
+function feelWord() {
+  const f = FEELS.find((f) => f.lens === lens);
+  if (f) return f.word;
+  const d = (state.lenses || []).find((x) => "user:" + x.id === lens);
+  return d ? d.name : "quiet";
+}
+function selectLens(l) {
+  lens = l;
+  localStorage.setItem("soundings.lens", lens);
+  document.querySelectorAll(".slot").forEach((x) => x.classList.remove("open"));
+  render();
+}
 function renderLensChips() {
   const chips = document.querySelector(".chips");
-  let box = $("userchips");
-  if (!box) {
-    box = document.createElement("span");
-    box.id = "userchips";
-    box.style.display = "contents";
-    chips.querySelector('.chip[data-lens="len"]').after(box);
+  if (!$("lensadd")) {
     const add = document.createElement("button");
     add.id = "lensadd";
     add.className = "chip dash";
     add.textContent = "+ lens";
     add.title = "author a lens from two anchor sentences — one backfill wtx over the doc";
-    box.after(add);
+    chips.prepend(add);
   }
   const defs = state.lenses || [];
   const ids = defs.map((d) => d.id);
@@ -851,16 +907,24 @@ function renderLensChips() {
   }
   knownLensIds = ids;
   if (lens.startsWith("user:") && !ids.includes(+lens.slice(5))) lens = "off";
-  box.replaceChildren(...defs.map((d, i) => {
-    const b = document.createElement("button");
-    b.className = "chip user" + (lens === "user:" + d.id ? " on" : "");
-    b.dataset.lens = "user:" + d.id;
+  // the feel slot: seeded feels + authored lenses, one menu
+  $("feelval").innerHTML = `${esc(feelWord())} <span class="caret">▾</span>`;
+  const items = FEELS.map((f) => {
+    const d = document.createElement("div");
+    d.className = "mi" + (lens === f.lens ? " on" : "");
+    d.innerHTML = `<span>${esc(f.word)}</span><span class="k">${esc(f.k)}</span>`;
+    d.onclick = () => selectLens(f.lens);
+    return d;
+  }).concat(defs.map((df, i) => {
+    const d = document.createElement("div");
+    d.className = "mi" + (lens === "user:" + df.id ? " on" : "");
     const pr = LENS_PAIR(i);
-    b.innerHTML = `<i class="hue" style="background:linear-gradient(90deg,${pr.cool(.55)},${pr.warm(.55)})"></i>${esc(d.name)} ✎<span class="x" data-unlens="${d.id}" title="retract this lens — one wtx">×</span>`;
-    b.title = `A: ${d.a}\nB: ${d.b}`;
-    return b;
+    d.innerHTML = `<span class="hue" style="background:linear-gradient(90deg,${pr.cool(.55)},${pr.warm(.55)})"></span><span>${esc(df.name)}</span><span class="k">yours</span><span class="x2" data-unlens="${df.id}" title="retract this lens — one wtx">×</span>`;
+    d.title = `A: ${df.a}\nB: ${df.b}`;
+    d.onclick = (e) => { if (e.target.closest("[data-unlens]")) { send({ op: "unlens", id: df.id }); return; } selectLens("user:" + df.id); };
+    return d;
   }));
-  document.querySelectorAll(".chip[data-lens]").forEach((x) => x.classList.toggle("on", x.dataset.lens === lens));
+  $("feelmenu").replaceChildren(...items);
   if (lensCard) { const go = lensCard.querySelector(".lc-go"); if (go) go.textContent = `backfill · ${state.rows.length} rows · one wtx ⏎`; }
   // ?demo=lens — for the headless screenshot: author the rain/meaning lens once, select it, open the card too
   if (DEMO_LENS && !demoLensDone && state.rows && state.rows.length) {
@@ -957,7 +1021,7 @@ function renderChips(doc) {
   chip.contentEditable = "false";
   chip.style.top = top + "px";
   chip.innerHTML = `<span class="us"><b>${h.wall_us}µs</b><span class="lbl">wtx</span></span>` +
-    (row.pct != null ? `<span class="pct">len · ${ordinal(row.pct)} pct of canon</span>` : "");
+    (row.pct != null ? `<span class="pct">len · ${ordinal(row.pct)} pct of ${libNoun()}</span>` : "");
   doc.appendChild(chip);
   setTimeout(() => chip.classList.add("fade"), 4000);
 }
@@ -974,6 +1038,65 @@ function maybeDemoChips() {
   setTimeout(() => send({ op: "edit", id: 3, text: orig.replace(/\.$/, "") + " — hazards blinking." }), 400);
   setTimeout(() => send({ op: "edit", id: 3, text: orig }), 9000); // leave the doc as it was
 }
+
+// ---------- the masthead: three PenPal slots ----------
+document.querySelectorAll(".slot").forEach((sl) => {
+  sl.querySelector(".sv").addEventListener("click", (e) => {
+    if (e.target.closest(".x")) return;
+    const was = sl.classList.contains("open");
+    document.querySelectorAll(".slot").forEach((x) => x.classList.remove("open"));
+    if (!was) sl.classList.add("open");
+    e.stopPropagation();
+  });
+});
+document.addEventListener("click", (e) => {
+  if (!e.target.closest(".slot")) document.querySelectorAll(".slot").forEach((x) => x.classList.remove("open"));
+});
+
+let libsInfo = [];
+async function refreshLibs() {
+  try { libsInfo = (await (await fetch("/library")).json()).libs || []; } catch { /* offline */ }
+  renderMast();
+}
+function setLibrary(id) {
+  fetch(`/library?set=${encodeURIComponent(id)}`).catch(() => {});
+  document.querySelectorAll(".slot").forEach((x) => x.classList.remove("open"));
+}
+function renderMast() {
+  // type of writing
+  const ready = canon.includes("ready ·");
+  $("libval").innerHTML = `${esc(lib.label)} <span class="caret">▾</span>` +
+    (ready ? "" : `<span class="sub2">${esc(canon)}</span>`);
+  $("libmenu").replaceChildren(...libsInfo.map((l) => {
+    const d = document.createElement("div");
+    d.className = "mi" + (l.id === lib.id ? " on" : "") + (l.prepped ? "" : " dis");
+    d.innerHTML = `<span>${esc(l.label)}</span><span class="k">${l.prepped ? (l.id === lib.id ? "active" : "shelved") : "not prepped yet"}</span>`;
+    if (l.prepped && l.id !== lib.id) d.onclick = () => setLibrary(l.id);
+    return d;
+  }));
+  // feel (the lens, in felt language) — rendered by renderLensChips
+  // inspiration
+  $("inspval").innerHTML = insp
+    ? `${esc(insp.title.length > 26 ? insp.title.slice(0, 26) + "…" : insp.title)}<span class="x" title="unpin">×</span>`
+    : `<span class="none">— pick from the voices</span> <span class="caret">▾</span>`;
+  const xBtn = $("inspval").querySelector(".x");
+  if (xBtn) xBtn.onclick = (e) => { e.stopPropagation(); insp = null; renderMast(); renderPullRow(); };
+  const titles = [...new Map(lastHits.map((h) => [h.title, h])).values()];
+  $("inspmenu").replaceChildren(...(titles.length ? titles : []).map((h) => {
+    const d = document.createElement("div");
+    d.className = "mi" + (insp && insp.title === h.title ? " on" : "");
+    d.innerHTML = `<span>${esc(h.title.length > 30 ? h.title.slice(0, 30) + "…" : h.title)}</span><span class="k">pin</span>`;
+    d.onclick = () => { insp = { title: h.title, text: h.text }; document.querySelectorAll(".slot").forEach((x) => x.classList.remove("open")); renderMast(); renderPullRow(); };
+    return d;
+  }));
+  if (!titles.length) {
+    const d = document.createElement("div");
+    d.className = "mi dis";
+    d.textContent = "put your caret in a sentence first — its voices become pinnable";
+    $("inspmenu").replaceChildren(d);
+  }
+}
+refreshLibs();
 
 // ---------- paint: quantized highlight buckets, generated from the same
 // ramps the span era used. Highlights never touch the editable DOM.
@@ -1063,9 +1186,11 @@ async function fetchVoice(text, forId) {
     const data = await res.json();
     if (seq !== voiceSeq) return;
     if (data.status !== "ok" || !data.hits.length) {
-      v.innerHTML = '<div class="empty">canon still reshelving — try again in a moment.</div>';
+      v.innerHTML = '<div class="empty">the library is still reshelving — try again in a moment.</div>';
       return;
     }
+    lastHits = data.hits;
+    renderMast();
     v.replaceChildren(...data.hits.map((h) => {
       const d = document.createElement("div");
       d.className = "hit";
@@ -1097,7 +1222,7 @@ const tile = (head, cells) =>
 function renderGale() {
   const g = gale || {}, n = naive || {};
   const chip = $("galechip");
-  const ready = canon.startsWith("canon ready") && n.ready;
+  const ready = canon.includes("ready ·") && n.ready;
   chip.disabled = !ready || !!g.running;
   chip.textContent = g.running ? "▶ gale · running" : ready ? "▶ gale" : "▶ gale · waiting for canon";
   if (g.running) galeDismissed = false;
@@ -1195,6 +1320,15 @@ function connect() {
     const m = JSON.parse(ev.data);
     state = m.doc; canon = m.canon;
     naive = m.naive; gale = m.gale;
+    if (m.lib && m.lib.id !== lib.id) {
+      lib = m.lib;
+      insp = null;          // inspirations belong to their library
+      lastHits = [];
+      $("voice").innerHTML = '<div class="empty">the library is reshelving — voices return in a moment.</div>';
+      refreshLibs();
+      renderPullRow();
+    } else if (m.lib) { lib = m.lib; }
+    renderMast();
     render();
     renderGale();
     maybeDemo();
