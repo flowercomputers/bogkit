@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sundew</title>
+<style>
+  :root {
+    --peat: #161310;
+    --ink: #efe6da;
+    --dim: #b7aa99;
+    --line: #3a322b;
+    --rust: #d07a45;
+    --moss: #7ea37a;
+    --gold: #d4b06a;
+    --paper: #221c17;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, sans-serif;
+    --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+    --serif: "Iowan Old Style", Palatino, Georgia, serif;
+  }
+  * { box-sizing: border-box }
+  html, body { margin: 0; height: 100%; background: var(--peat); color: var(--ink); font: 15px/1.45 var(--sans) }
+  header {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 16px;
+    padding: 16px 20px 12px; border-bottom: 1px solid var(--line);
+  }
+  header h1 { font: 600 28px/1 var(--serif); margin: 0; letter-spacing: -.02em }
+  header p { margin: 0; color: var(--dim); font-size: 13px }
+  .grid {
+    display: grid;
+    grid-template-columns: 280px 1fr 300px;
+    height: calc(100% - 62px);
+  }
+  section { overflow: auto; padding: 14px 16px 24px; border-right: 1px solid var(--line) }
+  section:last-child { border-right: 0 }
+  h2 {
+    font: 11px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase;
+    color: var(--gold); margin: 0 0 10px;
+  }
+  .item, .line {
+    border: 1px solid var(--line); background: var(--paper);
+    border-radius: 10px; padding: 9px 10px; margin: 0 0 8px;
+  }
+  .item b, .line b { display: block; font-size: 13px; margin: 2px 0 2px }
+  .chip {
+    display: inline-block; font: 10px/1 var(--mono); letter-spacing: .06em;
+    text-transform: uppercase; padding: 3px 6px; border-radius: 999px;
+    border: 1px solid var(--line); color: var(--dim); margin-right: 6px;
+  }
+  .chip.comment { color: #f0c9a0; border-color: #8a5a38 }
+  .chip.wiki { color: #cfe0cc; border-color: #4d6a4c }
+  .chip.artifact { color: #c9d6e4; border-color: #4a5a6a }
+  .chip.ticket { color: var(--dim) }
+  .line .body { color: var(--dim); font-size: 13px; margin: 6px 0 0; white-space: pre-wrap }
+  .bar { height: 8px; background: #2a241e; border-radius: 99px; overflow: hidden; margin: 8px 0 14px }
+  .bar > i { display: block; height: 100%; background: linear-gradient(90deg, var(--moss), var(--gold)); width: 0 }
+  .ask { display: flex; gap: 8px; margin: 0 0 12px }
+  input {
+    flex: 1; background: #1b1612; color: var(--ink); border: 1px solid var(--line);
+    border-radius: 8px; padding: 8px 10px; font: 14px var(--sans);
+  }
+  button {
+    background: #2a211b; color: var(--ink); border: 1px solid var(--line);
+    border-radius: 8px; padding: 8px 10px; font: 12px/1 var(--mono); cursor: pointer;
+  }
+  button.primary { background: #6a3c22; border-color: #a35a32; color: #ffe8d4 }
+  button:hover { filter: brightness(1.08) }
+  .meta { color: var(--dim); font: 12px/1.4 var(--mono); margin: 0 0 10px }
+  .gone { opacity: .35; text-decoration: line-through }
+  .flag { font: 12px var(--mono); color: var(--moss) }
+  .flag.off { color: #8a6a5a }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Sundew</h1>
+    <p>it only sticks to what matters · fold is the index, files stay the database</p>
+  </div>
+  <div class="meta" id="flags"></div>
+</header>
+<div class="grid">
+  <section>
+    <h2>Swamp</h2>
+    <div class="meta" id="kinds"></div>
+    <div id="swamp"></div>
+  </section>
+  <section>
+    <h2>Briefing · next session</h2>
+    <div class="ask">
+      <input id="q" value="how should we store refresh tokens?" />
+      <button id="ask">ask</button>
+    </div>
+    <div class="meta" id="packmeta"></div>
+    <div class="bar"><i id="bar"></i></div>
+    <div id="briefing"></div>
+  </section>
+  <section>
+    <h2>Mutate</h2>
+    <p class="meta">The clap is a comment, then a retract. One delta resticks every view.</p>
+    <p><button class="primary" id="comment">Human comment lands</button></p>
+    <p><button id="retract">Retract stale wiki</button></p>
+    <p><button id="reset">Reset swamp</button></p>
+    <p class="meta">comment &gt; wiki &gt; artifact &gt; ticket · budget 1800 tokens</p>
+  </section>
+</div>
+<script>
+const ws = new WebSocket(`ws://${location.host}/ws`);
+const $ = (id) => document.getElementById(id);
+const send = (op, q) => ws.send(JSON.stringify({ op, q: q || "" }));
+ws.onmessage = (event) => {
+  const s = JSON.parse(event.data);
+  $("q").value = s.briefing.query;
+  $("kinds").textContent = s.kinds.map((k) => `${k.kind} ${k.n}`).join(" · ");
+  $("flags").innerHTML =
+    `<span class="flag ${s.live.comment_landed ? "" : "off"}">comment ${s.live.comment_landed ? "in" : "out"}</span> · ` +
+    `<span class="flag ${s.live.wiki_retracted ? "" : "off"}">wiki ${s.live.wiki_retracted ? "retracted" : "stale"}</span>`;
+  $("packmeta").textContent =
+    `${s.briefing.tokens} / ${s.briefing.budget} tokens · ${s.briefing.pack_us} µs · ${s.briefing.lines.length} stuck`;
+  $("bar").style.width = Math.min(100, (s.briefing.tokens / s.briefing.budget) * 100) + "%";
+  $("swamp").replaceChildren(...s.swamp.map((item) => {
+    const el = document.createElement("div");
+    el.className = "item" + (item.id === "wiki/session-lifecycle" ? "" : "");
+    el.innerHTML = `<span class="chip ${item.kind}">${item.kind}</span><b>${item.title}</b><span class="meta">${item.task || "wiki"} · ${item.id}</span>`;
+    return el;
+  }));
+  $("briefing").replaceChildren(...s.briefing.lines.map((line) => {
+    const el = document.createElement("div");
+    el.className = "line";
+    el.innerHTML =
+      `<span class="chip ${line.kind}">${line.kind}</span>` +
+      `<span class="chip">${line.score.toFixed(3)}</span>` +
+      `<span class="chip">${line.tokens} tok</span>` +
+      `<b>${line.title}</b>` +
+      `<div class="body">${line.body}</div>`;
+    return el;
+  }));
+};
+$("ask").onclick = () => send("ask", $("q").value);
+$("q").onkeydown = (e) => { if (e.key === "Enter") send("ask", $("q").value); };
+$("comment").onclick = () => send("comment");
+$("retract").onclick = () => send("retract");
+$("reset").onclick = () => send("reset");
+</script>
+</body>
+</html>
