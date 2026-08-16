@@ -46,6 +46,14 @@ impl<'tx, D: Clone, P: Push<D>> Tx<'_, 'tx, D, P> {
         self.push(data, -1);
     }
 
+    /// The raw store transaction, for writing metadata keyspaces (opened
+    /// with [`Stream::meta_keyspace`]) atomically with this transaction's
+    /// pipeline pushes. Metadata writes commit and roll back with the
+    /// transaction exactly like sink state.
+    pub fn meta(&mut self) -> &mut WriteTx<'tx> {
+        self.tx
+    }
+
     /// Read every sink from this write transaction's own uncommitted state.
     ///
     /// First flushes buffered operator state down the pipeline — the same
