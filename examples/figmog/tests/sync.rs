@@ -107,3 +107,133 @@ fn reopen_resumes_persisted_state() {
         assert_eq!(nodes.iter().count(), 12);
     });
 }
+
+/// Pull v2 over v1 with the sweep enabled, capturing probe deltas.
+fn pull_with_sweep(
+    st: &mut fold::stream::KeyedStream<Id, Rec, impl fold::pipeline::Push<Keyed<Id, Rec>>>,
+    fixture: &serde_json::Value,
+    prior: BTreeSet<Id>,
+    synced_at: u64,
+) -> Churn {
+    let flattened = flatten_file(fixture).unwrap();
+    sync(st, &prior, &flattened, synced_at)
+}
+
+#[test]
+fn v1_to_v2_minimal_churn_and_index_consistency() {
+    let dir = tempfile::tempdir().unwrap();
+    let counter = Rc::new(Cell::new(0usize));
+    let mut st = open_probed!(dir.path().join("db"), counter);
+    pull(&mut st, &common::fixture_v1());
+
+    let prior = st.rtx(|((nodes, ..), components, component_sets, styles, _, _, _)| {
+        figmog::store::collect_sweepable(&nodes, &components, &component_sets, &styles)
+    });
+    counter.set(0);
+    let churn = pull_with_sweep(&mut st, &common::fixture_v2(), prior, 1_000);
+
+    // v2 has 18 records: 12 nodes (12 - 1:9 + 1:4) + 3 components + 1 set
+    // + 2 styles. changed: 1:2 (rename), 1:3 (variant repoint). added: 1:4.
+    // removed: 1:9. unchanged: 18 - 1 - 2 = 15 (meta row is not counted).
+    assert_eq!(churn, Churn { added: 1, changed: 2, removed: 1, unchanged: 15 });
+    // pushes: changed 2×2 + added 1 + removed 1 + meta retract/insert 2 = 8
+    assert_eq!(counter.get(), 8);
+
+    st.rtx(|((nodes, children, text, instances_of, _styled, _bound, by_type),
+             _c, _cs, _s, _v, _vc, meta)| {
+        // rename re-indexed in bm25
+        assert!(text.search("Headline", 5).iter().any(|h| h.val == "1:2"));
+        assert!(!text.search("Title", 5).iter().any(|h| h.val == "1:2"));
+        // deleted node gone everywhere
+        assert!(nodes.get(&"1:9".to_string()).is_none());
+        assert!(!by_type.search(&"RECTANGLE".to_string()).contains(&"1:9".to_string()));
+        let kids = children.get(&"0:1".to_string());
+        assert!(!kids.iter().any(|(_, id)| id == "1:9"));
+        // instance repoint moved the inverted index posting
+        assert_eq!(instances_of.search(&"2:2".to_string()), Vec::<String>::new());
+        assert_eq!(instances_of.search(&"2:3".to_string()), vec!["1:3".to_string()]);
+        // new node present
+        assert_eq!(nodes.get(&"1:4".to_string()).unwrap().name, "Subtitle");
+        assert!(text.search("Planting", 5).iter().any(|h| h.val == "1:4"));
+        assert_eq!(meta.get(&0).unwrap().version, "101");
+    });
+}
+
+#[test]
+fn sweep_never_touches_variables() {
+    use figmog::model::{VariableCollectionRec, VariableRec};
+    let dir = tempfile::tempdir().unwrap();
+    let mut st = figmog::open_store!(dir.path().join("db"));
+    pull(&mut st, &common::fixture_v1());
+    // hand-insert an imported variable, then re-pull with a full sweep set
+    st.wtx(|tx| {
+        tx.upsert(
+            &Id::Variable("VariableID:100".into()),
+            &Rec::Variable(VariableRec {
+                id: "VariableID:100".into(),
+                name: "color/bg".into(),
+                resolved_type: "COLOR".into(),
+                collection_id: "VC:1".into(),
+                values_by_mode: vec![("M:1".into(), "{\"r\":0.06}".into())],
+                description: String::new(),
+                scopes: vec![],
+            }),
+        );
+        tx.upsert(
+            &Id::VariableCollection("VC:1".into()),
+            &Rec::VariableCollection(VariableCollectionRec {
+                id: "VC:1".into(),
+                name: "core".into(),
+                modes: vec![("M:1".into(), "light".into())],
+                default_mode_id: "M:1".into(),
+            }),
+        );
+    });
+    let prior = st.rtx(|((nodes, ..), components, component_sets, styles, _, _, _)| {
+        figmog::store::collect_sweepable(&nodes, &components, &component_sets, &styles)
+    });
+    pull_with_sweep(&mut st, &common::fixture_v2(), prior, 2_000);
+    st.rtx(|(_, _, _, _, vars, colls, _)| {
+        assert!(vars.get(&"VariableID:100".to_string()).is_some());
+        assert!(colls.get(&"VC:1".to_string()).is_some());
+    });
+}
+
+#[test]
+fn panicking_transaction_rolls_back_entirely() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut st = figmog::open_store!(dir.path().join("db"));
+    pull(&mut st, &common::fixture_v1());
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        st.wtx(|tx| {
+            tx.upsert(
+                &Id::Node("9:9".into()),
+                &Rec::Node(figmog::model::NodeRec {
+                    id: "9:9".into(),
+                    parent_id: Some("0:1".into()),
+                    child_index: 7,
+                    page_id: "0:1".into(),
+                    node_type: "FRAME".into(),
+                    name: "doomed".into(),
+                    visible: true,
+                    text: None,
+                    component_id: None,
+                    component_properties: vec![],
+                    property_definitions: None,
+                    style_refs: vec![],
+                    bound_variables: vec![],
+                    abs_bounds: None,
+                    raw: "{}".into(),
+                }),
+            );
+            panic!("mid-transaction failure");
+        })
+    }));
+    assert!(result.is_err());
+    st.rtx(|((nodes, ..), _, _, _, _, _, meta)| {
+        assert!(nodes.get(&"9:9".to_string()).is_none(), "aborted upsert must not persist");
+        assert_eq!(nodes.iter().count(), 12);
+        assert_eq!(meta.get(&0).unwrap().version, "100");
+    });
+}
