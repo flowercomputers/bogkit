@@ -199,7 +199,7 @@ pub fn naive_ingest(
     let mut strides: Vec<u64> = Vec::new();
 
     let apply = |doc: &mut Vec<(u32, String)>, op: &EditOp| match op {
-        EditOp::Edit { id, text } | EditOp::Restore { id, text, .. } => {
+        EditOp::Edit { id, text, .. } | EditOp::Restore { id, text, .. } => {
             if let Some(r) = doc.iter_mut().find(|r| r.0 == *id) {
                 r.1 = text.clone();
             } else {
@@ -405,7 +405,7 @@ pub fn run_gale(
         let (id, ref orig) = originals[idx];
         let text = if k % 7 == 6 { orig.clone() } else { mutate(&current[idx].1, &mut rng) };
         current[idx].1 = text.clone();
-        let e = Edit { op: EditOp::Edit { id, text }, seq: base + k + 1, ts: Instant::now() };
+        let e = Edit { op: EditOp::Edit { id, text, para: None, ord: None }, seq: base + k + 1, ts: Instant::now() };
         let e2 = Edit { op: e.op.clone(), seq: e.seq, ts: e.ts };
         if edit_tx.send(e).is_err() {
             break;
@@ -472,7 +472,7 @@ pub fn run_gale(
     for (idx, (id, orig)) in originals.iter().enumerate() {
         if current[idx].1 != *orig {
             restore_seq += 1;
-            let e = Edit { op: EditOp::Edit { id: *id, text: orig.clone() }, seq: restore_seq, ts: Instant::now() };
+            let e = Edit { op: EditOp::Edit { id: *id, text: orig.clone(), para: None, ord: None }, seq: restore_seq, ts: Instant::now() };
             if edit_tx.send(e).is_err() {
                 break;
             }
