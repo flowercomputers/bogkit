@@ -3,7 +3,7 @@
 Memorize. Do not improvise a product tour.
 Phone timer. If wifi dies: `cargo run -p sundew -- --script`.
 
-**Stage first.** Open http://localhost:3000, press `f` or click **Stage**, then start the timer.
+**Full briefing first.** Open http://localhost:3012 (or :3000 if that process is current), press `f` or click **Full briefing**, then start the timer.
 
 - **0:00–0:10** — Agents don’t need another grep. They need the 2k tokens that are true right now.
 - **0:10–0:25** — Alinery’s filesystem is the database. Sundew is the query engine. Hit **Replay**.
