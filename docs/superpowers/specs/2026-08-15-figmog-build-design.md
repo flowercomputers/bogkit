@@ -293,6 +293,14 @@ that dumps the REST-shaped JSON). Imports flow through the same
 `KeyedStream`, so re-imports diff incrementally like everything else and
 `figmog vars` prefers authoritative records over inference when present.
 
+A third source exists for paid seats only, noted for completeness and
+deliberately **not** built in v1: Figma's MCP servers expose
+`get_variable_defs`, but the desktop server needs a Dev/Full seat on a
+paid plan, the remote server allows Starter users only 6 tool calls per
+*month*, and the tool is selection-scoped rather than
+full-collections. Anyone with a paid seat can pipe its output into
+`import-variables` by hand; figmog never depends on MCP.
+
 Everything else the Tailwind layer needs is already mirrored at full
 fidelity in `raw` and queryable through the indexes: TypeStyle (font
 family/size/weight/line-height/letter-spacing), fills/strokes/effects,
