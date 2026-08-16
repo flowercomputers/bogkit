@@ -30,6 +30,7 @@ pub mod replica;
 pub mod store;
 pub mod sync;
 pub mod time;
+pub mod transport;
 pub mod vector;
 
 pub use frame::{Frame, FrameHash, ReplicaId, ZERO_HASH, decode_record};
