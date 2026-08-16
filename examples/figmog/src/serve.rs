@@ -190,11 +190,26 @@ pub(crate) fn run_serve(
                 Tick::Changed { .. } => {
                     let pull_result: Result<store::Churn, PullError> = (|| {
                         let resp = api_ref.file(watch_key)?;
-                        let flattened = flatten_file(&resp).map_err(|e| e.to_string())?;
-                        let prior: BTreeSet<Id> =
+                        // Opportunistic Enterprise variables sync (spec
+                        // §12): `Ok(None)` on non-Enterprise plans is not an
+                        // error — v1 behavior (import/inference,
+                        // sweep-exempt) holds unchanged below.
+                        let vars_resp = api_ref.variables_local(watch_key)?;
+                        let mut flattened = flatten_file(&resp).map_err(|e| e.to_string())?;
+                        let mut prior: BTreeSet<Id> =
                             st.rtx(|((nodes, ..), components, component_sets, styles, ..)| {
                                 collect_sweepable(&nodes, &components, &component_sets, &styles)
                             });
+                        if let Some(v) = &vars_resp {
+                            let var_recs = crate::vars::parse_variables_export(v)
+                                .map_err(|e| e.to_string())?;
+                            flattened.recs.extend(var_recs);
+                            let stored_var_ids =
+                                st.rtx(|(_, _, _, _, variables, variable_collections, _, _)| {
+                                    store::collect_variable_ids(&variables, &variable_collections)
+                                });
+                            prior.extend(stored_var_ids);
+                        }
                         Ok(store::sync(&mut st, &prior, &flattened, now_ms()))
                     })();
                     match pull_result {
@@ -248,11 +263,26 @@ pub(crate) fn run_serve(
                 let sync_api = UreqApi::new(token);
                 let pull_result: Result<store::Churn, PullError> = (|| {
                     let resp = sync_api.file(&sync_key)?;
-                    let flattened = flatten_file(&resp).map_err(|e| e.to_string())?;
-                    let prior: BTreeSet<Id> =
+                    // Opportunistic Enterprise variables sync (spec §12):
+                    // `Ok(None)` on non-Enterprise plans is not an error —
+                    // v1 behavior (import/inference, sweep-exempt) holds
+                    // unchanged below.
+                    let vars_resp = sync_api.variables_local(&sync_key)?;
+                    let mut flattened = flatten_file(&resp).map_err(|e| e.to_string())?;
+                    let mut prior: BTreeSet<Id> =
                         st.rtx(|((nodes, ..), components, component_sets, styles, ..)| {
                             collect_sweepable(&nodes, &components, &component_sets, &styles)
                         });
+                    if let Some(v) = &vars_resp {
+                        let var_recs =
+                            crate::vars::parse_variables_export(v).map_err(|e| e.to_string())?;
+                        flattened.recs.extend(var_recs);
+                        let stored_var_ids =
+                            st.rtx(|(_, _, _, _, variables, variable_collections, _, _)| {
+                                store::collect_variable_ids(&variables, &variable_collections)
+                            });
+                        prior.extend(stored_var_ids);
+                    }
                     Ok(store::sync(&mut st, &prior, &flattened, now_ms()))
                 })();
                 // A failed manual sync still spends the same backoff

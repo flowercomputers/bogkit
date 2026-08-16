@@ -21,7 +21,7 @@ use crate::model::{
 };
 use crate::proxy;
 use crate::query::{self, TextReader};
-use crate::store::{Churn, collect_sweepable, sync};
+use crate::store::{Churn, collect_sweepable, collect_variable_ids, sync};
 use crate::upstream::{HttpUpstream, UpstreamMcp};
 use crate::watch::{BACKOFF_CAP, BACKOFF_START, Tick, Watcher};
 
@@ -458,12 +458,16 @@ pub(crate) fn do_pull(
     from_file: Option<PathBuf>,
     fresh: bool,
 ) -> Result<(Churn, String, String), PullError> {
-    let resp: Value = match from_file {
+    // `vars_resp` is only ever `Some` on the network path — `--from-file`
+    // ingests a saved `GET /v1/files/:key` response and never touches the
+    // network at all, so it never calls `variables_local` either.
+    let (resp, vars_resp): (Value, Option<Value>) = match from_file {
         Some(path) => {
             let content = std::fs::read_to_string(&path)
                 .map_err(|e| format!("reading {}: {e}", path.display()))?;
-            serde_json::from_str(&content)
-                .map_err(|e| format!("parsing {}: {e}", path.display()))?
+            let resp = serde_json::from_str(&content)
+                .map_err(|e| format!("parsing {}: {e}", path.display()))?;
+            (resp, None)
         }
         None => {
             let key = db
@@ -473,7 +477,13 @@ pub(crate) fn do_pull(
                 .ok_or_else(|| "no file key: pass a file key or figma.com URL".to_string())?;
             let token = std::env::var("FIGMA_TOKEN")
                 .map_err(|_| "FIGMA_TOKEN not set — required for network pulls".to_string())?;
-            UreqApi::new(token).file(&key)?
+            let api = UreqApi::new(token);
+            let resp = api.file(&key)?;
+            // Opportunistic Enterprise variables sync (spec §12): `Ok(None)`
+            // on non-Enterprise plans is not an error — v1 behavior
+            // (import/inference, sweep-exempt) holds unchanged below.
+            let vars_resp = api.variables_local(&key)?;
+            (resp, vars_resp)
         }
     };
 
@@ -481,12 +491,21 @@ pub(crate) fn do_pull(
         std::fs::remove_dir_all(&db.path).ok();
     }
 
-    let flattened = flatten_file(&resp).map_err(|e| e.to_string())?;
+    let mut flattened = flatten_file(&resp).map_err(|e| e.to_string())?;
 
     let mut st = crate::open_store!(&db.path);
-    let prior: BTreeSet<Id> = st.rtx(|((nodes, ..), components, component_sets, styles, ..)| {
-        collect_sweepable(&nodes, &components, &component_sets, &styles)
-    });
+    let mut prior: BTreeSet<Id> =
+        st.rtx(|((nodes, ..), components, component_sets, styles, ..)| {
+            collect_sweepable(&nodes, &components, &component_sets, &styles)
+        });
+    if let Some(v) = &vars_resp {
+        let var_recs = crate::vars::parse_variables_export(v).map_err(|e| e.to_string())?;
+        flattened.recs.extend(var_recs);
+        let stored_var_ids = st.rtx(|(_, _, _, _, variables, variable_collections, _, _)| {
+            collect_variable_ids(&variables, &variable_collections)
+        });
+        prior.extend(stored_var_ids);
+    }
     let prior_version =
         st.rtx(|(_, _, _, _, _, _, meta, _)| meta.get(&0).map(|m| m.version.clone()));
     let churn = sync(&mut st, &prior, &flattened, now_ms());

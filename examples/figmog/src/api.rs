@@ -28,13 +28,24 @@ pub struct FileMetaResp {
     pub last_touched_at: String,
 }
 
-/// The two calls figmog makes. `file_meta` is Tier 3 (cheap, poll it);
-/// `file` is Tier 1 (expensive, call only on change).
+/// The calls figmog makes. `file_meta` is Tier 3 (cheap, poll it); `file`
+/// is Tier 1 (expensive, call only on change); `variables_local` is Tier 2
+/// and Enterprise-only, called opportunistically by `pull` (build design
+/// §12).
 pub trait FigmaApi {
     /// `GET /v1/files/:key/meta` — Tier 3, cheap enough to poll.
     fn file_meta(&self, key: &str) -> Result<FileMetaResp, ApiError>;
     /// `GET /v1/files/:key` — Tier 1, the full document tree.
     fn file(&self, key: &str) -> Result<Value, ApiError>;
+    /// `GET /v1/files/:key/variables/local` — Enterprise-only. `Ok(None)`
+    /// means "not available on this plan" (never an error: `pull` falls
+    /// back to v1 behavior). The default implementation always returns
+    /// `Ok(None)`, so test doubles that only care about `file`/`file_meta`
+    /// (e.g. `watch::tests::Script`) don't need to know this call exists.
+    fn variables_local(&self, key: &str) -> Result<Option<Value>, ApiError> {
+        let _ = key;
+        Ok(None)
+    }
 }
 
 pub(crate) fn parse_meta_response(v: &Value) -> Result<FileMetaResp, ApiError> {
@@ -105,6 +116,23 @@ impl FigmaApi for UreqApi {
     fn file(&self, key: &str) -> Result<Value, ApiError> {
         self.get_json(&format!("/v1/files/{key}"))
     }
+    fn variables_local(&self, key: &str) -> Result<Option<Value>, ApiError> {
+        match self.get_json(&format!("/v1/files/{key}/variables/local")) {
+            Ok(v) => Ok(Some(v)),
+            Err(e) if variables_local_is_gated(&e) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+}
+
+/// Whether a `variables_local` failure means "this plan can't see
+/// variables" (403/404 — skip silently, v1 behavior holds) rather than a
+/// real failure `pull` should propagate. By the time `variables_local` is
+/// called, `file()` has already succeeded against the same token, so a 401/
+/// 403 here means plan gating, not a bad token — `error_from_status` maps
+/// both to `ApiError::Auth`.
+fn variables_local_is_gated(e: &ApiError) -> bool {
+    matches!(e, ApiError::Auth) || matches!(e, ApiError::Http { status: 404, .. })
 }
 
 #[cfg(test)]
@@ -147,6 +175,45 @@ mod tests {
         assert!(matches!(
             error_from_status(500, None, "boom".into()),
             ApiError::Http { status: 500, .. }
+        ));
+    }
+
+    #[test]
+    fn variables_local_gated_on_403_and_404_only() {
+        assert!(variables_local_is_gated(&ApiError::Auth));
+        assert!(variables_local_is_gated(&ApiError::Http {
+            status: 404,
+            msg: String::new()
+        }));
+        assert!(!variables_local_is_gated(&ApiError::Http {
+            status: 500,
+            msg: "boom".into()
+        }));
+        assert!(!variables_local_is_gated(&ApiError::Network("down".into())));
+        assert!(!variables_local_is_gated(&ApiError::RateLimited {
+            retry_after: Duration::from_secs(1)
+        }));
+    }
+
+    /// A test double that only implements the two calls it needs — proving
+    /// the trait's default `variables_local` (used by e.g.
+    /// `watch::tests::Script`) is `Ok(None)` without requiring every
+    /// `FigmaApi` implementor to know the Enterprise endpoint exists.
+    struct NoVariablesOverride;
+    impl FigmaApi for NoVariablesOverride {
+        fn file_meta(&self, _key: &str) -> Result<FileMetaResp, ApiError> {
+            unimplemented!("not exercised by this test")
+        }
+        fn file(&self, _key: &str) -> Result<Value, ApiError> {
+            unimplemented!("not exercised by this test")
+        }
+    }
+
+    #[test]
+    fn default_variables_local_is_none() {
+        assert!(matches!(
+            NoVariablesOverride.variables_local("ABC123"),
+            Ok(None)
         ));
     }
 }

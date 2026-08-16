@@ -217,8 +217,11 @@ pub struct Churn {
 }
 
 /// Apply a flattened file in one atomic transaction: upsert every record
-/// and the meta row, then remove previously-stored ids that vanished.
-/// Variables, collections, and the meta row are exempt from the sweep.
+/// and the meta row, then remove previously-stored ids that vanished. The
+/// meta row is always exempt from the sweep; variables and collections are
+/// exempt too *unless* the caller opted them in via `prior_sweepable`
+/// (`collect_variable_ids`, spec §12 — an Enterprise `variables_local`
+/// pull makes them file state for that cycle).
 pub fn sync<P: Push<Keyed<Id, Rec>>>(
     st: &mut KeyedStream<Id, Rec, P>,
     prior_sweepable: &BTreeSet<Id>,
@@ -245,10 +248,11 @@ pub fn sync<P: Push<Keyed<Id, Rec>>>(
         tx.upsert(&Id::Meta, &Rec::Meta(meta));
         for id in prior_sweepable {
             if !live.contains(id) {
-                debug_assert!(!matches!(
-                    id,
-                    Id::Variable(_) | Id::VariableCollection(_) | Id::Meta
-                ));
+                // The meta row is never sweepable — `collect_sweepable` and
+                // `collect_variable_ids` both draw only from the
+                // nodes/components/component_sets/styles/variables/
+                // collections tables, never `meta`.
+                debug_assert!(!matches!(id, Id::Meta));
                 if tx.remove(id).is_some() {
                     churn.removed += 1;
                 }
@@ -276,6 +280,29 @@ pub fn collect_sweepable<R: fold::stream::Readable>(
     out.extend(components.iter().map(|(k, _)| Id::Component(k)));
     out.extend(component_sets.iter().map(|(k, _)| Id::ComponentSet(k)));
     out.extend(styles.iter().map(|(k, _)| Id::Style(k)));
+    out
+}
+
+/// Gather the currently-*stored* variable + collection ids (spec §12:
+/// Enterprise variables in `pull`). Unlike [`collect_sweepable`], callers
+/// must union this into the prior/sweepable set only on a pull that fetched
+/// an Enterprise variables export *this cycle* — the `variables_local` call
+/// returned `Some(..)` and its records were flattened into the same
+/// `flattened.recs` passed to `sync`. On the `Ok(None)` (non-Enterprise or
+/// import-only) path, callers must not call this — stored variables then
+/// stay outside `sync`'s live/sweep accounting entirely, exactly as v1.
+pub fn collect_variable_ids<R: fold::stream::Readable>(
+    variables: &fold::pipeline::terminal::TableReader<'_, R, String, crate::model::VariableRec>,
+    collections: &fold::pipeline::terminal::TableReader<
+        '_,
+        R,
+        String,
+        crate::model::VariableCollectionRec,
+    >,
+) -> BTreeSet<Id> {
+    let mut out = BTreeSet::new();
+    out.extend(variables.iter().map(|(k, _)| Id::Variable(k)));
+    out.extend(collections.iter().map(|(k, _)| Id::VariableCollection(k)));
     out
 }
 

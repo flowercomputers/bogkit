@@ -44,7 +44,7 @@ store location (default `.figmog/<file-key>/db`).
 | `figmog styles [--type <t>] [--values]` | styles + styled_by (+ nodes) | styles with usage counts; `--values` derives each style's definition from a consumer node (§ below) |
 | `figmog uses <id>` | styled_by / bound_to + nodes | nodes using a style id or bound to a variable id |
 | `figmog vars [id]` | nodes + variables + variable_collections | variables: authoritative record if imported, else inferred value(s) + binding sites |
-| `figmog import-variables <path>` | — | upsert variable/collection records from a variables export (see "Variables on a free plan") |
+| `figmog import-variables <path>` | — | upsert variable/collection records from a variables export (see "Variables") |
 | `figmog stats` | nodes + by_type + components + component_sets + styles + variables | node counts by type and by page, component/set/style/variable totals, text-node count, max tree depth — whole-file structural queries the API can't offer at all |
 | `figmog path <id>` | nodes | ancestor chain root→node: `[{id, name, type}]` |
 | `figmog text [--page <id>]` | by_type + nodes | every TEXT node's `(id, characters, page_id)`, sorted by id |
@@ -213,11 +213,21 @@ cache described above. `--no-upstream` recovers the older, "second,
 separate server" shape (v2) if that's ever preferable — figmog's 17
 `figmog_*` tools alongside Figma's own, unrelated MCP connection.
 
-## Variables on a free plan
+## Variables
 
-The Variables REST endpoints (`variables/local`, `variables/published`)
-are Enterprise-only, so figmog never calls them. Variables are supported
-through two complementary paths:
+**Enterprise auto-sync (automatic, zero setup).** Every network `pull`
+additionally calls `GET /v1/files/:key/variables/local` — the Enterprise
+REST endpoint for full-fidelity variable and collection records:
+collections, modes (e.g. light/dark), per-mode values, descriptions,
+scopes. When it succeeds, those records are folded into the same sync and
+kept live: a variable removed upstream is swept on the next pull, exactly
+like a deleted node. On non-Enterprise plans the endpoint 403s (or 404s)
+and the call is **silently skipped** — no error, no flag to set — falling
+back to the two paths below. `--from-file` pulls never call it at all
+(no network involved).
+
+Below that, variables are supported through two complementary fallback
+paths that work on every plan:
 
 **Path 1 — mirrored bindings + inference (always on, zero setup).** Every
 variable-bound property in the file JSON carries a `boundVariables`
@@ -229,14 +239,18 @@ the observed value(s) baked in there. This covers each variable's
 **default-mode value**; values from a non-default mode appear only where a
 frame explicitly overrides its mode.
 
-**Path 2 — authoritative import (optional).** `figmog import-variables
-<export.json>` upserts full-fidelity variable and collection records:
-collections, modes (e.g. light/dark), per-mode values, descriptions,
-scopes. It accepts two shapes: the Enterprise REST `variables/local`
-response, or the JSON produced by the free-plan escape hatch below — the
-Figma Plugin API can read local variables on **any** plan, run from
-Figma's own developer console. `figmog vars` prefers an imported
-(authoritative) record over inference whenever one exists.
+**Path 2 — manual import (optional).** `figmog import-variables
+<export.json>` upserts the same full-fidelity variable and collection
+records the Enterprise auto-sync produces, by hand. It accepts two shapes:
+the Enterprise REST `variables/local` response (the same shape auto-sync
+already ingests, useful for a one-off import outside `pull`), or the JSON
+produced by the free-plan escape hatch below — the Figma Plugin API can
+read local variables on **any** plan, run from Figma's own developer
+console. `figmog vars` prefers an authoritative record (auto-synced or
+imported) over inference whenever one exists. Unlike auto-synced records,
+manually imported ones are **not** swept by a later pull that has no
+Enterprise export of its own (e.g. on a non-Enterprise plan) — they
+persist until re-imported or `pull --fresh`.
 
 ```js
 // Figma → Plugins → Development → Open console, then paste:
@@ -287,10 +301,11 @@ the mirrored file is.
 
 ## Limitations
 
-- **Variables** — inference (Path 1, always on) covers each variable's
-  default-mode value; a non-default mode's value is visible only where a
-  frame explicitly overrides that mode. Full per-mode fidelity requires
-  `import-variables` (Path 2).
+- **Variables** — on non-Enterprise plans (no automatic `variables/local`
+  sync), inference (always on) covers each variable's default-mode value;
+  a non-default mode's value is visible only where a frame explicitly
+  overrides that mode. Full per-mode fidelity requires either the
+  Enterprise auto-sync or a manual `import-variables`.
 - **No image renders** — figmog mirrors document structure and properties,
   not rendered pixels; there's no `GET /v1/images` integration.
 - **Style definitions are derived, not authoritative** — the file JSON's
@@ -311,5 +326,6 @@ the mirrored file is.
 - **`pull --fresh` wipes imported variables** — `--fresh` deletes the whole
   store, including `import-variables` records that normally survive
   ordinary pulls (they're exempt from the file-sync sweep, not from a full
-  wipe). Re-run `import-variables` after a `--fresh` pull if you need
-  authoritative variable data back.
+  wipe). On an Enterprise plan the very next `pull` repopulates them
+  automatically (auto-sync); everywhere else, re-run `import-variables`
+  after a `--fresh` pull if you need authoritative variable data back.
