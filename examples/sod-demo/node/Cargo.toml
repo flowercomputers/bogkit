@@ -1,0 +1,17 @@
+[package]
+name = "sod-demo-node"
+version = "0.0.1"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+sod = { path = "../../../sod" }
+fold = { path = "../../../fold" }
+postcard = { version = "1", features = ["use-std"] }
+napi = { version = "2", default-features = false, features = ["napi8"] }
+napi-derive = "2"
+
+[build-dependencies]
+napi-build = "2"

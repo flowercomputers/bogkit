@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["fold", "anny", "ese", "sod", "examples/*"]
+members = ["fold", "anny", "ese", "sod", "examples/*", "examples/sod-demo/node"]
 
 # hoisted from fold; applies workspace-wide
 [profile.release]

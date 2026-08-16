@@ -70,6 +70,33 @@ feeds) converges. Deleting a directory's `sod.log` resets that replica: the
 next command generates a fresh `replica_id`, because a reused id with a
 restarted feed would silently diverge at peers that remember the old one.
 
+## The same app from Node.js (verified transcript)
+
+`node/` packages this app as a napi-rs native addon — the per-app compiled
+addon pattern: your datum type + pipeline + sod compiled into one `.node`
+module, with a thin app-specific JS surface.
+
+```console
+$ cargo build -p sod-demo-node
+$ cp target/debug/libsod_demo_node.dylib examples/sod-demo/node/sod_demo_node.node  # .so on linux
+
+$ sod-demo ./a serve 127.0.0.1:7172        # terminal 1: a native peer
+$ node examples/sod-demo/node/demo.mjs ./n ws://127.0.0.1:7172   # terminal 2
+replica 02a243b228c194356507a7b85fed502f
+local: [ '2x note from node', '1x only node has this' ] total=3
+after sync: [
+  '1x unique to a',
+  '2x hello from a',
+  '2x note from node',
+  '1x greetings from b',
+  '1x only node has this'
+] total=7
+```
+
+Note `greetings from b`: the Node replica has never met replica b — its
+feed arrived relayed through a. Node, the native binary, and any future
+browser replica speak the same log format and protocol.
+
 ## Making it your app
 
 Copy this crate and change three things:
