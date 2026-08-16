@@ -134,6 +134,11 @@ where
     pub fn checkpoint(&mut self) {
         self.inner.checkpoint()
     }
+
+    /// The underlying fjall database; see [`Stream::db`].
+    pub fn db(&self) -> &fjall::SingleWriterTxDatabase {
+        self.inner.db()
+    }
 }
 
 /// Write handle passed to [`KeyedStream::wtx`] closures.

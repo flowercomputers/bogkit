@@ -26,7 +26,14 @@ impl<D: Clone, P: Push<D>> Stream<D, P> {
     /// Panics if the store cannot be opened or if two nodes claim the same
     /// name.
     pub fn new(path: impl AsRef<Path>, mut pipeline: P) -> Self {
-        let store = fjall::SingleWriterTxDatabase::builder(path).open().unwrap();
+        // a small journal cap bounds open-time replay: journals rotate
+        // early, fully-flushed ones are collected, and reopening a store
+        // (or a snapshot copy of its directory) replays at most this many
+        // bytes instead of fjall's 512MiB default (64MiB is fjall's enforced floor)
+        let store = fjall::SingleWriterTxDatabase::builder(path)
+            .max_journaling_size(64 * 1024 * 1024)
+            .open()
+            .unwrap();
 
         let mut init = PipelineInitCtx::new(&store);
         pipeline.init(&mut init);
@@ -90,6 +97,15 @@ impl<D: Clone, P: Push<D>> Stream<D, P> {
     }
 
     pub(crate) fn store(&self) -> &fjall::SingleWriterTxDatabase {
+        &self.store
+    }
+
+    /// The underlying fjall database, for maintenance operations outside
+    /// fold's transaction model (memtable rotation before snapshotting the
+    /// directory, disk-usage inspection, ...). Writes through this handle
+    /// bypass the pipeline and will desynchronize the sinks — read/flush
+    /// operations only.
+    pub fn db(&self) -> &fjall::SingleWriterTxDatabase {
         &self.store
     }
 }

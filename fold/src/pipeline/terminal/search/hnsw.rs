@@ -1,4 +1,9 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::RefCell,
+    io::{Read, Write},
+    path::{Path, PathBuf},
+    rc::Rc,
+};
 
 use anny::metric::{Metric, Scalar};
 use fjall::Readable;
@@ -13,6 +18,15 @@ use crate::{
 fn decode_vector<T: DeserializeOwned + Copy, const DIM: usize>(bytes: &[u8]) -> [T; DIM] {
     let v: Vec<T> = postcard::from_bytes(bytes).unwrap();
     std::array::from_fn(|i| v[i])
+}
+
+// graph snapshot blob: this header + the key->node-id table, then the anny
+// graph via Hnsw::write_to
+const SNAP_MAGIC: [u8; 8] = *b"FOLDHNSW";
+const SNAP_VERSION: u32 = 1;
+
+fn bad_snap() -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::InvalidData, "bad hnsw graph snapshot")
 }
 
 // The in-memory side of the sink, shared with readers. `ids`/`keys` tie the
@@ -108,6 +122,9 @@ where
 /// (a panic cannot un-mutate the graph, so it is marked stale and rebuilt
 /// from committed state on next use). Under fold's single-writer discipline
 /// readers otherwise always observe a graph consistent with their snapshot.
+/// [`with_graph_snapshot`](Hnsw::with_graph_snapshot) plus
+/// [`HnswReader::save_graph`] lets reopening skip the rebuild by loading a
+/// serialized graph, validated against the committed rows.
 ///
 /// Tuning lives in the const parameters (`M0`, `TOP_K`, `EF_SEARCH`,
 /// `EF_BUILD`, `MAX_LEVEL`), with usable defaults; `TOP_K` fixes the number
@@ -141,6 +158,7 @@ pub struct Hnsw<
     ks: Option<fjall::SingleWriterTxKeyspace>,
     metric: M,
     seed: u64,
+    snapshot_path: Option<PathBuf>,
     state: Rc<RefCell<State<K, T, M, DIM, M0, TOP_K, EF_SEARCH, EF_BUILD, MAX_LEVEL>>>,
     // encoded key -> (key, latest embedding, net delta this tx)
     pending: FxHashMap<Vec<u8>, (K, [T; DIM], i64)>,
@@ -174,6 +192,7 @@ where
             ks: None,
             metric,
             seed,
+            snapshot_path: None,
             state: Rc::new(RefCell::new(State {
                 index: anny::hnsw::Hnsw::new(metric, seed),
                 ids: FxHashMap::default(),
@@ -183,6 +202,100 @@ where
             pending: FxHashMap::default(),
             vec_buf: Default::default(),
         }
+    }
+
+    /// Persist/restore the in-memory graph at `path`. Save via
+    /// [`HnswReader::save_graph`] after your last commit; on reopen a blob
+    /// that exactly matches the committed rows is adopted instead of
+    /// rebuilding the graph, and anything else silently falls back to the
+    /// rebuild.
+    pub fn with_graph_snapshot(mut self, path: impl Into<PathBuf>) -> Self {
+        self.snapshot_path = Some(path.into());
+        self
+    }
+
+    // blob layout: [SNAP_MAGIC, version u32, count u32,
+    // (klen u32, kenc, node id u32)*] then the anny graph
+    fn load_blob(
+        path: &Path,
+        metric: M,
+        seed: u64,
+    ) -> std::io::Result<(
+        FxHashMap<Vec<u8>, u32>,
+        anny::hnsw::Hnsw<T, M, DIM, M0, TOP_K, EF_SEARCH, EF_BUILD, MAX_LEVEL>,
+    )> {
+        let mut r = std::io::BufReader::new(std::fs::File::open(path)?);
+        let mut magic = [0u8; 8];
+        r.read_exact(&mut magic)?;
+        let mut b4 = [0u8; 4];
+        r.read_exact(&mut b4)?;
+        if magic != SNAP_MAGIC || u32::from_le_bytes(b4) != SNAP_VERSION {
+            return Err(bad_snap());
+        }
+        r.read_exact(&mut b4)?;
+        let count = u32::from_le_bytes(b4) as usize;
+        let mut ids = FxHashMap::default();
+        ids.reserve(count);
+        for _ in 0..count {
+            r.read_exact(&mut b4)?;
+            let mut kenc = vec![0u8; u32::from_le_bytes(b4) as usize];
+            r.read_exact(&mut kenc)?;
+            r.read_exact(&mut b4)?;
+            if ids.insert(kenc, u32::from_le_bytes(b4)).is_some() {
+                return Err(bad_snap());
+            }
+        }
+        let index = anny::hnsw::Hnsw::read_from(&mut r, metric, seed)?;
+        Ok((ids, index))
+    }
+
+    // fast path: adopt the snapshot blob iff it exactly covers the committed
+    // rows (every row key mapped, counts equal); any failure means the
+    // caller must rebuild from the rows instead
+    fn try_restore(
+        &mut self,
+        init: &PipelineInitCtx<'_>,
+        ks: &fjall::SingleWriterTxKeyspace,
+    ) -> bool
+    where
+        K: DeserializeOwned,
+        M: Copy,
+    {
+        let Some(path) = &self.snapshot_path else {
+            return false;
+        };
+        let Ok((ids, index)) = Self::load_blob(path, self.metric, self.seed) else {
+            return false;
+        };
+        if index.len() != ids.len() {
+            return false;
+        }
+        let mut rows = 0usize;
+        for kv in init.snapshot().iter(ks) {
+            let Ok((k, _)) = kv.into_inner() else {
+                return false;
+            };
+            if !ids.contains_key(&*k) {
+                return false;
+            }
+            rows += 1;
+        }
+        if rows != ids.len() {
+            return false;
+        }
+        let mut keys = FxHashMap::default();
+        for (kenc, &id) in &ids {
+            let Ok(key) = postcard::from_bytes::<K>(kenc) else {
+                return false;
+            };
+            keys.insert(id, key);
+        }
+        let mut state = self.state.borrow_mut();
+        state.index = index;
+        state.ids = ids;
+        state.keys = keys;
+        state.stale = false;
+        true
     }
 }
 
@@ -207,15 +320,18 @@ where
 
     fn init(&mut self, init: &mut PipelineInitCtx<'_>) {
         let ks = init.keyspace(&self.name);
-        // recover the graph from the vectors persisted by earlier runs
-        self.state.borrow_mut().rebuild(
-            self.metric,
-            self.seed,
-            init.snapshot().iter(&ks).map(|kv| {
-                let (k, v) = kv.into_inner().unwrap();
-                (k.to_vec(), v.to_vec())
-            }),
-        );
+        // prefer a validated graph snapshot; otherwise recover the graph
+        // from the vectors persisted by earlier runs
+        if !self.try_restore(init, &ks) {
+            self.state.borrow_mut().rebuild(
+                self.metric,
+                self.seed,
+                init.snapshot().iter(&ks).map(|kv| {
+                    let (k, v) = kv.into_inner().unwrap();
+                    (k.to_vec(), v.to_vec())
+                }),
+            );
+        }
         self.ks = Some(ks);
     }
 
@@ -277,6 +393,7 @@ where
             ks: self.ks.clone().unwrap(),
             metric: self.metric,
             seed: self.seed,
+            snapshot_path: self.snapshot_path.clone(),
             state: Rc::clone(&self.state),
         }
     }
@@ -300,6 +417,7 @@ pub struct HnswReader<
     ks: fjall::SingleWriterTxKeyspace,
     metric: M,
     seed: u64,
+    snapshot_path: Option<PathBuf>,
     state: Rc<RefCell<State<K, T, M, DIM, M0, TOP_K, EF_SEARCH, EF_BUILD, MAX_LEVEL>>>,
 }
 
@@ -347,6 +465,40 @@ where
                 .into_iter()
                 .map(|(d, id)| Scored::new(d, state.keys[&id].clone()))
                 .collect()
+        })
+    }
+
+    /// Write the graph (and its key mapping) to the configured snapshot
+    /// path, via a `.tmp` sibling and rename for atomicity. Goes through
+    /// [`with_state`](Self::with_state), so a stale graph resyncs from this
+    /// reader's committed rows before it is captured. Errors with
+    /// [`std::io::ErrorKind::InvalidInput`] if the sink was built without
+    /// [`Hnsw::with_graph_snapshot`].
+    pub fn save_graph(&self) -> std::io::Result<()> {
+        let path = self.snapshot_path.as_ref().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "no graph snapshot path configured",
+            )
+        })?;
+        self.with_state(|state| {
+            let mut tmp = path.clone().into_os_string();
+            tmp.push(".tmp");
+            let tmp = PathBuf::from(tmp);
+            let mut w = std::io::BufWriter::new(std::fs::File::create(&tmp)?);
+            w.write_all(&SNAP_MAGIC)?;
+            w.write_all(&SNAP_VERSION.to_le_bytes())?;
+            let count = u32::try_from(state.ids.len()).map_err(|_| bad_snap())?;
+            w.write_all(&count.to_le_bytes())?;
+            for (kenc, id) in &state.ids {
+                let klen = u32::try_from(kenc.len()).map_err(|_| bad_snap())?;
+                w.write_all(&klen.to_le_bytes())?;
+                w.write_all(kenc)?;
+                w.write_all(&id.to_le_bytes())?;
+            }
+            state.index.write_to(&mut w)?;
+            w.into_inner().map_err(|e| e.into_error())?.sync_all()?;
+            std::fs::rename(&tmp, path)
         })
     }
 
