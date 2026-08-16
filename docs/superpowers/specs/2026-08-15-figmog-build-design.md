@@ -144,7 +144,10 @@ id):
 defined locally), and for components `component_set_id: Option<String>`.
 `StyleRec` (from `styles`, keyed by style id): `style_id`, `key`, `name`,
 `style_type`, `description`, `remote`. `FileMeta`: `name`, `version`,
-`last_touched_at`, `synced_at_unix_ms`.
+`last_modified`, `synced_at_unix_ms` — `last_modified` is the *file*
+endpoint's (`GET /v1/files/:key`) `lastModified` field, populated on every
+`pull`; see §6 for how this compares against the *meta* endpoint's
+`last_touched_at` during `watch`.
 
 `VariableRec` / `VariableCollectionRec` (populated by `import-variables`
 only — see §6a): variable `id`, `name`, `resolved_type`
@@ -253,9 +256,22 @@ loop:
 - A spurious trigger (touch without a real edit) costs one Tier-1 fetch
   that produces zero churn — the design is self-healing, so the trigger
   needs to be cheap, not perfect.
-- On 429: sleep `Retry-After` seconds (plus small jitter), then resume.
-  On network errors: exponential backoff capped at 5 min, keep looping —
-  `watch` must survive laptop sleep and flaky wifi.
+- The comparison above is across endpoints: `meta.last_touched_at` comes
+  from `GET /v1/files/:key/meta` (Tier 3), while the stored watermark
+  (`FileMeta.last_modified`) was captured from `GET /v1/files/:key`'s
+  `lastModified` field (Tier 1) on the last `pull`. If the two fields ever
+  differ in format or precision, every `watch` start on a warm DB costs one
+  spurious Tier-1 pull that produces zero churn — self-healing within the
+  run, since the Watcher then keeps `last_touched_at` in memory and stops
+  re-triggering. See §9's manual live check for confirming the two fields
+  agree on a real file.
+- On 429: sleep `Retry-After` seconds, then resume (single-process poller;
+  no jitter). On network errors: exponential backoff capped at 5 min, keep
+  looping — `watch` must survive laptop sleep and flaky wifi. The same
+  discipline applies if the Tier-1 pull itself fails after a detected
+  change (429 → `Retry-After`; anything else → the same exponential
+  backoff), so a persistently failing pull doesn't hammer the Tier-1
+  budget.
 - `watch` performs an initial `pull` if the DB is empty or stale.
 
 Auth: personal access token from `FIGMA_TOKEN` (flag `--token` overrides).
@@ -319,7 +335,7 @@ deterministic (sorted); `--json` emits machine-readable JSON on stdout.
 | command | reads | behavior |
 |---|---|---|
 | `figmog pull <file>` | — | sync now; prints churn summary |
-| `figmog watch <file> [--interval 10s]` | — | poll loop as above |
+| `figmog watch <file> [--interval 10]` | — | poll loop as above |
 | `figmog pages` | children of root | list CANVAS pages (id, name) |
 | `figmog tree [id] [--depth N]` | children + nodes | indented outline: `name  [type]  id`; root defaults to document |
 | `figmog get <id> [--children]` | nodes (+children) | the full `raw` JSON of a node; `--children` inlines one level of child summaries |
@@ -334,7 +350,7 @@ deterministic (sorted); `--json` emits machine-readable JSON on stdout.
 | `figmog status` | meta | file name, version, last modified, last synced, node count |
 
 DB location: `.figmog/<file_key>/` under the current directory (override
-`--db`). The CLI stores the last-used file key in `.figmog/config` so read
+`--db`). The CLI stores the last-used file key in `.figmog/current` so read
 commands don't need the file argument every time.
 
 ## 8. Rust practices
@@ -430,7 +446,9 @@ is used only for local manual verification.
    - URL/key/node-id argument parsing (`12-34` ⇒ `12:34`, full URLs)
 6. **Manual live check** (documented in the crate README, not CI): `FIGMA_TOKEN=… figmog pull <g3d url>`, then `figmog components`,
    `figmog search`, timing note. Acceptance: read commands return in
-   milliseconds on the real file.
+   milliseconds on the real file. Also confirm `last_touched_at` (meta) equals
+   `lastModified` (file) on the real file, since `watch` compares them
+   across two different endpoints (§6).
 
 Full-feature test run (`cargo test -p figmog`) must pass before the
 milestone is called done; `-p figmog` doesn't build ese, so iteration is

@@ -61,6 +61,8 @@ and nothing else. Since the November 2025 rate-limit overhaul, file
 endpoints are capped around **10 requests/min on the free (Starter)
 plan**, and there is no delta API — this polling design is what makes
 that budget workable for an agent that wants to treat the file as live.
+The Tier-3 meta poll itself is capped around **50 requests/min on
+Starter**, well above any sane `--interval`.
 
 ## Variables on a free plan
 
@@ -154,3 +156,8 @@ the mirrored file is.
   Figma serializes an INSTANCE's overridden children as ordinary nodes
   under it, and those mirror like any other node, but overrides that
   Figma doesn't materialize into the subtree are not reconstructed.
+- **`pull --fresh` wipes imported variables** — `--fresh` deletes the whole
+  store, including `import-variables` records that normally survive
+  ordinary pulls (they're exempt from the file-sync sweep, not from a full
+  wipe). Re-run `import-variables` after a `--fresh` pull if you need
+  authoritative variable data back.
