@@ -107,7 +107,9 @@ figmog_status`, and any other command that opens the store — fails fast
 with a clean `store is locked` error rather than a raw panic; drive the
 running server through its own MCP tool calls instead, or stop `serve`
 first. (`figmog tools` never opens the store, so it works fine even while
-`serve` is running.)
+`serve` is running.) The same applies to `serve`/`watch` itself: starting
+a second `figmog serve` or `figmog watch` against a store one of them
+already owns fails with the same clean message rather than a raw panic.
 
 ### The cached proxy
 

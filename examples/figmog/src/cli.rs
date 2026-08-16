@@ -419,21 +419,22 @@ const STORE_LOCKED_MSG: &str = "store is locked — is `figmog serve` running? Q
 /// shared by `wtx`'s own rollback-on-panic path); this wrapper is figmog's
 /// layer, catching that one specific panic and translating it into a clean
 /// exit-1 error instead. Any *other* panic (a genuine bug — not lock
-/// contention) is re-raised unchanged so it isn't silently swallowed.
+/// contention) is re-raised unchanged via `resume_unwind` so it isn't
+/// silently swallowed.
 ///
-/// The default panic hook is suppressed for the duration of the call so a
-/// caught, translated panic doesn't also print Rust's raw "thread 'main'
-/// panicked at ..." line to stderr (stderr purity: only figmog's own
-/// `figmog: <message>` line should appear).
+/// Deliberately does **not** touch the global panic hook: swapping it out
+/// for the call's duration would suppress *every* panic's trace, including
+/// non-lock ones that get re-raised — turning a genuine bug (corrupt
+/// store, disk error) into a silent exit 101 with no stderr output at all,
+/// which is worse than not catching anything. The default hook stays
+/// active throughout, so a lock panic still prints fold's raw trace before
+/// this function's friendly `STORE_LOCKED_MSG` follows (slightly noisy,
+/// but honest); swapping a process-global hook around a call is also
+/// inherently racy against other threads, which this avoids entirely.
 pub(crate) fn open_store_checked<T>(
     open: impl FnOnce() -> T + std::panic::UnwindSafe,
 ) -> Result<T, String> {
-    let prev_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(|_| {}));
-    let result = std::panic::catch_unwind(open);
-    std::panic::set_hook(prev_hook);
-
-    result.map_err(|payload| {
+    std::panic::catch_unwind(open).map_err(|payload| {
         let msg = payload
             .downcast_ref::<&str>()
             .map(|s| s.to_string())

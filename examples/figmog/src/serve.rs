@@ -42,7 +42,8 @@ use serde_json::Value;
 
 use crate::api::{FigmaApi, UreqApi};
 use crate::cli::{
-    Db, PullError, do_pull, now_ms, pull_failure_wait, read_watermark, write_current,
+    Db, PullError, do_pull, now_ms, open_store_checked, pull_failure_wait, read_watermark,
+    write_current,
 };
 use crate::dispatch;
 use crate::flatten::flatten_file;
@@ -151,7 +152,10 @@ pub(crate) fn run_serve(
         }
     });
 
-    let mut st = crate::open_store!(&db.path);
+    // I-1: a second `figmog serve`/`figmog watch` against the same store
+    // hits the same fold panic-on-open a CLI read does — translate it the
+    // same way rather than letting the raw panic surface here.
+    let mut st = open_store_checked(|| crate::open_store!(&db.path))?;
     let mut stored: Option<String> =
         st.rtx(|(_, _, _, _, _, _, meta, _)| meta.get(&0).map(|m| m.last_modified));
     let mut watcher = Watcher::new(stored.clone());
