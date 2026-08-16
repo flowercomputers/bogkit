@@ -51,13 +51,6 @@
     padding: 4px 12px; border-radius: 3px;
   }
   .editbox button.danger { color: #8c3b2e; margin-left: auto; }
-  #composer {
-    width: 100%; font: inherit; font-size: 18.5px; line-height: 1.7;
-    background: transparent; color: var(--ink); border: none; outline: none;
-    resize: none; min-height: 58px; padding: 1px 2px; margin-top: 2px;
-  }
-  #composer::placeholder { color: var(--faint); font-style: italic; font-size: 15px; }
-  .page.galing #composer { display: none; }
   .lane { position: sticky; top: 48px; }
   .lanehead { font-family: ui-monospace, Menlo, monospace; font-size: 10.5px; letter-spacing: .12em; color: var(--faint); text-transform: uppercase; margin-bottom: 10px; }
   #voice .hit { background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: 10px 12px; margin-bottom: 8px; }
@@ -200,7 +193,15 @@
   .page.galing #lenscard, .page.galing .chip.user, .page.galing #lensadd { display: none; }
   #hud .head .op.unlens { color: var(--pl-crim); }
   /* ---- gutter chips (D): felt latency beside the edited sentence + length percentile vs canon ---- */
-  #doc { position: relative; }
+  #doc { position: relative; outline: none; min-height: 200px; caret-color: var(--ink); white-space: pre-wrap; }
+  #doc.empty::before { content: "write — the lenses read as you go…"; color: var(--faint); font-style: italic; position: absolute; pointer-events: none; }
+  #instru { font-family: ui-monospace, Menlo, monospace; font-size: 10px; letter-spacing: .05em; cursor: pointer;
+    border: 1px solid var(--line); background: none; color: var(--faint); border-radius: 999px; padding: 2px 9px; margin-left: 14px; vertical-align: 1px; }
+  #instru:hover { color: var(--ink); border-color: var(--ink); }
+  body.instruments #instru { color: var(--ink); border-color: var(--ink); }
+  body:not(.instruments) #hud, body:not(.instruments) #galechip { display: none; }
+  .chit .ch-t { font-size: 12.5px; color: #8a7f6d; line-height: 1.45; margin: 4px 0 2px;
+    text-decoration: line-through; text-decoration-color: #A2231F; text-decoration-thickness: 0.12em; text-decoration-skip-ink: none; }
   .gchip {
     position: absolute; left: -100px; width: 88px; text-align: right;
     font-family: ui-monospace, Menlo, monospace; line-height: 1.45; pointer-events: none;
@@ -222,7 +223,7 @@
   <div id="galebar"></div>
   <main>
     <h1>Soundings</h1>
-    <div class="sub">every edit is a fold delta · ese re-embeds in µs · kill me and relaunch — the doc survives</div>
+    <div class="sub">it reads while you write — it never writes<button id="instru" title="surface the machinery: fold's instrument plate, the ledger, the gale">◉ instruments</button></div>
     <div class="chips">
       <button class="chip" data-lens="off">plain</button>
       <button class="chip on" data-lens="axis">concrete —— abstract</button>
@@ -230,15 +231,14 @@
       <button id="galechip" title="replay scripted edits at 60/s for 10s against a naive full-rescan arm">▶ gale</button>
     </div>
     <div class="lenskey" id="lenskey"></div>
-    <div id="doc"></div>
-    <textarea id="composer" rows="2" placeholder="write here — finished sentences flow into the page as you go…"></textarea>
+    <div id="doc" contenteditable="plaintext-only" spellcheck="false"></div>
     <div class="tile" id="foldtile"></div>
   </main>
   <aside>
     <div class="lane">
       <div id="corrigenda"></div>
       <div class="lanehead" id="voicehead">Nearest voices</div>
-      <div id="voice"><div class="empty">Click a sentence to hear which of 20 books it stands closest to.</div></div>
+      <div id="voice"><div class="empty">Put your caret in a sentence to hear which of 20 books it stands closest to.</div></div>
     </div>
   </aside>
   <section id="naivelane">
@@ -256,15 +256,14 @@
 let state = { rows: [], hud: {} };
 let canon = "";
 let lens = "axis";
-let selId = null, editId = null, adding = false;
-let pending = false;
+let dirtyAt = 0, syncTimer = null, lastSyncedDom = "";
 
 const $ = (id) => document.getElementById(id);
 
 const LENSKEY = {
   off: "",
   axis: "cool wash = concrete, amber wash = abstract — projection onto a sentence-anchored axis",
-  len: "deeper moss = longer sentence (words, relative to this document) · hover a line for its percentile vs 129,097 canon sentences",
+  len: "deeper moss = longer sentence (words, relative to this document) · the margin lane shows your caret sentence's percentile vs 129,097 canon sentences",
 };
 
 function paint(r, maxW) {
@@ -291,32 +290,65 @@ function paint(r, maxW) {
   return "transparent";
 }
 
+// ---------- the editor ----------
+// The page IS a text editor: type, click, delete, paste, Enter for
+// paragraphs. A debounced differ (sync) derives minimal fold ops from the
+// text; the machinery performs nothing on the surface. Paint arrives via the
+// CSS Custom Highlight API so washes never touch the DOM the caret lives in.
+// overlay elements (the gutter chip) live inside #doc for positioning but
+// are never part of the text
+function blocks() { return [...$("doc").children].filter((el) => el.nodeType === 1 && !el.classList.contains("gchip")); }
+function blockRaw(block) {
+  let out = "", n;
+  const w = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+  while ((n = w.nextNode())) out += n.data;
+  return out;
+}
+function readBlock(block) { return blockRaw(block).replace(/\s+/g, " ").trim(); }
+function editorFocused() { const ed = $("doc"); return document.activeElement === ed || ed.contains(document.activeElement); }
+function stateParas() {
+  const paras = [];
+  for (const r of state.rows) (paras[r.para] ||= []).push(r.text);
+  return paras.filter((p) => p && p.length).map((p) => p.join(" "));
+}
+function stateText() { return stateParas().join("\n"); }
+function domTextNow() { return blocks().map(readBlock).filter((t) => t.length).join("\n"); }
+
+function renderText() {
+  const ed = $("doc");
+  if (domTextNow() === stateText()) { ed.classList.toggle("empty", !state.rows.length && !domTextNow()); return; }
+  const wasFocused = editorFocused();
+  const frag = document.createDocumentFragment();
+  for (const ptext of stateParas()) {
+    const d = document.createElement("div");
+    d.className = "para";
+    d.textContent = ptext;
+    frag.appendChild(d);
+  }
+  if (!frag.childNodes.length) {
+    const d = document.createElement("div");
+    d.className = "para";
+    d.appendChild(document.createElement("br"));
+    frag.appendChild(d);
+  }
+  ed.replaceChildren(frag);
+  ed.classList.toggle("empty", !state.rows.length);
+  lastSyncedDom = domTextNow();
+  if (wasFocused) { // server-driven rebuild under a resting caret: park it at the end
+    const sel = getSelection(); const rng = document.createRange();
+    rng.selectNodeContents(ed); rng.collapse(false);
+    sel.removeAllRanges(); sel.addRange(rng);
+  }
+}
+
 function render() {
-  if (editId !== null || adding) { pending = true; return; }
   renderLensChips();
   $("lenskey").textContent = lensKey();
-  const doc = $("doc");
-  const maxW = Math.max(1, ...state.rows.map((r) => r.words));
-  // sentences group into paragraphs; a change in r.para opens a new <p>
-  doc.replaceChildren();
-  let curP = null, lastPara = null;
-  for (const r of state.rows) {
-    if (curP === null || r.para !== lastPara) {
-      curP = document.createElement("p");
-      curP.className = "para";
-      doc.appendChild(curP);
-      lastPara = r.para;
-    }
-    const s = document.createElement("span");
-    s.className = "s" + (r.id === selId ? " sel" : "");
-    s.textContent = r.text + " ";
-    s.style.background = paint(r, maxW);
-    s.title = `t=${r.t.toFixed(2)} · ${r.words} words` + (r.pct != null ? ` · ${ordinal(r.pct)} pct of canon` : "");
-    s.onclick = () => beginEdit(r);
-    curP.appendChild(s);
-  }
-  renderGhosts(doc);
-  renderChips(doc);
+  const quiet = Date.now() - dirtyAt > 800;
+  if (!editorFocused() || quiet) renderText();
+  paintHighlights();
+  retireGhosts();
+  renderChips($("doc"));
   renderHud();
 }
 
@@ -398,51 +430,6 @@ function renderHud() {
       .join("") + `<span class="canon">${esc(canon)}</span>`;
 }
 
-function beginEdit(r) {
-  if (editId !== null || adding) return;
-  selId = r.id; editId = r.id;
-  render2edit(r);
-  fetchVoice(r.text, r.id);
-}
-
-function render2edit(r) {
-  const doc = $("doc");
-  // re-render read-only spans, then swap the target span for an edit box
-  editId = null; render(); editId = r.id;
-  const spans = doc.children;
-  const idx = state.rows.findIndex((x) => x.id === r.id);
-  const box = document.createElement("div");
-  box.className = "editbox";
-  const ta = document.createElement("textarea");
-  ta.value = r.text;
-  const rowEl = document.createElement("div");
-  rowEl.className = "row";
-  const commit = document.createElement("button");
-  commit.textContent = "commit ⏎";
-  commit.onclick = () => { send({ op: "edit", id: r.id, text: ta.value.trim() }); endEdit(); };
-  const cancel = document.createElement("button");
-  cancel.textContent = "cancel esc";
-  cancel.onclick = endEdit;
-  const rm = document.createElement("button");
-  rm.textContent = "retract ⌫";
-  rm.className = "danger";
-  rm.onclick = () => { noteRetract(r); send({ op: "remove", id: r.id }); selId = null; endEdit(); };
-  rowEl.append(commit, cancel, rm);
-  box.append(ta, rowEl);
-  ta.onkeydown = (e) => {
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); commit.onclick(); }
-    if (e.key === "Escape") endEdit();
-  };
-  if (idx >= 0 && spans[idx]) doc.replaceChild(box, spans[idx]);
-  ta.focus();
-}
-
-function endEdit() {
-  editId = null; adding = false;
-  if (pending) { pending = false; }
-  render();
-}
-
 // The app's sentence splitter (same semantics as the corpus prep): terminal
 // punctuation + closing quotes end a sentence; honorific abbreviations rejoin.
 // A pasted paragraph becomes one add per sentence — one key per sentence is
@@ -461,69 +448,124 @@ function splitSentences(text) {
   return out.length ? out : [text.trim()].filter(Boolean);
 }
 
-const composer = $("composer");
-function autogrow() { composer.style.height = "auto"; composer.style.height = composer.scrollHeight + "px"; }
-// a completed sentence = terminal punctuation (not an honorific) followed by
-// whitespace — the writer moved on. Commit completed segments, keep the rest.
-const DEFAULT_PH = composer.placeholder;
-let pendingBreak = false;
-function curPara() { return state.rows.length ? Math.max(...state.rows.map((r) => r.para || 0)) : 0; }
-function harvest(force) {
-  // a blank line is a paragraph break: chunks before the last are complete
-  const chunks = composer.value.split(/\n\s*\n/);
-  let base = curPara() + (pendingBreak ? 1 : 0);
-  let committed = null;
-  for (let ci = 0; ci < chunks.length - 1; ci++) {
-    for (const sSeg of splitSentences(chunks[ci])) { send({ op: "add", text: sSeg, para: base }); committed = sSeg; }
-    pendingBreak = false;
-    base = curPara() + 1 + ci + 1;
-  }
-  const text = chunks[chunks.length - 1];
-  const segs = splitSentences(text);
-  let keep = "";
-  if (segs.length && !force) {
-    const last = segs[segs.length - 1];
-    const done = /[.!?]["\u201d]?\s*$/.test(last) && !/\b(Mr|Mrs|Ms|Dr|St)\.$/.test(last.trim());
-    const moved = /\s$/.test(text) || segs.length > 1;
-    if (!done || !moved) keep = segs.pop();
-    while (segs.length && /\b(Mr|Mrs|Ms|Dr|St)\.$/.test(segs[segs.length - 1].trim())) {
-      keep = segs.pop() + (keep ? " " + keep : "");
+// ---------- the differ: DOM text -> minimal fold ops ----------
+$("doc").addEventListener("input", () => {
+  dirtyAt = Date.now();
+  const ed = $("doc");
+  ed.classList.remove("empty");
+  // typing into a fully-emptied editor can land bare text nodes on #doc —
+  // wrap them so they are a paragraph like everything else
+  for (const n of [...ed.childNodes]) {
+    if (n.nodeType === 3 && n.data.trim()) {
+      const d = document.createElement("div");
+      d.className = "para";
+      ed.replaceChild(d, n);
+      d.appendChild(n);
     }
   }
-  for (const sSeg of segs) { send({ op: "add", text: sSeg, para: base }); committed = sSeg; pendingBreak = false; }
-  if (committed !== null || chunks.length > 1) {
-    composer.value = keep;
-    autogrow();
-    composer.placeholder = DEFAULT_PH;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(sync, 450);
+});
+function sync() {
+  if ((gale || {}).running) return;
+  const texts = blocks().map(readBlock);
+  const dom = texts.filter((t) => t.length).join("\n");
+  if (dom === lastSyncedDom && dom === stateText()) return;
+  const news = [];
+  texts.forEach((t, pi) => { if (t) for (const sSeg of splitSentences(t)) news.push({ para: pi, text: sSeg }); });
+  const olds = state.rows.map((r) => ({ id: r.id, para: r.para, ord: r.ord, text: r.text }));
+  const usedOld = new Set();
+  // pass 1: sentences whose text survived keep their key (and their history)
+  for (const nw of news) {
+    const j = olds.findIndex((o, k) => !usedOld.has(k) && o.text === nw.text);
+    if (j >= 0) { usedOld.add(j); nw.id = olds[j].id; nw.oldPara = olds[j].para; nw.ord = olds[j].ord; }
   }
-  if (committed !== null) {
-    $("voicehead").textContent = "Nearest voices — your last sentence";
-    fetchVoice(committed, null);
+  // pass 2: remaining pair up in order — an edited sentence is the same key
+  const restOld = olds.map((o, k) => ({ o, k })).filter(({ k }) => !usedOld.has(k));
+  let ri = 0;
+  for (const nw of news) {
+    if (nw.id != null) continue;
+    if (ri < restOld.length) {
+      const { o, k } = restOld[ri++];
+      usedOld.add(k);
+      nw.id = o.id; nw.oldPara = o.para; nw.ord = o.ord; nw.edited = o.text !== nw.text;
+    }
   }
+  // order: fractional ords, assigned only where a sentence is new or moved
+  let prevOrd = 0, prevPara = -1;
+  for (let i = 0; i < news.length; i++) {
+    const nw = news[i];
+    if (nw.para !== prevPara) { prevPara = nw.para; prevOrd = 0; }
+    if (nw.ord == null || nw.ord <= prevOrd || (nw.oldPara != null && nw.oldPara !== nw.para)) {
+      let next = null;
+      for (let j = i + 1; j < news.length && news[j].para === nw.para; j++) {
+        if (news[j].ord != null && news[j].ord > prevOrd) { next = news[j].ord; break; }
+      }
+      nw.ord = next != null ? (prevOrd + next) / 2 : prevOrd + 1;
+      nw.moved = true;
+    }
+    prevOrd = nw.ord;
+  }
+  let last = null;
+  for (const nw of news) {
+    if (nw.id == null) { send({ op: "add", text: nw.text, para: nw.para, ord: nw.ord }); last = nw.text; }
+    else if (nw.edited || nw.oldPara !== nw.para || nw.moved) { send({ op: "edit", id: nw.id, text: nw.text, para: nw.para, ord: nw.ord }); if (nw.edited) last = nw.text; }
+  }
+  // a sentence that left the text is a retraction — and a corrigendum chit
+  olds.forEach((o, k) => {
+    if (!usedOld.has(k)) { noteRetract(state.rows.find((r) => r.id === o.id) || o); send({ op: "remove", id: o.id }); }
+  });
+  lastSyncedDom = dom;
 }
+
+// ---------- the caret is the cursor of attention: voices follow it ----------
 let penTimer = null;
-composer.addEventListener("input", () => {
-  autogrow();
-  harvest(false);
-  // live voices: follow the pen while the sentence is still being written
+document.addEventListener("selectionchange", () => {
+  if (!editorFocused()) return;
   clearTimeout(penTimer);
-  const draft = composer.value.trim();
-  if (draft.split(/\s+/).length >= 3) {
-    penTimer = setTimeout(() => {
-      $("voicehead").textContent = "Nearest voices — following your pen";
-      fetchVoice(draft, null);
-    }, 350);
-  }
+  penTimer = setTimeout(penFollow, 400);
 });
-composer.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey) {
-    e.preventDefault();
-    // Enter means what it means in an editor: end the paragraph.
-    if (composer.value.trim()) harvest(true);
-    pendingBreak = true;
-    composer.placeholder = "¶ new paragraph…";
+function caretSentence() {
+  const sel = getSelection();
+  if (!sel.rangeCount) return null;
+  const ed = $("doc");
+  let node = sel.anchorNode;
+  if (!ed.contains(node)) return null;
+  let block = node.nodeType === 1 ? node : node.parentElement;
+  while (block && block.parentElement !== ed) block = block.parentElement;
+  const bs = blocks(), pi = bs.indexOf(block);
+  if (pi < 0) return null;
+  const probe = sel.getRangeAt(0).cloneRange();
+  probe.selectNodeContents(block);
+  probe.setEnd(sel.anchorNode, sel.anchorOffset);
+  const off = probe.toString().length;
+  const raw = blockRaw(block);
+  let cur = 0;
+  for (const sSeg of splitSentences(readBlock(block))) {
+    const idx = raw.indexOf(sSeg, cur);
+    if (idx < 0) continue;
+    cur = idx + sSeg.length;
+    if (off <= cur || cur >= raw.trimEnd().length) return { para: pi, text: sSeg };
   }
-});
+  return null;
+}
+function penFollow() {
+  const cs = caretSentence();
+  if (!cs || cs.text.split(/\s+/).length < 3) return;
+  const row = state.rows.find((r) => r.para === cs.para && r.text === cs.text);
+  $("voicehead").textContent = row
+    ? `Nearest voices — at your caret · t ${row.t.toFixed(2)} · ${row.words}w` + (row.pct != null ? ` · ${ordinal(row.pct)} pct` : "")
+    : "Nearest voices — following your pen";
+  fetchVoice(cs.text, row ? row.id : null);
+}
+
+// ---------- instruments: the machinery is passive until surfaced ----------
+if (localStorage.getItem("soundings.instruments") === "1") document.body.classList.add("instruments");
+$("instru").onclick = () => {
+  const on = document.body.classList.toggle("instruments");
+  localStorage.setItem("soundings.instruments", on ? "1" : "0");
+};
+
 // one delegated handler: seeded chips, user-lens chips (dynamic), their × and + lens
 document.querySelector(".chips").addEventListener("click", (e) => {
   const x = e.target.closest("[data-unlens]");
@@ -574,38 +616,24 @@ function dropGhost(id, fade) {
 function restoreGhost(id) {
   const g = ghosts.find((x) => x.id === id);
   if (!g) return;
+  const bs = blocks(), block = bs[g.para];
+  if (block) block.appendChild(document.createTextNode((blockRaw(block).trim() ? " " : "") + g.text));
+  else { const d = document.createElement("div"); d.className = "para"; d.textContent = g.text; $("doc").appendChild(d); }
   send({ op: "restore", id: g.id, text: g.text, para: g.para || 0 });
+  lastSyncedDom = "";
   dropGhost(id, false);
 }
 
-// ghosts sit where the sentence was: before the first live span whose id is greater
-function renderGhosts(doc) {
-  if (galeActive()) return;
-  // the retract HUD arrives after the click — fill the chit when it lands
+// deleted text leaves a corrigendum chit in the margin — the editable page
+// itself stays exactly what the writer typed
+function retireGhosts() {
   const h = state.hud || {};
   if (h.op === "retract" && h.key != null) {
     const g = ghosts.find((x) => x.id === h.key);
     if (g && g.seq !== h.seq) { g.seq = h.seq; g.wall_us = h.wall_us; renderCorrigenda(); }
   }
-  // a restore (or any re-insert of the id) retires the ghost
-  // …but only once the retract was confirmed (g.seq set) — the click-time render still has the row
+  // a restore (or any re-insert of the id) retires the chit
   for (const g of [...ghosts]) if (g.seq != null && state.rows.some((r) => r.id === g.id)) dropGhost(g.id, false);
-  const spans = [...doc.querySelectorAll(".s")];
-  const rowIds = state.rows.map((r) => r.id);
-  for (const g of ghosts) {
-    const el = document.createElement("span");
-    el.className = "ghost";
-    el.dataset.id = g.id;
-    el.textContent = g.text + " ";
-    el.title = `s${g.id} withdrawn — the line stays struck, never deleted`;
-    const idx = rowIds.findIndex((id) => id > g.id);
-    if (idx >= 0 && spans[idx]) {
-      spans[idx].parentNode.insertBefore(el, spans[idx]);
-    } else {
-      const tail = doc.lastElementChild;
-      (tail && tail.classList.contains("para") ? tail : doc).appendChild(el);
-    }
-  }
 }
 
 function renderCorrigenda() {
@@ -620,9 +648,11 @@ function renderCorrigenda() {
       : `−1 row · axis, len views rolled back · ${g.released} voice card${g.released === 1 ? "" : "s"} released · ${g.wall_us}µs`;
     d.innerHTML = `<span class="hole"></span>
       <div class="ch-h">Corrigendum · s${g.id}</div>
-      <div class="ch-b">withdrawn — the line stays struck, never deleted.</div>
+      <div class="ch-t"></div>
+      <div class="ch-b">withdrawn — struck in the margin, never lost.</div>
       <div class="ch-m"></div>
       <div class="ch-row"><button class="restore" title="one upsert on the old id — the un-retcon is one mutation">restore ↩</button><button class="dismiss" title="dismiss the chit and its ghost">×</button></div>`;
+    d.querySelector(".ch-t").textContent = g.text.length > 90 ? g.text.slice(0, 90) + "…" : g.text;
     d.querySelector(".ch-m").textContent = meta;
     d.querySelector(".restore").onclick = () => restoreGhost(g.id);
     d.querySelector(".dismiss").onclick = () => dropGhost(g.id, true);
@@ -638,8 +668,7 @@ function maybeDemo() {
   const r = state.rows.find((x) => x.id === 9);
   if (!r || !canon.startsWith("canon ready")) return;
   demoFired = true;
-  selId = r.id;
-  fetchVoice(r.text, r.id).then(() => { noteRetract(r); send({ op: "remove", id: r.id }); selId = null; render(); });
+  fetchVoice(r.text, r.id).then(() => { noteRetract(r); send({ op: "remove", id: r.id }); });
   // dry-run hygiene: the un-retcon fires by itself after 12s so a screenshot pass leaves the doc as it was
   setTimeout(() => restoreGhost(r.id), 12000);
 }
@@ -774,6 +803,16 @@ function ordinal(x) {
   return `${n}${suf}`;
 }
 let chipSeq = null;
+function chipTop(doc, row) {
+  const block = blocks()[row.para];
+  if (!block) return null;
+  const raw = blockRaw(block);
+  const idx = raw.indexOf(row.text);
+  if (idx < 0) return null;
+  const rng = rangeIn(block, idx, Math.min(raw.length, idx + row.text.length));
+  if (!rng) return null;
+  return rng.getBoundingClientRect().top - doc.getBoundingClientRect().top;
+}
 function renderChips(doc) {
   maybeDemoChips();
   const h = state.hud || {};
@@ -781,26 +820,22 @@ function renderChips(doc) {
   const galing = document.querySelector(".page").classList.contains("galing");
   const wants = h.key != null && h.op !== "retract" && !galing;
   if (!wants) { if (old) old.remove(); chipSeq = null; return; }
+  const row = state.rows.find((r) => r.id === h.key);
+  const top = row ? chipTop(doc, row) : null;
   if (old && chipSeq === h.seq) {
-    // same op, fresh repaint: keep the chip (and its fade) but re-seat it
-    const idx = state.rows.findIndex((r) => r.id === h.key);
-    const span = doc.querySelectorAll(".s")[idx];
-    if (span) old.style.top = (span.getBoundingClientRect().top - doc.getBoundingClientRect().top) + "px";
+    if (top != null) old.style.top = top + "px";
     return;
   }
   if (old) old.remove();
-  const idx = state.rows.findIndex((r) => r.id === h.key);
-  const row = state.rows[idx];
-  const span = doc.querySelectorAll(".s")[idx];
-  if (!row || !span) { chipSeq = null; return; }
+  if (!row || top == null) { chipSeq = null; return; }
   chipSeq = h.seq;
   const chip = document.createElement("div");
   chip.className = "gchip";
-  chip.style.top = (span.getBoundingClientRect().top - doc.getBoundingClientRect().top) + "px";
+  chip.contentEditable = "false";
+  chip.style.top = top + "px";
   chip.innerHTML = `<span class="us"><b>${h.wall_us}µs</b><span class="lbl">wtx</span></span>` +
     (row.pct != null ? `<span class="pct">len · ${ordinal(row.pct)} pct of canon</span>` : "");
   doc.appendChild(chip);
-  // hold long enough to read, then fade; the next op replaces it outright
   setTimeout(() => chip.classList.add("fade"), 4000);
 }
 // ?demo=chips — headless/dry-run hook: once rows carry percentiles, edit row 3
@@ -815,6 +850,81 @@ function maybeDemoChips() {
   const orig = r3.text.replace(/ — hazards blinking\.$/, "."); // idempotent across runs
   setTimeout(() => send({ op: "edit", id: 3, text: orig.replace(/\.$/, "") + " — hazards blinking." }), 400);
   setTimeout(() => send({ op: "edit", id: 3, text: orig }), 9000); // leave the doc as it was
+}
+
+// ---------- paint: quantized highlight buckets, generated from the same
+// ramps the span era used. Highlights never touch the editable DOM.
+(function buildHighlightCss() {
+  let css = "";
+  for (let k = 0; k < 8; k++) {
+    const t = k / 7, d = t - 0.5;
+    const ax = d < 0
+      ? `rgba(63,96,121,${Math.min(0.34, -d * 0.9).toFixed(3)})`
+      : `rgba(161,112,28,${Math.min(0.34, d * 0.9).toFixed(3)})`;
+    css += `::highlight(ax${k}){background-color:${ax};}`;
+    css += `::highlight(ln${k}){background-color:rgba(74,107,79,${(t * 0.30).toFixed(3)});}`;
+    for (let pi = 0; pi < 3; pi++) {
+      const pr = LENS_PAIR(pi);
+      const col = d < 0 ? pr.cool(Math.min(0.34, -d * 0.68)) : pr.warm(Math.min(0.34, d * 0.68));
+      css += `::highlight(u${pi}b${k}){background-color:${col};}`;
+    }
+  }
+  const st = document.createElement("style");
+  st.textContent = css;
+  document.head.appendChild(st);
+})();
+function bucketFor(r, maxW) {
+  const clamp8 = (x) => Math.max(0, Math.min(7, Math.round(x)));
+  if (lens === "len") return "ln" + clamp8((r.words / Math.max(1, maxW)) * 7);
+  if (lens === "axis") return "ax" + clamp8(r.t * 7);
+  if (lens.startsWith("user:")) {
+    const i = userLensIndex(+lens.slice(5));
+    if (i < 0) return null;
+    const t = (r.lens_t || [])[i];
+    if (t == null) return null;
+    const { mid, span } = userLensScale(i);
+    const d = span > 0 ? (t - mid) / span : 0;
+    return `u${i % 3}b` + clamp8(((d + 1) / 2) * 7);
+  }
+  return null;
+}
+function rangeIn(block, start, end) {
+  const rng = document.createRange();
+  const w = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+  let acc = 0, n, started = false;
+  while ((n = w.nextNode())) {
+    const len = n.data.length;
+    if (!started && start <= acc + len) { rng.setStart(n, Math.max(0, start - acc)); started = true; }
+    if (started && end <= acc + len) { rng.setEnd(n, Math.max(0, end - acc)); return rng; }
+    acc += len;
+  }
+  if (started) { rng.setEnd(block, block.childNodes.length); return rng; }
+  return null;
+}
+function paintHighlights() {
+  if (!window.Highlight || !CSS.highlights) return;
+  CSS.highlights.clear();
+  if (lens === "off") return;
+  const maxW = Math.max(1, ...state.rows.map((r) => r.words));
+  const sets = new Map();
+  blocks().forEach((block, pi) => {
+    const raw = blockRaw(block);
+    let cur = 0;
+    for (const sSeg of splitSentences(readBlock(block))) {
+      const idx = raw.indexOf(sSeg, cur);
+      if (idx < 0) continue;
+      cur = idx + sSeg.length;
+      const row = state.rows.find((r) => r.para === pi && r.text === sSeg);
+      if (!row) continue;
+      const name = bucketFor(row, maxW);
+      if (!name) continue;
+      const rng = rangeIn(block, idx, idx + sSeg.length);
+      if (!rng) continue;
+      if (!sets.has(name)) sets.set(name, []);
+      sets.get(name).push(rng);
+    }
+  });
+  for (const [name, ranges] of sets) CSS.highlights.set(name, new Highlight(...ranges));
 }
 
 let voiceSeq = 0;
@@ -862,6 +972,7 @@ function renderGale() {
   if (g.running) galeDismissed = false;
   const active = !!g.running || (!!g.finished && !galeDismissed);
   document.querySelector(".page").classList.toggle("galing", active);
+  $("doc").contentEditable = active ? "false" : "plaintext-only";
   $("moral").classList.toggle("show", active && !!g.finished && !galeDismissed);
   if (!active) return;
 
