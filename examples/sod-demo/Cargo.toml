@@ -1,0 +1,9 @@
+[package]
+name = "sod-demo"
+version = "0.0.1"
+edition = "2024"
+
+[dependencies]
+sod = { path = "../../sod" }
+fold = { path = "../../fold" }
+postcard = { version = "1", features = ["use-std"] }
