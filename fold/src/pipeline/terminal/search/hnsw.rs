@@ -216,6 +216,7 @@ where
 
     // blob layout: [SNAP_MAGIC, version u32, count u32,
     // (klen u32, kenc, node id u32)*] then the anny graph
+    #[allow(clippy::type_complexity)]
     fn load_blob(
         path: &Path,
         metric: M,

@@ -194,11 +194,12 @@ where
             return Err(bad("free node id out of bounds"));
         }
         match entry_point {
-            Some((lvl, id)) => {
-                if id as usize >= n || alive[id as usize] != 1 || levels[id as usize] != lvl {
-                    return Err(bad("entry point inconsistent"));
-                }
+            Some((lvl, id))
+                if id as usize >= n || alive[id as usize] != 1 || levels[id as usize] != lvl =>
+            {
+                return Err(bad("entry point inconsistent"));
             }
+            Some(_) => {}
             None if alive.contains(&1) => return Err(bad("missing entry point")),
             None => {}
         }

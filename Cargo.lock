@@ -2837,6 +2837,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "soundings"
+version = "0.0.0"
+dependencies = [
+ "anny",
+ "axum",
+ "ese",
+ "fold",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "spin"
 version = "0.9.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
