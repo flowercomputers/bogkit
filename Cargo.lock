@@ -1717,6 +1717,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "judge-test-demo"
+version = "0.0.0"
+dependencies = [
+ "anny",
+ "ese",
+ "fold",
+ "serde",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
