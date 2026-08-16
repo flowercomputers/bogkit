@@ -166,6 +166,9 @@ where
     }
 
     fn push(&mut self, tx: &mut WriteTx<'_>, data: &Keyed<K, V>, delta: isize) {
+        if delta == 0 {
+            return; // a zero-multiplicity push is a no-op, never a delete
+        }
         let Keyed { key, val } = data;
         let delta = delta as i64;
         (self.tok)(val.as_ref(), &mut self.tokens);

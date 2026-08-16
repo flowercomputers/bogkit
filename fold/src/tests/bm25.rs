@@ -72,6 +72,18 @@ fn bm25_rank_and_retract() {
     });
 }
 
+#[test]
+fn bm25_zero_delta_push_is_a_no_op() {
+    let mut st = Stream::new(fresh_db("bm25_zero.db"), terminal::search::Bm25::new("idx"));
+    st.wtx(|tx| tx.insert(&Keyed::new(1u32, "a quick fox".to_string())));
+    // delta == 0 must touch nothing — neither postings nor doc length
+    st.wtx(|tx| tx.push(&Keyed::new(1u32, "a quick fox".to_string()), 0));
+    st.rtx(|idx| {
+        assert_eq!(idx.doc_count(), 1);
+        assert_eq!(idx.search("fox", 10).len(), 1);
+    });
+}
+
 // editing a document as retract-old + insert-new in ONE transaction — which
 // is exactly what `KeyedStream::upsert` emits — must leave the index
 // identical to one built directly with the final texts. Terms whose

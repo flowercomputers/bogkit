@@ -594,17 +594,19 @@ fn doc_ingest(
                 // determinism contract for the lens Map; see lens.rs)
                 let id = lens_defs.iter().map(|d| d.id).max().map_or(1, |m| m + 1);
                 let def = LensDef { id, name: lname.clone(), a: a.clone(), b: b.clone() };
-                defs_st.wtx(|tx| tx.upsert(&id, &def));
+                // projections first, definition LAST: a crash in between
+                // leaves invisible orphan projections, never a persisted
+                // lens whose scores all read 0.5 (external review P1)
                 registry.write().unwrap().insert(id, lens::axis_for(&def));
-                lens_defs.push(def);
-                lens_defs.sort_by_key(|d| d.id);
-                // the backfill: every sentence in the doc, ONE wtx
                 let sents: Vec<(u32, String)> = st.rtx(|(sents, _)| sents.iter().collect());
                 lens_st.wtx(|tx| {
                     for (sid, val) in &sents {
                         tx.upsert(&(id, *sid), &dec_val(val).2.to_string());
                     }
                 });
+                defs_st.wtx(|tx| tx.upsert(&id, &def));
+                lens_defs.push(def);
+                lens_defs.sort_by_key(|d| d.id);
                 lens_hud = Some((sents.len() as u32, format!("{lname} · {} keys → 1 wtx", sents.len())));
                 ("lens", None)
             }
@@ -613,12 +615,14 @@ fn doc_ingest(
                 // registered, THEN drop the definition and the axis
                 let sids: Vec<u32> = st.rtx(|(sents, _)| sents.iter().map(|(sid, _)| sid).collect());
                 let name_of = lens_defs.iter().find(|d| d.id == *id).map(|d| d.name.clone()).unwrap_or_default();
+                // definition first: a crash mid-retract leaves orphan
+                // projections (invisible), never a half-defined lens
+                defs_st.wtx(|tx| tx.remove(id));
                 lens_st.wtx(|tx| {
                     for sid in &sids {
                         tx.remove(&(*id, *sid));
                     }
                 });
-                defs_st.wtx(|tx| tx.remove(id));
                 lens_defs.retain(|d| d.id != *id);
                 registry.write().unwrap().remove(id);
                 lens_hud = Some((sids.len() as u32, format!("{name_of} · {} keys retracted → 1 wtx", sids.len())));
@@ -726,7 +730,16 @@ fn library_ingest(
 
         let db = std::path::Path::new(lib.db);
         let snap = std::path::PathBuf::from(lib.snap);
-        let fresh = !db.exists();
+        let marker = format!("{}/.soundings-complete", lib.db);
+        let mut fresh = !db.exists();
+        if !fresh && !std::path::Path::new(&marker).exists() {
+            // a kill mid-build left a partial shelf that would otherwise be
+            // accepted as complete forever (external review P1)
+            let _ = status.send(format!("the {} shelf was interrupted — rebuilding…", lib.label));
+            let _ = std::fs::remove_dir_all(db);
+            let _ = std::fs::remove_file(&snap);
+            fresh = true;
+        }
         if fresh && !std::path::Path::new(lib.jsonl).exists() {
             let _ = status.send(format!("no {} library yet — run its prep script", lib.label));
             while let Ok(req) = rx.recv() {
@@ -796,6 +809,7 @@ fn library_ingest(
             let _ = st.rtx(|(vecs, _)| vecs.save_graph());
         }
         let n = st.rtx(|(_, docs)| docs.iter().count());
+        let _ = std::fs::write(&marker, n.to_string());
         let _ = status.send(format!(
             "{} ready · {n} sentences · {:.2}s{}",
             lib.label,
@@ -832,6 +846,22 @@ fn library_ingest(
 
 // ---------- http ----------
 
+/// Local-instrument origin policy: a browser context must be same-origin
+/// (or an explicit localhost origin); non-browser clients (curl — no Origin,
+/// no Sec-Fetch-Site) pass. Blocks cross-site WebSocket hijacking of the
+/// document and <img>-triggered state changes (external review P1).
+fn local_origin(headers: &axum::http::HeaderMap) -> bool {
+    if let Some(sfs) = headers.get("sec-fetch-site").and_then(|v| v.to_str().ok())
+        && !matches!(sfs, "same-origin" | "none")
+    {
+        return false;
+    }
+    match headers.get(axum::http::header::ORIGIN).and_then(|v| v.to_str().ok()) {
+        None => true,
+        Some(o) => o.starts_with("http://localhost:") || o.starts_with("http://127.0.0.1:"),
+    }
+}
+
 #[tokio::main]
 async fn serve_http(state: AppState) {
     let app = Router::new()
@@ -863,7 +893,14 @@ async fn pct(State(st): State<AppState>, Query(params): Query<HashMap<String, St
 /// `/library` — the reference-library selector: `?set=<id>` switches (the
 /// library thread does the shelving; status streams over the ws), bare GET
 /// reports what's on offer.
-async fn library(State(app): State<AppState>, Query(params): Query<HashMap<String, String>>) -> Json<serde_json::Value> {
+async fn library(
+    State(app): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+) -> Json<serde_json::Value> {
+    if !local_origin(&headers) {
+        return Json(serde_json::json!({ "status": "forbidden" }));
+    }
     if let Some(id) = params.get("set") {
         let _ = app.voice_tx.send(LibReq::Switch(id.clone()));
     }
@@ -909,7 +946,17 @@ async fn voice(
 
 /// `/gale?rate=60&secs=10&seed=42` — start one gale; refuses while one runs
 /// or before both the canon and the naive arm are ready.
-async fn gale_start(State(app): State<AppState>, Query(params): Query<HashMap<String, String>>) -> Json<serde_json::Value> {
+async fn gale_start(
+    State(app): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+) -> Json<serde_json::Value> {
+    if !local_origin(&headers) {
+        return Json(serde_json::json!({ "status": "forbidden" }));
+    }
+    if app.doc_rx.borrow().rows.is_empty() {
+        return Json(serde_json::json!({ "status": "empty document" }));
+    }
     let num = |k: &str, d: u64| params.get(k).and_then(|v| v.parse::<u64>().ok()).unwrap_or(d);
     let p = gale::GaleParams {
         rate: num("rate", 60).clamp(1, 500) as u32,
@@ -929,14 +976,28 @@ async fn gale_start(State(app): State<AppState>, Query(params): Query<HashMap<St
     let (rate, secs, seed) = (p.rate, p.secs, p.seed);
     let a = app.clone();
     std::thread::spawn(move || {
-        gale::run_gale(p, a.edit_tx.clone(), a.naive_tx.clone(), a.doc_rx.clone(), a.naive_rx.clone(), a.ledger.clone(), a.gale_tx.clone());
+        // a panicking gale must never wedge the flag (external review P2)
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            gale::run_gale(p, a.edit_tx.clone(), a.naive_tx.clone(), a.doc_rx.clone(), a.naive_rx.clone(), a.ledger.clone(), a.gale_tx.clone());
+        }));
         *a.gale_running.lock().unwrap() = false;
+        if r.is_err() {
+            eprintln!("gale run panicked — running flag cleared");
+        }
     });
     Json(serde_json::json!({ "status": "started", "rate": rate, "secs": secs, "seed": seed }))
 }
 
-async fn ws_upgrade(State(state): State<AppState>, ws: WebSocketUpgrade) -> impl axum::response::IntoResponse {
-    ws.on_upgrade(move |socket| handle_socket(socket, state))
+async fn ws_upgrade(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    ws: WebSocketUpgrade,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if !local_origin(&headers) {
+        return (axum::http::StatusCode::FORBIDDEN, "cross-origin denied").into_response();
+    }
+    ws.on_upgrade(move |socket| handle_socket(socket, state)).into_response()
 }
 
 async fn handle_socket(mut socket: WebSocket, app: AppState) {

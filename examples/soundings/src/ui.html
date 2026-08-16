@@ -638,13 +638,21 @@ function caretSentence() {
   const off = probe.toString().length;
   const raw = blockRaw(block);
   let cur = 0;
+  const seen = {};
   for (const sSeg of splitSentences(readBlock(block))) {
     const idx = raw.indexOf(sSeg, cur);
     if (idx < 0) continue;
     cur = idx + sSeg.length;
-    if (off <= cur || cur >= raw.trimEnd().length) return { para: pi, text: sSeg };
+    seen[sSeg] = (seen[sSeg] || 0) + 1;
+    if (off <= cur || cur >= raw.trimEnd().length) return { para: pi, text: sSeg, occ: seen[sSeg] - 1 };
   }
   return null;
+}
+// replace the n-th occurrence, so duplicate sentences keep their identity
+function replaceNth(hay, needle, n, repl) {
+  let i = -1;
+  for (let c = 0; c <= n; c++) { i = hay.indexOf(needle, i + 1); if (i < 0) return hay; }
+  return hay.slice(0, i) + repl + hay.slice(i + needle.length);
 }
 let lastCaret = null;
 function penFollow() {
@@ -724,7 +732,7 @@ async function askRestyle(opts) {
   box.querySelector(".restore").onclick = () => {
     const block = blocks()[cs.para];
     if (block && blockRaw(block).includes(cs.text)) {
-      block.textContent = blockRaw(block).replace(cs.text, resp.proposal);
+      block.textContent = replaceNth(blockRaw(block), cs.text, cs.occ || 0, resp.proposal);
       $("doc").dispatchEvent(new InputEvent("input", { bubbles: true }));
     }
     box.innerHTML = "";
@@ -757,7 +765,7 @@ const galeActive = () => { const g = gale || {}; return !!g.running || (!!g.fini
 
 function noteRetract(r) {
   ghosts = ghosts.filter((g) => g.id !== r.id);
-  const g = { id: r.id, text: r.text, para: r.para || 0, t: r.t, words: r.words, seq: null, wall_us: null, released: 0, timer: null };
+  const g = { id: r.id, text: r.text, para: r.para || 0, ord: r.ord || 0, t: r.t, words: r.words, seq: null, wall_us: null, released: 0, timer: null };
   g.timer = setTimeout(() => dropGhost(g.id, true), GHOST_TTL_MS);
   ghosts.push(g);
   while (ghosts.length > GHOST_MAX) { const old = ghosts.shift(); clearTimeout(old.timer); }
@@ -786,7 +794,7 @@ function restoreGhost(id) {
   const bs = blocks(), block = bs[g.para];
   if (block) block.appendChild(document.createTextNode((blockRaw(block).trim() ? " " : "") + g.text));
   else { const d = document.createElement("div"); d.className = "para"; d.textContent = g.text; $("doc").appendChild(d); }
-  send({ op: "restore", id: g.id, text: g.text, para: g.para || 0 });
+  send({ op: "restore", id: g.id, text: g.text, para: g.para || 0, ord: g.ord || 0 });
   lastSyncedDom = "";
   dropGhost(id, false);
 }

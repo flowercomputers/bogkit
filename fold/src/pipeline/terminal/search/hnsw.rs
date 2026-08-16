@@ -23,7 +23,20 @@ fn decode_vector<T: DeserializeOwned + Copy, const DIM: usize>(bytes: &[u8]) -> 
 // graph snapshot blob: this header + the key->node-id table, then the anny
 // graph via Hnsw::write_to
 const SNAP_MAGIC: [u8; 8] = *b"FOLDHNSW";
-const SNAP_VERSION: u32 = 1;
+const SNAP_VERSION: u32 = 2;
+
+// order-sensitive FNV-1a over the committed rows (key and value bytes) —
+// both the saver and the restorer iterate the keyspace in the same order,
+// so a snapshot whose rows have changed VALUE (same keys, same count, new
+// vectors) no longer validates. External review finding: keys+count alone
+// accepted stale graphs.
+fn fnv_row(h: &mut u64, k: &[u8], v: &[u8]) {
+    for b in k.iter().chain(v.iter()) {
+        *h ^= *b as u64;
+        *h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    *h = h.wrapping_mul(0x0000_0100_0000_01b3);
+}
 
 fn bad_snap() -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::InvalidData, "bad hnsw graph snapshot")
@@ -160,8 +173,13 @@ pub struct Hnsw<
     seed: u64,
     snapshot_path: Option<PathBuf>,
     state: Rc<RefCell<State<K, T, M, DIM, M0, TOP_K, EF_SEARCH, EF_BUILD, MAX_LEVEL>>>,
-    // encoded key -> (key, latest embedding, net delta this tx)
-    pending: FxHashMap<Vec<u8>, (K, [T; DIM], i64)>,
+    // encoded key -> (key, latest embedding, last push was an insert).
+    // Last-write-wins, NOT net-delta: a same-transaction retract+insert of
+    // one key with a CHANGED vector nets to zero, and a net-sign commit
+    // would silently keep the stale embedding in both the graph and the
+    // row (the Bm25 correctness bug's sibling; surfaced by the snapshot
+    // content-digest test).
+    pending: FxHashMap<Vec<u8>, (K, [T; DIM], bool)>,
     vec_buf: Vec<u8>,
 }
 
@@ -214,7 +232,7 @@ where
         self
     }
 
-    // blob layout: [SNAP_MAGIC, version u32, count u32,
+    // blob layout: [SNAP_MAGIC, version u32, rows_hash u64, count u32,
     // (klen u32, kenc, node id u32)*] then the anny graph
     #[allow(clippy::type_complexity)]
     fn load_blob(
@@ -222,9 +240,11 @@ where
         metric: M,
         seed: u64,
     ) -> std::io::Result<(
+        u64,
         FxHashMap<Vec<u8>, u32>,
         anny::hnsw::Hnsw<T, M, DIM, M0, TOP_K, EF_SEARCH, EF_BUILD, MAX_LEVEL>,
     )> {
+        let flen = std::fs::metadata(path)?.len();
         let mut r = std::io::BufReader::new(std::fs::File::open(path)?);
         let mut magic = [0u8; 8];
         r.read_exact(&mut magic)?;
@@ -233,8 +253,16 @@ where
         if magic != SNAP_MAGIC || u32::from_le_bytes(b4) != SNAP_VERSION {
             return Err(bad_snap());
         }
+        let mut b8 = [0u8; 8];
+        r.read_exact(&mut b8)?;
+        let rows_hash = u64::from_le_bytes(b8);
         r.read_exact(&mut b4)?;
         let count = u32::from_le_bytes(b4) as usize;
+        // a corrupt count must not drive allocation: every entry needs at
+        // least 9 bytes on disk (klen + one key byte + node id)
+        if (count as u64).saturating_mul(9) > flen {
+            return Err(bad_snap());
+        }
         let mut ids = FxHashMap::default();
         ids.reserve(count);
         for _ in 0..count {
@@ -247,7 +275,7 @@ where
             }
         }
         let index = anny::hnsw::Hnsw::read_from(&mut r, metric, seed)?;
-        Ok((ids, index))
+        Ok((rows_hash, ids, index))
     }
 
     // fast path: adopt the snapshot blob iff it exactly covers the committed
@@ -265,23 +293,25 @@ where
         let Some(path) = &self.snapshot_path else {
             return false;
         };
-        let Ok((ids, index)) = Self::load_blob(path, self.metric, self.seed) else {
+        let Ok((rows_hash, ids, index)) = Self::load_blob(path, self.metric, self.seed) else {
             return false;
         };
         if index.len() != ids.len() {
             return false;
         }
         let mut rows = 0usize;
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
         for kv in init.snapshot().iter(ks) {
-            let Ok((k, _)) = kv.into_inner() else {
+            let Ok((k, v)) = kv.into_inner() else {
                 return false;
             };
             if !ids.contains_key(&*k) {
                 return false;
             }
+            fnv_row(&mut h, &k, &v);
             rows += 1;
         }
-        if rows != ids.len() {
+        if rows != ids.len() || h != rows_hash {
             return false;
         }
         let mut keys = FxHashMap::default();
@@ -339,12 +369,15 @@ where
     fn push(&mut self, tx: &mut WriteTx<'_>, data: &Keyed<K, [T; DIM]>, delta: isize) {
         tx.buf.clear();
         postcard::to_io(&data.key, &mut tx.buf).unwrap();
+        if delta == 0 {
+            return; // a zero-multiplicity push is a no-op
+        }
         let e = self
             .pending
             .entry(tx.buf.clone())
-            .or_insert_with(|| (data.key.clone(), data.val, 0));
+            .or_insert_with(|| (data.key.clone(), data.val, false));
         e.1 = data.val;
-        e.2 += delta as i64;
+        e.2 = delta > 0;
     }
 
     fn commit(&mut self, tx: &mut WriteTx<'_>) {
@@ -363,21 +396,15 @@ where
             let (metric, seed) = (self.metric, self.seed);
             state.rebuild(metric, seed, entries);
         }
-        for (kenc, (key, vec, delta)) in self.pending.drain() {
-            match delta {
-                1.. => {
-                    self.vec_buf.clear();
-                    postcard::to_io(&vec[..], &mut self.vec_buf).unwrap();
+        for (kenc, (key, vec, was_insert)) in self.pending.drain() {
+            if was_insert {
+                self.vec_buf.clear();
+                postcard::to_io(&vec[..], &mut self.vec_buf).unwrap();
 
-                    tx.insert(&ks, &kenc, &self.vec_buf);
-                    state.upsert(kenc, key, vec);
-                }
-                0 => {}
-                _ => {
-                    if state.remove(&kenc) {
-                        tx.remove(&ks, &kenc);
-                    }
-                }
+                tx.insert(&ks, &kenc, &self.vec_buf);
+                state.upsert(kenc, key, vec);
+            } else if state.remove(&kenc) {
+                tx.remove(&ks, &kenc);
             }
         }
     }
@@ -482,6 +509,11 @@ where
                 "no graph snapshot path configured",
             )
         })?;
+        let mut rows_hash: u64 = 0xcbf2_9ce4_8422_2325;
+        for kv in self.tx.iter(&self.ks) {
+            let (k, v) = kv.into_inner().map_err(|_| bad_snap())?;
+            fnv_row(&mut rows_hash, &k, &v);
+        }
         self.with_state(|state| {
             let mut tmp = path.clone().into_os_string();
             tmp.push(".tmp");
@@ -489,6 +521,7 @@ where
             let mut w = std::io::BufWriter::new(std::fs::File::create(&tmp)?);
             w.write_all(&SNAP_MAGIC)?;
             w.write_all(&SNAP_VERSION.to_le_bytes())?;
+            w.write_all(&rows_hash.to_le_bytes())?;
             let count = u32::try_from(state.ids.len()).map_err(|_| bad_snap())?;
             w.write_all(&count.to_le_bytes())?;
             for (kenc, id) in &state.ids {

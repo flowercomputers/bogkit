@@ -123,6 +123,53 @@ fn hnsw_graph_snapshot_fast_reopen() {
     st.rtx(|idx| assert_eq!(idx.len(), n as usize));
 }
 
+// a same-tx retract+insert of one key with a changed vector must land in
+// the graph AND the persisted row (net delta is zero — the trap)
+#[test]
+fn hnsw_same_tx_vector_update_persists() {
+    let path = fresh_db("hnsw_upsert_vec.db");
+    let mut st = Stream::new(&path, Sink::new("vecs", L2, 9));
+    st.wtx(|tx| {
+        for i in 0..30u32 {
+            tx.insert(&Keyed::new(i, dv(i)));
+        }
+    });
+    st.wtx(|tx| {
+        tx.remove(&Keyed::new(5u32, dv(5)));
+        tx.insert(&Keyed::new(5u32, dv(300)));
+    });
+    st.rtx(|idx| assert_eq!(ids(&idx.search(&dv(300)))[0], 5, "in-memory graph"));
+    drop(st);
+    let st = Stream::new(&path, Sink::new("vecs", L2, 9));
+    st.rtx(|idx| assert_eq!(ids(&idx.search(&dv(300)))[0], 5, "rebuilt from rows"));
+}
+
+#[test]
+fn hnsw_graph_snapshot_stale_vectors_rejected() {
+    let path = fresh_db("hnsw_snap_stalevec.db");
+    let graph = path.join("hnsw.graph");
+    let n: u32 = 50;
+    let mut st = Stream::new(&path, Sink::new("vecs", L2, 42).with_graph_snapshot(&graph));
+    st.wtx(|tx| {
+        for i in 0..n {
+            tx.insert(&Keyed::new(i, dv(i)));
+        }
+    });
+    st.rtx(|idx| idx.save_graph().unwrap());
+    // same KEY, same count, NEW vector — the stale snapshot matches on
+    // keys and count alone and must be rejected on content
+    st.wtx(|tx| {
+        tx.remove(&Keyed::new(7u32, dv(7)));
+        tx.insert(&Keyed::new(7u32, dv(400)));
+    });
+    drop(st);
+    let st = Stream::new(&path, Sink::new("vecs", L2, 42).with_graph_snapshot(&graph));
+    st.rtx(|idx| {
+        assert_eq!(idx.len(), n as usize);
+        assert_eq!(ids(&idx.search(&dv(400)))[0], 7, "graph must reflect the updated vector");
+    });
+}
+
 #[test]
 fn hnsw_graph_snapshot_corrupt_falls_back() {
     let path = fresh_db("hnsw_snap_corrupt.db");

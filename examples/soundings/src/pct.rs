@@ -53,6 +53,11 @@ pub fn open_or_build(
     status: &watch::Sender<String>,
     out: &watch::Sender<Option<Arc<LenCdf>>>,
 ) {
+    let marker = format!("{len_db}/.soundings-complete");
+    if std::path::Path::new(len_db).exists() && !std::path::Path::new(&marker).exists() {
+        // interrupted build: rebuild rather than accept a partial population
+        let _ = std::fs::remove_dir_all(len_db);
+    }
     let mut st = Stream::new(
         std::path::Path::new(len_db),
         ScoreBy::new(|w: &u32| *w, terminal::Histogram::new("len", |w: &u32| *w)),
@@ -91,6 +96,7 @@ pub fn open_or_build(
         LenCdf { buckets, total }
     });
     let _ = status.send(format!("{label} length histogram · {} sentences (Histogram sink, {})", cdf.total, if total == 0 { "built" } else { "from disk" }));
+    let _ = std::fs::write(&marker, cdf.total.to_string());
     let _ = out.send(Some(Arc::new(cdf)));
 }
 
