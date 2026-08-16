@@ -45,6 +45,13 @@ ESE, our first take on a compiler oriented approach to static embedding. It’s 
 ### Approximate Nearest Neighbors... yeah (ANNy)
 This is a very fast crate for creating HNSWs.
 
+### Sod
+Symmetric replication for fold apps: local-first replicas ("sods") that
+always accept writes and converge by exchanging hash-chained delta logs —
+client↔server and p2p are the same protocol. Portable core (compiles to
+wasm32) with fold as the default engine. See `sod/README.md` and the
+`sod-demo` example.
+
 ### Examples
 In this directory you'll find a few examples that show bog style databases in various use cases.
 
@@ -52,6 +59,7 @@ In this directory you'll find a few examples that show bog style databases in va
 - `timeseries` — weather readings bucketed into hourly and daily aggregates, updated incrementally. `cargo run -p timeseries`
 - `chat` — a chat backend where fold is the source of truth and every update is broadcast to clients over a websocket. `cargo run -p chat`, then open http://localhost:3000
 - `search` — text search three ways over one document stream: BM25 keyword search, HNSW semantic search over ese embeddings, and hybrid rank fusion. A good base for agent memory or document search projects. `cargo run -p search`
+- `sod-demo` — a replicated notes bag: two or more local sod replicas (native CLI and a Node.js addon) converging over websocket sync. `cargo run -p sod-demo -- <dir> add hello`
 
 ## More about Bog
 Bog is a database runtime that makes every attempt to do as much work as possible as early as possible, to make reads incredibly fast. This means compiling queries into functions that eagerly update their output as mutations occur.

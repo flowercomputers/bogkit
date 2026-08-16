@@ -3,9 +3,9 @@
 //!
 //! Sod's only durability requirement is an append-only sequence of verified
 //! frame records (SOD-1); everything else about a platform's storage is the
-//! implementation's business. Filesystems get [`FileLog`]
-//! (`crate::log_file`); browsers get an OPFS/IndexedDB implementation as a
-//! follow-on; tests get [`MemLog`].
+//! implementation's business. Filesystems get
+//! [`FileLog`](crate::log_file::FileLog); browsers get an OPFS/IndexedDB
+//! implementation as a follow-on; tests get [`MemLog`].
 
 use crate::{Frame, SodError};
 
