@@ -55,6 +55,19 @@ enum Cmd {
         #[arg(long, default_value = "10")]
         interval: u64,
     },
+    /// MCP stdio server: `figmog_*` tools over the local mirror, with the
+    /// sync loop built in (one process owns the store).
+    Serve {
+        /// File key or figma.com URL. Optional after the first pull, or
+        /// with `--no-watch` and `--db` for a read-only, offline server.
+        file: Option<String>,
+        /// Poll interval in seconds.
+        #[arg(long, default_value = "10")]
+        interval: u64,
+        /// Disable the poll loop (offline/fixture use).
+        #[arg(long)]
+        no_watch: bool,
+    },
     /// File name, version, last modified, node count.
     Status,
     /// List pages.
@@ -158,6 +171,11 @@ fn dispatch(cli: Cli) -> Result<(), String> {
         } => cmd_pull(&db, file, from_file, fresh, cli.json),
         Cmd::Watch { file, interval } => cmd_watch(&db, file, interval, cli.json),
         Cmd::ImportVariables { path } => cmd_import_variables(&db, path, cli.json),
+        Cmd::Serve {
+            file,
+            interval,
+            no_watch,
+        } => crate::serve::run_serve(&db, file, interval, no_watch),
         other => {
             // `open_store!`'s pipeline type contains fn items and can't be
             // named, so the store-reading dispatch below must live at this
@@ -248,7 +266,10 @@ fn dispatch(cli: Cli) -> Result<(), String> {
                     page,
                 } => st.rtx(|((nodes, ..), ..)| cmd_where(&nodes, pointer, equals, page, json)),
                 Cmd::At { x, y } => st.rtx(|((nodes, ..), ..)| cmd_at(&nodes, x, y, json)),
-                Cmd::Pull { .. } | Cmd::Watch { .. } | Cmd::ImportVariables { .. } => {
+                Cmd::Pull { .. }
+                | Cmd::Watch { .. }
+                | Cmd::ImportVariables { .. }
+                | Cmd::Serve { .. } => {
                     unreachable!("handled above")
                 }
             }
@@ -259,9 +280,9 @@ fn dispatch(cli: Cli) -> Result<(), String> {
 // ---- config / db resolution ----
 
 /// The store to open plus (when known) the file key it mirrors.
-struct Db {
-    path: PathBuf,
-    key: Option<String>,
+pub(crate) struct Db {
+    pub(crate) path: PathBuf,
+    pub(crate) key: Option<String>,
 }
 
 const CURRENT_FILE: &str = ".figmog/current";
@@ -277,7 +298,10 @@ fn resolve_db(cli: &Cli) -> Result<Db, String> {
     // pull/watch with an explicit file ref establish the key for this run.
     // `.figmog/current` is only written after a successful sync (see
     // `do_pull`), so a failed pull never repoints later commands.
-    if let Cmd::Pull { file: Some(f), .. } | Cmd::Watch { file: Some(f), .. } = &cli.cmd {
+    if let Cmd::Pull { file: Some(f), .. }
+    | Cmd::Watch { file: Some(f), .. }
+    | Cmd::Serve { file: Some(f), .. } = &cli.cmd
+    {
         let key = parse_file_ref(f).ok_or_else(|| format!("not a Figma file key or URL: {f}"))?;
         return Ok(Db {
             path: db_path_for(&key),
@@ -319,12 +343,12 @@ fn db_path_for(key: &str) -> PathBuf {
     PathBuf::from(".figmog").join(key).join("db")
 }
 
-fn write_current(key: &str) -> Result<(), String> {
+pub(crate) fn write_current(key: &str) -> Result<(), String> {
     std::fs::create_dir_all(".figmog").map_err(|e| e.to_string())?;
     std::fs::write(CURRENT_FILE, key).map_err(|e| e.to_string())
 }
 
-fn now_ms() -> u64 {
+pub(crate) fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -338,7 +362,7 @@ fn now_ms() -> u64 {
 /// the plain-string messages `do_pull` used to produce, so `cmd_pull`'s
 /// user-facing errors are unchanged.
 #[derive(Debug)]
-enum PullError {
+pub(crate) enum PullError {
     Api(ApiError),
     Other(String),
 }
@@ -379,7 +403,7 @@ fn cmd_pull(
 /// own per-tick event lines around the same churn. `.figmog/current` is
 /// written only once the sync below has actually happened, so a failed
 /// pull never repoints later commands at a nonexistent mirror.
-fn do_pull(
+pub(crate) fn do_pull(
     db: &Db,
     file: Option<String>,
     from_file: Option<PathBuf>,
@@ -525,7 +549,11 @@ fn cmd_watch(db: &Db, file: Option<String>, interval: u64, json: bool) -> Result
 /// per-loop backoff state. `RateLimited` honors `Retry-After` (never less
 /// than the normal poll interval); anything else gets the same exponential
 /// backoff discipline the [`Watcher`] uses for Tier-3 meta failures.
-fn pull_failure_wait(err: &PullError, backoff: &mut Duration, interval: Duration) -> Duration {
+pub(crate) fn pull_failure_wait(
+    err: &PullError,
+    backoff: &mut Duration,
+    interval: Duration,
+) -> Duration {
     if let PullError::Api(ApiError::RateLimited { retry_after }) = err {
         interval.max(*retry_after)
     } else {
@@ -564,7 +592,7 @@ fn cmd_import_variables(db: &Db, path: PathBuf, json: bool) -> Result<(), String
     Ok(())
 }
 
-fn read_watermark(db: &Db) -> Option<String> {
+pub(crate) fn read_watermark(db: &Db) -> Option<String> {
     let st = crate::open_store!(&db.path);
     st.rtx(|(_, _, _, _, _, _, meta)| meta.get(&0).map(|m| m.last_modified))
 }

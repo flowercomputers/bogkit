@@ -38,6 +38,20 @@ pub trait ToolHandler {
     fn call(&mut self, name: &str, args: &Value) -> Result<Value, String>;
 }
 
+/// Adapts a closure to [`ToolHandler`]. `figmog serve`'s store handle has
+/// an unnameable type (the `open_store!` pipeline contains fn items), so
+/// it can't be held in a named struct field generic over the store's
+/// pipeline type; wrapping a closure that captures the store by unique
+/// reference sidesteps that entirely — the closure's environment can hold
+/// whatever concrete type it was defined against.
+pub struct FnHandler<F>(pub F);
+
+impl<F: FnMut(&str, &Value) -> Result<Value, String>> ToolHandler for FnHandler<F> {
+    fn call(&mut self, name: &str, args: &Value) -> Result<Value, String> {
+        (self.0)(name, args)
+    }
+}
+
 /// Handle one incoming JSON-RPC message. Returns the response frame to
 /// write, or `None` for notifications (a message with no `id`, or whose
 /// method starts with `notifications/`).
