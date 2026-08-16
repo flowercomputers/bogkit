@@ -109,6 +109,10 @@ fn status_pages_tree_get_find() {
     assert_eq!(texts.as_array().unwrap().len(), 1);
     assert_eq!(texts[0]["id"], "1:2");
 
+    // `--type` is case-insensitive (Figma types are stored uppercase).
+    let texts_lower = run(&["find", "--type", "text"]);
+    assert_eq!(texts_lower, texts);
+
     let on_page = run(&["find", "--type", "COMPONENT", "--page", "0:2"]);
     assert_eq!(on_page.as_array().unwrap().len(), 3); // 2:2, 2:3, 3:1
 }
@@ -122,6 +126,25 @@ fn get_unknown_node_fails_cleanly() {
         .assert()
         .failure()
         .code(1);
+}
+
+#[test]
+fn get_unknown_node_json_error_is_json_on_stderr() {
+    let (_dir, db) = fixture_db();
+    let out = Command::cargo_bin("figmog")
+        .unwrap()
+        .args(["get", "99:99", "--db", &db, "--json"])
+        .assert()
+        .failure()
+        .code(1);
+    let stderr = out.get_output().stderr.clone();
+    let v: serde_json::Value = serde_json::from_slice(&stderr).unwrap_or_else(|e| {
+        panic!(
+            "stderr not JSON: {e}\nstderr: {}",
+            String::from_utf8_lossy(&stderr)
+        )
+    });
+    assert!(v["error"].as_str().unwrap().contains("99:99"));
 }
 
 #[test]
@@ -210,4 +233,39 @@ fn import_variables_upgrades_vars_to_authoritative() {
     assert_eq!(v100["values_by_mode"]["light"]["r"], 0.06);
     // inference detail still present alongside
     assert_eq!(v100["sites"][0][0], "1:1");
+}
+
+#[test]
+fn failed_pull_does_not_persist_current_or_create_store() {
+    let dir = tempfile::tempdir().unwrap();
+
+    // A well-formed-looking key (>=10 alnum chars) with no FIGMA_TOKEN set:
+    // the network pull fails before ever touching the store or writing
+    // `.figmog/current`.
+    Command::cargo_bin("figmog")
+        .unwrap()
+        .current_dir(dir.path())
+        .env_remove("FIGMA_TOKEN")
+        .args(["pull", "garbagekey123456"])
+        .assert()
+        .failure()
+        .code(1);
+
+    assert!(
+        !dir.path().join(".figmog").exists(),
+        "a failed pull must not create `.figmog` (no current key, no store dir)"
+    );
+
+    // A subsequent read command still reports no mirror — not a stale or
+    // bogus one — and doesn't leave behind an empty store dir either.
+    let out = Command::cargo_bin("figmog")
+        .unwrap()
+        .current_dir(dir.path())
+        .args(["status"])
+        .assert()
+        .failure()
+        .code(1);
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr).to_string();
+    assert!(stderr.contains("no mirror here"), "stderr: {stderr}");
+    assert!(!dir.path().join(".figmog").exists());
 }

@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use crate::api::{ApiError, FigmaApi};
 
-const BACKOFF_START: Duration = Duration::from_secs(5);
-const BACKOFF_CAP: Duration = Duration::from_secs(300);
+pub(crate) const BACKOFF_START: Duration = Duration::from_secs(5);
+pub(crate) const BACKOFF_CAP: Duration = Duration::from_secs(300);
 
 /// Outcome of one poll.
 #[derive(Debug)]

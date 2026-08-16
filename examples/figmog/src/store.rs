@@ -71,7 +71,11 @@ pub fn variable_edges(d: &Keyed<String, NodeRec>) -> Vec<Keyed<String, String>> 
         .iter()
         .map(|(_, var_id)| Keyed::new(d.val.id.clone(), var_id.clone()))
         .collect();
-    edges.dedup_by(|a, b| a.val == b.val); // sorted input: dedup repeated ids
+    // Best-effort adjacent dedup only: `bound_variables` is sorted by
+    // (pointer, var_id), not by var_id, so equal ids at different pointers
+    // aren't caught here. Harmless — `InvertedIndex` is set-semantic, so
+    // any duplicate edges that slip through are absorbed.
+    edges.dedup_by(|a, b| a.val == b.val);
     edges
 }
 

@@ -12,7 +12,7 @@ use fold::pipeline::terminal::search::Bm25Reader;
 use fold::pipeline::terminal::{InvertedIndexReader, MultimapReader, TableReader};
 use fold::stream::Readable;
 
-use crate::api::{FigmaApi, UreqApi};
+use crate::api::{ApiError, FigmaApi, UreqApi};
 use crate::flatten::flatten_file;
 use crate::ident::{normalize_node_id, parse_file_ref};
 use crate::model::{
@@ -20,7 +20,7 @@ use crate::model::{
     VariableRec,
 };
 use crate::store::{Churn, collect_sweepable, sync};
-use crate::watch::{Tick, Watcher};
+use crate::watch::{BACKOFF_CAP, BACKOFF_START, Tick, Watcher};
 
 /// Read handle for the pipeline's `text` BM25 sink (its tokenizer type
 /// param makes the full type unwieldy at every call site).
@@ -111,10 +111,15 @@ enum Cmd {
 /// 1 with a one-line `figmog: <message>` on stderr otherwise).
 pub fn run() -> i32 {
     let cli = Cli::parse();
+    let json = cli.json;
     match dispatch(cli) {
         Ok(()) => 0,
         Err(e) => {
-            eprintln!("figmog: {e}");
+            if json {
+                eprintln!("{}", json!({"error": e}));
+            } else {
+                eprintln!("figmog: {e}");
+            }
             1
         }
     }
@@ -216,10 +221,11 @@ fn resolve_db(cli: &Cli) -> Result<Db, String> {
         });
     }
 
-    // pull/watch with an explicit file ref establish (and remember) the key.
+    // pull/watch with an explicit file ref establish the key for this run.
+    // `.figmog/current` is only written after a successful sync (see
+    // `do_pull`), so a failed pull never repoints later commands.
     if let Cmd::Pull { file: Some(f), .. } | Cmd::Watch { file: Some(f), .. } = &cli.cmd {
         let key = parse_file_ref(f).ok_or_else(|| format!("not a Figma file key or URL: {f}"))?;
-        write_current(&key)?;
         return Ok(Db {
             path: db_path_for(&key),
             key: Some(key),
@@ -227,16 +233,33 @@ fn resolve_db(cli: &Cli) -> Result<Db, String> {
     }
 
     let key = std::fs::read_to_string(CURRENT_FILE)
-        .map_err(|_| "no mirror here — run `figmog pull <file-url>` first".to_string())?
+        .map_err(|_| no_mirror_msg(cli))?
         .trim()
         .to_string();
     if key.is_empty() {
-        return Err("no mirror here — run `figmog pull <file-url>` first".into());
+        return Err(no_mirror_msg(cli));
     }
     Ok(Db {
         path: db_path_for(&key),
         key: Some(key),
     })
+}
+
+/// `pull --from-file` with neither a file ref nor an established key has
+/// nothing to sync into — point the user at `--from-file`'s own
+/// requirements rather than the generic "run pull first" message (which
+/// would tell a user already running pull to run pull).
+fn no_mirror_msg(cli: &Cli) -> String {
+    if let Cmd::Pull {
+        from_file: Some(_),
+        file: None,
+        ..
+    } = &cli.cmd
+    {
+        "--from-file needs a target mirror: pass the file key/url too, or --db <path>".into()
+    } else {
+        "no mirror here — run `figmog pull <file-url>` first".into()
+    }
 }
 
 fn db_path_for(key: &str) -> PathBuf {
@@ -257,6 +280,37 @@ fn now_ms() -> u64 {
 
 // ---- engine commands ----
 
+/// Errors from [`do_pull`]: either a typed API failure (so callers can act
+/// on rate limits) or any other pull-mechanics failure. `Display` matches
+/// the plain-string messages `do_pull` used to produce, so `cmd_pull`'s
+/// user-facing errors are unchanged.
+#[derive(Debug)]
+enum PullError {
+    Api(ApiError),
+    Other(String),
+}
+
+impl std::fmt::Display for PullError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PullError::Api(e) => write!(f, "{e}"),
+            PullError::Other(s) => write!(f, "{s}"),
+        }
+    }
+}
+
+impl From<String> for PullError {
+    fn from(s: String) -> Self {
+        PullError::Other(s)
+    }
+}
+
+impl From<ApiError> for PullError {
+    fn from(e: ApiError) -> Self {
+        PullError::Api(e)
+    }
+}
+
 fn cmd_pull(
     db: &Db,
     file: Option<String>,
@@ -264,18 +318,20 @@ fn cmd_pull(
     fresh: bool,
     json: bool,
 ) -> Result<(), String> {
-    let (churn, name, version) = do_pull(db, file, from_file, fresh)?;
+    let (churn, name, version) = do_pull(db, file, from_file, fresh).map_err(|e| e.to_string())?;
     print_churn(&churn, &name, &version, json)
 }
 
 /// The pull mechanics without any printing, so `cmd_watch` can format its
-/// own per-tick event lines around the same churn.
+/// own per-tick event lines around the same churn. `.figmog/current` is
+/// written only once the sync below has actually happened, so a failed
+/// pull never repoints later commands at a nonexistent mirror.
 fn do_pull(
     db: &Db,
     file: Option<String>,
     from_file: Option<PathBuf>,
     fresh: bool,
-) -> Result<(Churn, String, String), String> {
+) -> Result<(Churn, String, String), PullError> {
     let resp: Value = match from_file {
         Some(path) => {
             let content = std::fs::read_to_string(&path)
@@ -291,7 +347,7 @@ fn do_pull(
                 .ok_or_else(|| "no file key: pass a file key or figma.com URL".to_string())?;
             let token = std::env::var("FIGMA_TOKEN")
                 .map_err(|_| "FIGMA_TOKEN not set — required for network pulls".to_string())?;
-            UreqApi::new(token).file(&key).map_err(|e| e.to_string())?
+            UreqApi::new(token).file(&key)?
         }
     };
 
@@ -306,6 +362,10 @@ fn do_pull(
         collect_sweepable(&nodes, &components, &component_sets, &styles)
     });
     let churn = sync(&mut st, &prior, &flattened, now_ms());
+
+    if let Some(key) = &db.key {
+        write_current(key)?;
+    }
 
     Ok((
         churn,
@@ -346,6 +406,9 @@ fn cmd_watch(db: &Db, file: Option<String>, interval: u64, json: bool) -> Result
     let mut stored = read_watermark(db);
     let mut watcher = Watcher::new(stored.clone());
     let interval = Duration::from_secs(interval);
+    // Backoff for Tier-1 pull failures, independent of the Watcher's own
+    // Tier-3 meta-poll backoff — reset on any successful pull.
+    let mut pull_backoff = BACKOFF_START;
 
     loop {
         match watcher.tick(&api, &key) {
@@ -357,7 +420,7 @@ fn cmd_watch(db: &Db, file: Option<String>, interval: u64, json: bool) -> Result
                         json!({"event": "waiting", "seconds": after.as_secs()})
                     );
                 } else {
-                    println!("rate limited, waiting {}s", after.as_secs());
+                    println!("waiting {}s", after.as_secs());
                 }
                 std::thread::sleep(after);
             }
@@ -370,6 +433,7 @@ fn cmd_watch(db: &Db, file: Option<String>, interval: u64, json: bool) -> Result
                 match do_pull(db, Some(key.clone()), None, false) {
                     Ok((churn, name, version)) => {
                         stored = read_watermark(db);
+                        pull_backoff = BACKOFF_START;
                         if json {
                             let mut v = serde_json::to_value(&churn).unwrap_or_default();
                             if let Some(obj) = v.as_object_mut() {
@@ -382,6 +446,7 @@ fn cmd_watch(db: &Db, file: Option<String>, interval: u64, json: bool) -> Result
                                 churn.added, churn.changed, churn.removed, churn.unchanged
                             );
                         }
+                        std::thread::sleep(interval);
                     }
                     Err(e) => {
                         eprintln!("figmog: pull failed: {e}");
@@ -389,11 +454,31 @@ fn cmd_watch(db: &Db, file: Option<String>, interval: u64, json: bool) -> Result
                         // the last successfully-synced one so the same
                         // change is re-detected on the next tick.
                         watcher = Watcher::new(stored.clone());
+                        let wait = pull_failure_wait(&e, &mut pull_backoff, interval);
+                        if json {
+                            println!("{}", json!({"event": "waiting", "seconds": wait.as_secs()}));
+                        } else {
+                            println!("waiting {}s", wait.as_secs());
+                        }
+                        std::thread::sleep(wait);
                     }
                 }
-                std::thread::sleep(interval);
             }
         }
+    }
+}
+
+/// How long `cmd_watch` should sleep after a failed pull, and advance the
+/// per-loop backoff state. `RateLimited` honors `Retry-After` (never less
+/// than the normal poll interval); anything else gets the same exponential
+/// backoff discipline the [`Watcher`] uses for Tier-3 meta failures.
+fn pull_failure_wait(err: &PullError, backoff: &mut Duration, interval: Duration) -> Duration {
+    if let PullError::Api(ApiError::RateLimited { retry_after }) = err {
+        interval.max(*retry_after)
+    } else {
+        let wait = *backoff;
+        *backoff = (*backoff * 2).min(BACKOFF_CAP);
+        wait
     }
 }
 
@@ -624,7 +709,9 @@ fn cmd_find<R: Readable>(
     page: Option<String>,
     json: bool,
 ) -> Result<(), String> {
-    let mut ids = by_type.search(&node_type);
+    // Figma node types are stored uppercase; normalize so `--type frame`
+    // matches the same as `--type FRAME`.
+    let mut ids = by_type.search(&node_type.to_uppercase());
     ids.sort();
     let page = page.as_deref().map(normalize_node_id);
 
@@ -1024,4 +1111,69 @@ fn cmd_vars<R: Readable>(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rate_limited_waits_max_of_interval_and_retry_after() {
+        let mut backoff = BACKOFF_START;
+        let err = PullError::Api(ApiError::RateLimited {
+            retry_after: Duration::from_secs(90),
+        });
+        // retry_after exceeds interval: use retry_after.
+        let wait = pull_failure_wait(&err, &mut backoff, Duration::from_secs(10));
+        assert_eq!(wait, Duration::from_secs(90));
+        // rate-limit waits don't consume the exponential-backoff budget.
+        assert_eq!(backoff, BACKOFF_START);
+
+        let err = PullError::Api(ApiError::RateLimited {
+            retry_after: Duration::from_secs(3),
+        });
+        let wait = pull_failure_wait(&err, &mut backoff, Duration::from_secs(10));
+        assert_eq!(wait, Duration::from_secs(10));
+    }
+
+    #[test]
+    fn other_errors_back_off_exponentially_and_cap() {
+        let mut backoff = BACKOFF_START;
+        let interval = Duration::from_secs(10);
+        let net_err = PullError::Api(ApiError::Network("down".into()));
+
+        let w1 = pull_failure_wait(&net_err, &mut backoff, interval);
+        assert_eq!(w1, Duration::from_secs(5));
+        let w2 = pull_failure_wait(&net_err, &mut backoff, interval);
+        assert_eq!(w2, Duration::from_secs(10));
+        let w3 = pull_failure_wait(&net_err, &mut backoff, interval);
+        assert_eq!(w3, Duration::from_secs(20));
+
+        // non-Api errors (e.g. flatten failures) get the same treatment.
+        let other_err = PullError::Other("bad shape".into());
+        let mut backoff2 = BACKOFF_CAP / 2 + Duration::from_secs(1);
+        let w = pull_failure_wait(&other_err, &mut backoff2, interval);
+        assert!(w <= BACKOFF_CAP);
+        assert_eq!(backoff2, BACKOFF_CAP);
+    }
+
+    #[test]
+    fn pull_error_display_matches_prior_stringified_messages() {
+        let e = PullError::Other("FIGMA_TOKEN not set — required for network pulls".into());
+        assert_eq!(
+            e.to_string(),
+            "FIGMA_TOKEN not set — required for network pulls"
+        );
+
+        let e = PullError::Api(ApiError::RateLimited {
+            retry_after: Duration::from_secs(30),
+        });
+        assert_eq!(
+            e.to_string(),
+            ApiError::RateLimited {
+                retry_after: Duration::from_secs(30)
+            }
+            .to_string()
+        );
+    }
 }
