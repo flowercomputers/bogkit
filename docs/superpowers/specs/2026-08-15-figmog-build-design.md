@@ -508,6 +508,32 @@ stdin ──▶ reader thread ──▶ mpsc<String> ──▶ main loop ──�
   requests; a pull blocks request handling for its duration (documented —
   seconds at worst, and only when the file actually changed).
 
+### Relationship to Figma's official MCP server (binding)
+
+figmog must never be confusable with Figma's official MCP server. Three
+enforced distinctions:
+
+1. **Distinct namespace:** every tool is `figmog_*`. Figma's native tools
+   are unprefixed (`get_code`, `get_screenshot`, `get_variable_defs`, …);
+   there is no name collision and no tool on either server that overlaps
+   the other's capability. figmog ships nothing codegen- or
+   screenshot-shaped; the native server has nothing query-shaped.
+2. **Server-level steering:** the `initialize` result's `instructions`
+   field carries, verbatim: "figmog is a local, instant, rate-limit-free
+   mirror of one Figma file. Use figmog tools for ALL structure, search,
+   components, styles, and variables. Use the official Figma MCP only for
+   code generation or screenshots — never for reads figmog can answer."
+3. **Cost transparency:** every tool description states that it reads the
+   local mirror at zero API cost; `figmog_sync` alone is labeled as
+   spending Figma rate budget.
+
+**v3 direction (documented, not built):** for paid seats with the desktop
+Dev Mode server available, figmog could become a *cached proxy* — the only
+Figma-facing MCP an agent sees — forwarding codegen/screenshot tools to
+the native server and caching responses keyed by (tool, args, file
+version). Out of scope until the native server is reachable in a target
+environment; on free plans there is nothing to proxy.
+
 ### Tools
 
 Read tools mirror the CLI one-to-one, each returning the `query::*` JSON
@@ -515,24 +541,39 @@ as an MCP text content block. Names and inputs:
 
 | tool | input schema (all fields optional unless noted) |
 |---|---|
-| `figma_status` | — |
-| `figma_pages` | — |
-| `figma_tree` | `id`, `depth` (integer) |
-| `figma_get_node` | `id` (required), `children` (bool) |
-| `figma_find` | `type` (required), `page` |
-| `figma_search` | `query` (required), `limit` (integer, default 10) |
-| `figma_instances` | `target` (required) |
-| `figma_components` | — |
-| `figma_styles` | `type`, `values` (bool) |
-| `figma_uses` | `id` (required) |
-| `figma_vars` | `id` |
-| `figma_sync` | — (forces one pull; returns churn; the only tool that spends rate budget) |
+| `figmog_status` | — |
+| `figmog_pages` | — |
+| `figmog_tree` | `id`, `depth` (integer) |
+| `figmog_node` | `id` (required), `children` (bool) |
+| `figmog_find` | `type` (required), `page` |
+| `figmog_search` | `query` (required), `limit` (integer, default 10) |
+| `figmog_instances` | `target` (required) |
+| `figmog_components` | — |
+| `figmog_styles` | `type`, `values` (bool) |
+| `figmog_uses` | `id` (required) |
+| `figmog_vars` | `id` |
+| `figmog_sync` | — (forces one pull; returns churn; the only tool that spends rate budget) |
+
+**Whole-file structural queries** (the local mirror's unfair advantage —
+each is a full-file answer no rate-limited API surface could offer; all
+are read-only scans/joins over existing sinks, and each gets a matching
+CLI subcommand so the CLI/tool one-to-one rule holds):
+
+| tool / CLI command | input | answer |
+|---|---|---|
+| `figmog_stats` / `figmog stats` | — | node counts by type and by page, component/set/style/variable totals, text-node count, max tree depth |
+| `figmog_path` / `figmog path <id>` | `id` (required) | ancestor chain root→node as `[{id, name, type}]` |
+| `figmog_text` / `figmog text [--page id]` | `page` | every TEXT node's (id, characters, page_id), sorted by id |
+| `figmog_where` / `figmog where --pointer /p --equals <json>` | `pointer` (required, RFC 6901 into node `raw`), `equals` (JSON value; omitted ⇒ "pointer exists"), `page` | matching `[{id, name, type, page_id, value}]`, sorted by id |
+| `figmog_at` / `figmog at --x N --y N` | `x`, `y` (required, floats) | nodes whose `abs_bounds` contain the point, sorted by area ascending (deepest/smallest first) |
+
+`figmog_where`'s `equals` compares the pointed-at value by JSON equality
+(numbers per serde_json semantics). Full-node scans are acceptable: they
+run against the local store, not Figma.
 
 Tool-level failures (unknown node, no mirror, sync error) return an MCP
 result with `isError: true` and the message as text — JSON-RPC errors are
-reserved for protocol-level problems. Every tool description states
-whether it reads locally (all of them) or spends Figma budget (`figma_sync`
-only), so agents can reason about cost.
+reserved for protocol-level problems.
 
 ### CLI surface
 
@@ -543,9 +584,10 @@ resolution identical to the other commands.
 ### Testing
 
 - **Protocol unit tests** (`mcp.rs`): dispatch table over scripted
-  request values — initialize echo, tools/list shape (12 tools, valid
-  JSON-Schema inputs), unknown method `-32601`, parse error `-32700`,
-  tools/call routing incl. `isError` on a bad tool name.
+  request values — initialize echo (incl. the steering `instructions`),
+  tools/list shape (17 tools, valid JSON-Schema inputs), unknown method
+  `-32601`, parse error `-32700`, tools/call routing incl. `isError` on a
+  bad tool name.
 - **`query` equivalence:** the CLI smoke tests keep passing unchanged
   after the refactor (the printers now consume `query::*`), proving the
   refactor moved logic without changing it.

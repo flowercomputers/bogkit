@@ -83,10 +83,10 @@
   ```
 - Behavior contract (unit-test each):
   - Parse failure → `Some({jsonrpc:"2.0", id: null, error:{code:-32700, message:"parse error"}})`.
-  - `initialize` → result `{protocolVersion: <echo the client's, or "2025-06-18" if absent>, capabilities: {tools: {}}, serverInfo: {name: "figmog", version: env!("CARGO_PKG_VERSION")}}`.
+  - `initialize` → result `{protocolVersion: <echo the client's, or "2025-06-18" if absent>, capabilities: {tools: {}}, serverInfo: {name: "figmog", version: env!("CARGO_PKG_VERSION")}, instructions: <the exact steering text from spec §11 "Relationship to Figma's official MCP server" point 2>}`.
   - `notifications/initialized` (and any method starting `notifications/`) → `None`.
   - `ping` → result `{}`.
-  - `tools/list` → `{tools: [{name, description, inputSchema}...]}` from the `ToolDef` slice, in slice order.
+  - `tools/list` → `{tools: [{name, description, inputSchema}...]}` from the `ToolDef` slice, in slice order. (The protocol core is registry-agnostic; the real 17-tool registry arrives in Task 4.)
   - `tools/call` with `{name, arguments}` → invoke handler; Ok(v) → result `{content: [{type:"text", text: serde_json::to_string(&v)}], isError: false}`; Err(msg) → result `{content:[{type:"text", text: msg}], isError: true}`. Unknown tool name → handler returns Err (Task 3 handler) — but `mcp.rs` itself must also map a `name` missing from `tools` to the same isError shape without calling the handler.
   - Any other method with an `id` → error `-32601` "method not found". Requests without `id` (notifications) → `None`.
 - [ ] **Step 1:** Write the failing unit tests for every bullet above (scripted `&str` → expected `Value` assertions; a `NullHandler` test double returning `Ok(json!({"ok":true}))` / `Err("boom")` by tool name).
@@ -95,7 +95,29 @@
 
 ---
 
-### Task 3: `serve.rs` — the serve loop + CLI wiring
+### Task 3: structural query pack (query fns + CLI subcommands)
+
+**Files:**
+- Modify: `examples/figmog/src/query.rs`, `examples/figmog/src/cli.rs`
+- Test: extend `examples/figmog/tests/cli.rs`
+
+**Interfaces:**
+- Consumes: Task 1's `query.rs` layout and reader-type conventions.
+- Produces five new `query::*` functions (same `Result<Value, String>` convention) and five CLI subcommands, per spec §11's "whole-file structural queries" table (the spec table is the authority for inputs/outputs):
+  - `query::stats(nodes, components, component_sets, styles, variables, by_type)` — counts by node type (from iterating nodes, sorted by type name), counts per page (page_id → n, sorted), table totals, text-node count, max depth (walk parent chains or recurse via children — iterate nodes computing depth by following `parent_id` with memoization-free repeated walks; the file is local, O(n·depth) is fine).
+  - `query::path(nodes, id)` — follow `parent_id` to the root, then reverse: `[{id, name, type}]` root-first. Unknown id → Err.
+  - `query::text(nodes, by_type, page: Option<String>)` — `by_type.search("TEXT")`, look up, optional page filter, sorted by id, `[{id, characters, page_id}]` (characters from `NodeRec.text`).
+  - `query::where_(nodes, pointer: &str, equals: Option<Value>, page: Option<String>)` — full scan of `nodes.iter()`; parse each `raw`, `raw.pointer(pointer)`; match = pointer resolves AND (equals absent OR JSON-equal); rows `[{id, name, type, page_id, value}]` sorted by id. Pointer must start with `/` → else Err.
+  - `query::at(nodes, x: f64, y: f64)` — scan nodes with `abs_bounds = Some([bx, by, w, h])` where `bx <= x < bx+w && by <= y < by+h`; sort by area (w*h) ascending then id; `[{id, name, type, page_id, area}]`.
+- CLI: `figmog stats`, `figmog path <id>`, `figmog text [--page <id>]`, `figmog where --pointer </p> [--equals <json>] [--page <id>]` (`--equals` parsed with `serde_json::from_str`, falling back to treating the bare word as a JSON string so `--equals VERTICAL` works), `figmog at --x N --y N`. All support `--json`; human output follows the existing row-printing conventions; node ids normalized where they're inputs (`path`).
+
+- [ ] **Step 1 (TDD):** extend `tests/cli.rs` with a test asserting against fixture_v1 facts: `stats` — `by_type.TEXT == 1`, `by_page["0:1"] == 4` (1:1, 1:2, 1:3, 1:9), totals `{components: 3, component_sets: 1, styles: 2}`, `max_depth == 3` (document→canvas→frame→text); `path 1-2` → ids `["0:0","0:1","1:1","1:2"]`; `text` → one row, characters "Welcome to the garden"; `where --pointer /layoutMode --equals VERTICAL` → `["1:1"]`; `where --pointer /style/fontSize --equals 32.0` → `["1:2"]`; `at --x 10 --y 10` → includes `1:1` (bounds 0,0,800×400) and excludes nodes without bounds. Run to verify failure.
+- [ ] **Step 2:** implement `query::*` + CLI wiring; iterate to green; full gates.
+- [ ] **Step 3:** Commit: `feat(figmog): whole-file structural queries (stats/path/text/where/at)`
+
+---
+
+### Task 4: `serve.rs` — the serve loop + CLI wiring
 
 **Files:**
 - Create: `examples/figmog/src/serve.rs`
@@ -104,14 +126,14 @@
 **Interfaces:**
 - Produces: `pub fn run_serve(db: &crate::cli::Db, file: Option<String>, interval: u64, no_watch: bool) -> Result<(), String>` (make `Db` and the small helpers it needs `pub(crate)`; adjust visibility minimally). CLI: `figmog serve [file] [--interval N (default 10)] [--no-watch]`.
 - Loop design (spec §11): spawn a thread reading `stdin` lines into an `mpsc::Sender<String>`; main loop owns the store (opened via `open_store!` at this concrete site) and a `Watcher` seeded from the stored watermark; `recv_timeout(until_next_tick)` — on message: `mcp::handle_message` → write response + `\n` to stdout, flush; on timeout (and `!no_watch`): tick → on `Changed` run the pull sequence inline (fetch via `UreqApi`, `flatten_file`, `collect_sweepable` in `rtx`, `store::sync`), honoring the existing `pull_failure_wait` backoff discipline and watcher-reset-on-failure rule; on `Wait{after}` extend the next deadline. Startup: if the store has no meta row and `no_watch` is false, do an initial pull before serving. eprintln! one startup line (name, file key, watch on/off).
-- Tool registry: the 12 tools from spec §11's table, descriptions stating "reads the local mirror (no Figma API cost)" vs `figma_sync`'s "fetches from Figma (spends Tier-1 rate budget)". Handler: match tool name → normalize ids (`normalize_node_id` where the arg is a node id) → `st.rtx(|readers| query::*(…))` → the returned Value. `figma_sync` → the inline pull sequence → churn JSON. Unknown args types → Err(msg).
+- Tool registry: the **17 `figmog_*` tools** from spec §11's two tables (12 core + 5 structural), descriptions stating "reads the local mirror (no Figma API cost)" vs `figmog_sync`'s "fetches from Figma (spends Tier-1 rate budget)". The `initialize` response carries the spec's steering `instructions` text (Task 2 contract). Handler: match tool name → normalize ids (`normalize_node_id` where the arg is a node id) → `st.rtx(|readers| query::*(…))` → the returned Value. `figmog_sync` → the inline pull sequence → churn JSON. Unknown args types → Err(msg).
 - [ ] **Step 1:** Implement `serve.rs` + wire the CLI variant. Keep every closure at the concrete `open_store!` site (the pipeline type is unnameable — same pattern as `dispatch`).
 - [ ] **Step 2:** `cargo test -p figmog` (all green — no new tests yet), clippy, fmt. Manual smoke: `printf '…initialize…\n…tools/list…\n' | cargo run -p figmog -- serve --no-watch --db <fixture db>` shows two frames on stdout.
 - [ ] **Step 3:** Commit: `feat(figmog): figmog serve — MCP stdio server with integrated sync`
 
 ---
 
-### Task 4: end-to-end serve test + docs
+### Task 5: end-to-end serve test + docs
 
 **Files:**
 - Create: `examples/figmog/tests/serve.rs`
@@ -120,18 +142,20 @@
 **Interfaces:** none new.
 
 - [ ] **Step 1:** Write `tests/serve.rs`: build a fixture DB (reuse the `pull --from-file` pattern from `tests/cli.rs` — copy the `fixture_db()` helper or share via `tests/common`), then `std::process::Command` the compiled binary (`assert_cmd::cargo::cargo_bin("figmog")` gives the path) with `serve --no-watch --db <db>`, piped stdio. Write frames, read responses line-by-line with a read timeout guard (wrap reader thread + channel, or set a generous `wait_with_output` after closing stdin — closing stdin must terminate the loop: reader thread sees EOF, sender drops, `recv_timeout` returns Disconnected → clean exit; implement that exit path in Task 3 if missing). Assertions:
-  - initialize response echoes id 1 and `serverInfo.name == "figmog"`
-  - `tools/list` returns exactly 12 tools incl. `figma_search` and `figma_sync`
-  - `tools/call figma_search {query:"garden"}` → `isError:false`, text parses to JSON whose first hit id is `1:2`
-  - `tools/call figma_get_node {id:"1-2"}` → normalized, `name == "Title"`
-  - `tools/call figma_get_node {id:"99:99"}` → `isError:true`
+  - initialize response echoes id 1, `serverInfo.name == "figmog"`, and a non-empty `instructions` string mentioning "official Figma MCP"
+  - `tools/list` returns exactly 17 tools, all named `figmog_*`, incl. `figmog_search`, `figmog_where`, `figmog_sync`
+  - `tools/call figmog_search {query:"garden"}` → `isError:false`, text parses to JSON whose first hit id is `1:2`
+  - `tools/call figmog_node {id:"1-2"}` → normalized, `name == "Title"`
+  - `tools/call figmog_where {pointer:"/layoutMode", equals:"VERTICAL"}` → one row, id `1:1`
+  - `tools/call figmog_node {id:"99:99"}` → `isError:true`
   - unknown method → error `-32601`; unknown tool → `isError:true`
-- [ ] **Step 2:** README: new "Use from agents (MCP)" section — what `serve` is (server + built-in sync, one process), the `claude mcp add figmog -- <abs path to>/target/debug/figmog serve <file-url>` snippet (note: build first with `cargo build -p figmog`; or `--db`/`--no-watch` for offline), the 12-tool table (copy spec §11's), the note that only `figma_sync` spends rate budget. Workspace README bullet gains "and an MCP server (`figmog serve`)".
+- [ ] **Step 2:** README: new "Use from agents (MCP)" section — what `serve` is (server + built-in sync, one process), the `claude mcp add figmog -- <abs path to>/target/debug/figmog serve <file-url>` snippet (note: build first with `cargo build -p figmog`; or `--db`/`--no-watch` for offline), both tool tables from spec §11 (17 tools), the "radically different from Figma's official MCP" positioning paragraph (namespace, steering instructions, zero capability overlap; only `figmog_sync` spends rate budget), and the five new structural CLI commands added to the command reference table. Workspace README bullet gains "and an MCP server (`figmog serve`)".
 - [ ] **Step 3:** Full gates: `cargo test -p figmog` (now incl. serve e2e), clippy, fmt, `cargo test -p fold`, `cargo doc -p figmog --no-deps`.
 - [ ] **Step 4:** Commit: `feat(figmog): serve e2e tests and MCP docs`
 
 ## Self-review checklist
 
-- Spec §11 coverage: architecture → T3; query refactor → T1; protocol behaviors → T2 (all seven bullets are unit-tested); tools table → T3 registry + T4 README; testing section → T2 unit / T1 equivalence / T4 e2e. Non-goals respected (no resources/prompts, stdio only).
+- Spec §11 coverage: architecture → T4; query refactor → T1; protocol behaviors incl. `instructions` steering → T2 (unit-tested); structural query pack → T3; 17-tool registry → T4 + T5 README; distinct-namespace/steering rule → T2 (initialize) + T4 (names) + T5 (README positioning); testing section → T2 unit / T1 equivalence / T3 cli / T5 e2e. Non-goals respected (no resources/prompts, stdio only; cached-proxy documented as v3, not built).
 - The T1 refactor is the risk center: its acceptance gate ("existing tests pass unmodified") is what keeps v1 behavior frozen.
-- T3's EOF-exit contract is stated in T4 Step 1 because the test depends on it; implementer of T3 must read T4's step (noted in dispatch).
+- T4's EOF-exit contract is stated in T5 Step 1 because the test depends on it; implementer of T4 must read T5's step (noted in dispatch).
+- Execution order: 1 → 2 → 3 → 4 → 5 (T3 must land before T4 so the registry can bind all 17 tools).
