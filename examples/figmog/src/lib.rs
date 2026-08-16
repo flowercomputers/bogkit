@@ -12,10 +12,12 @@
 pub mod api;
 pub mod cache;
 pub mod cli;
+mod dispatch;
 pub mod flatten;
 pub mod ident;
 pub mod mcp;
 pub mod model;
+mod proxy;
 pub mod query;
 pub mod serve;
 pub mod store;

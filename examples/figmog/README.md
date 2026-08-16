@@ -28,9 +28,11 @@ store location (default `.figmog/<file-key>/db`).
 
 | command | reads | behavior |
 |---|---|---|
-| `figmog pull [file] [--from-file <json>] [--fresh]` | — | sync now; prints a churn summary (`+added ~changed -removed`). `file` is optional after the first pull. `--from-file` ingests a saved `GET /v1/files/:key` response instead of the network (offline ingestion, and what keeps the CLI tests hermetic). `--fresh` wipes the store and rebuilds from scratch. |
+| `figmog pull [file] [--from-file <json>] [--fresh]` | — | sync now; prints a churn summary (`+added ~changed -removed`). `file` is optional after the first pull. `--from-file` ingests a saved `GET /v1/files/:key` response instead of the network (offline ingestion, and what keeps the CLI tests hermetic). `--fresh` wipes the store **and the proxy response cache** and rebuilds from scratch. |
 | `figmog watch [file] [--interval N]` | — | poll loop: cheap metadata check every `N` seconds (default 10), full pull only on an actual change |
-| `figmog serve [file] [--interval N] [--no-watch]` | — | MCP stdio server (see "Use from agents (MCP)" below); `--no-watch` disables the poll loop for a read-only, offline server |
+| `figmog serve [file] [--interval N] [--no-watch] [--upstream <url>] [--no-upstream]` | — | MCP stdio server (see "Use from agents (MCP)" below); `--no-watch` disables the poll loop for a read-only, offline server; `--no-upstream` disables the cached proxy to Figma's native desktop MCP server |
+| `figmog tools [--upstream <url>] [--no-upstream]` | — | list every tool `figmog serve` would expose for this mirror: name, source (`local`/`upstream`), and whether it's cache-capable |
+| `figmog call <tool> [--args '<json>'] [--upstream <url>] [--no-upstream]` | — | invoke any tool by name through the same dispatch `figmog serve` uses — local `figmog_*` tools and, when attached, any upstream tool |
 | `figmog status` | meta + nodes | file name, version, last modified, node count |
 | `figmog pages` | by_type + nodes | list CANVAS pages (id, name) |
 | `figmog tree [id] [--depth N]` | children + nodes (+ by_type to find the root) | indented outline: `name  [type]  id`; root defaults to the DOCUMENT node |
@@ -72,12 +74,16 @@ Starter**, well above any sane `--interval`.
 
 ## Use from agents (MCP)
 
-`figmog serve` is figmog's other head onto the same store: an MCP stdio
-server with the sync loop built in. It's one process — fjall is
-single-writer, so a standalone MCP server would fight `figmog watch` for
-the store lock — that owns the mirror, polls for changes exactly like
-`watch`, and answers 17 `figmog_*` tools from whatever's currently in the
-store. There's nothing else to run alongside it.
+**figmog is the only Figma MCP an agent needs to connect.** `figmog serve`
+is one process — fjall is single-writer, so a standalone MCP server would
+fight `figmog watch` for the store lock — that owns the mirror, polls for
+changes exactly like `watch`, and (unless `--no-upstream`) also attaches
+Figma's native desktop MCP server as a **cached proxy**: `tools/list`
+merges figmog's 17 local `figmog_*` tools with every tool the desktop
+server advertises, verbatim, so an agent gets one server, one connection,
+and the full native tool surface (`get_design_context`, `get_screenshot`,
+`get_variable_defs`, code-generation tools, …) without figmog reimplementing
+any of it.
 
 ```console
 $ cargo build -p figmog
@@ -92,6 +98,62 @@ $ claude mcp add figmog -- /absolute/path/to/clog/target/debug/figmog serve --db
 ```
 
 `--interval N` (default 10s) controls the poll cadence, same as `watch`.
+
+### The cached proxy
+
+Proxying targets **paid Dev/Full seats**: it requires the Figma desktop
+app to be running with its Dev Mode MCP server enabled (streamable HTTP,
+default `http://127.0.0.1:3845/mcp`). At startup figmog probes it; on
+success, every non-`figmog_*` tool call is forwarded there. On failure
+(desktop app not running, no Dev/Full seat, wrong URL), figmog logs one
+stderr line and falls back to local-only tools for the rest of the
+process — no mid-session re-probe, so restart `figmog serve` once the
+desktop server is reachable to attach it.
+
+- `--upstream <url>` overrides the desktop server's URL.
+- `--no-upstream` disables proxying entirely — figmog serves its 17
+  `figmog_*` tools only, exactly like v2.
+- **Namespace rule:** `figmog_*` tools are always local; every other tool
+  name is always proxied. If the desktop server ever advertised a tool
+  named `figmog_*`, figmog would drop it and log a warning rather than
+  let it collide — this can't happen with figmog's own registry, but a
+  live desktop server's tool list is outside figmog's control.
+- **Cacheable rule:** a proxied call is served from (and written to) a
+  version-keyed response cache when its tool name starts `get_`/`list_`
+  **and** its arguments carry an explicit node id (`nodeId`, `node_id`,
+  or `id`, as a string) — e.g. `get_code` with a `nodeId` hits the cache
+  on a repeat call for the same node, as long as the mirror's file
+  version hasn't changed since. Selection-based calls (no explicit node
+  id) are always forwarded live. A version bump (from a pull, whether the
+  poll loop's or `figmog_sync`'s) evicts every cache row tagged with the
+  old version.
+- **Only two things spend Figma's API/rate budget:** `figmog_sync` (a
+  forced pull) and any proxied, native-named tool call that reaches the
+  desktop server (a cache hit doesn't). Every `figmog_*` read tool is
+  free, whether or not the proxy is attached.
+- A successful proxied call to a tool that isn't `get_*`/`list_*` (e.g. a
+  code-connect write) may have changed the file, so figmog schedules an
+  immediate meta-poll rather than waiting for the next `--interval` tick
+  (skipped in `--no-watch` mode, which has no poll loop to schedule).
+- `pull --fresh` wipes the store **and** the proxy response cache — a
+  totally clean rebuild.
+
+### CLI parity
+
+Every tool figmog serves — local or proxied — is also reachable from the
+CLI, so you can inspect or drive the exact same dispatch without an MCP
+client:
+
+```console
+$ figmog tools                              # merged list: name, source, cacheable
+$ figmog call figmog_search --args '{"query": "pricing card"}'
+$ figmog call get_code --args '{"nodeId": "1:2"}'   # proxied, cached by version
+```
+
+Both accept `--upstream <url>` / `--no-upstream`, probed fresh per
+invocation (no persistent connection between CLI calls). There are
+deliberately no bespoke subcommands for upstream tools — Figma's tool
+list churns; `figmog call` is the stable, generic surface.
 
 ### Core read tools
 
@@ -130,22 +192,26 @@ one-to-one.
 
 ### Relationship to Figma's official MCP server
 
-figmog is a second, separate MCP server — connect it alongside Figma's
-official one, not instead of it. Every figmog tool lives in the
-`figmog_*` namespace, so the two servers' tools never collide by name.
-figmog's `initialize` response carries steering `instructions` telling an
-agent when to reach for which:
+figmog **replaces** the official desktop MCP server in an agent's config —
+connect figmog instead of it, not alongside it. figmog's `initialize`
+response carries steering `instructions` telling an agent to reach for
+figmog for everything:
 
-> figmog is a local, instant, rate-limit-free mirror of one Figma file.
-> Use figmog tools for ALL structure, search, components, styles, and
-> variables. Use the official Figma MCP only for code generation or
-> screenshots — never for reads figmog can answer.
+> figmog is your Figma server: a local, instant mirror of one Figma file
+> plus a cached proxy to Figma's native capabilities. Call figmog for
+> everything Figma-related. figmog_* tools answer from the local mirror
+> at zero API cost; native-named tools (get_*, …) go to Figma, cached by
+> file version where possible.
 
-The two servers have zero capability overlap: figmog only ever reads its
-local mirror and only ever writes to it via `figmog_sync`, which is the
-one tool among the 17 that spends Figma's Tier-1 rate budget (a forced
-pull) — every other tool call is instant, free, and backed by the same
-fold-materialized indexes the CLI reads.
+Every figmog-native tool lives in the `figmog_*` namespace, so it never
+collides by name with a proxied tool; local tools only ever read the
+mirror and only ever write to it via `figmog_sync`, the one local tool
+that spends Figma's Tier-1 rate budget (a forced pull) — every other
+local tool call is instant, free, and backed by the same
+fold-materialized indexes the CLI reads. Proxied tools go through the
+cache described above. `--no-upstream` recovers the older, "second,
+separate server" shape (v2) if that's ever preferable — figmog's 17
+`figmog_*` tools alongside Figma's own, unrelated MCP connection.
 
 ## Variables on a free plan
 
@@ -189,13 +255,16 @@ Figma's own developer console. `figmog vars` prefers an imported
 // save the logged JSON, then: figmog import-variables vars.json
 ```
 
-A third source — Figma's MCP servers, which expose `get_variable_defs` —
-exists for paid seats only and is deliberately not built into figmog: the
-desktop server needs a Dev/Full seat on a paid plan, the remote server
-caps Starter users at 6 tool calls a *month*, and the tool is
-selection-scoped rather than whole-collection. Anyone with a paid seat can
-pipe its output into `import-variables` by hand; figmog itself never
-depends on MCP.
+A third source, for paid Dev/Full seats: `figmog serve`'s cached proxy
+(see "Use from agents (MCP)" above) forwards `get_variable_defs` to
+Figma's desktop server like any other native-named tool, selection-scoped
+and cached by file version like the rest of the proxy. It's still
+selection-scoped rather than whole-collection, so `import-variables`
+remains the way to get an authoritative, whole-collection record into the
+mirror; anyone with a paid seat can pipe a proxied `get_variable_defs`
+call's output into it by hand. Figma's *remote* MCP server (as opposed to
+the local desktop one figmog proxies) caps Starter users at 6 tool calls
+a *month* and isn't something figmog talks to at all.
 
 ## Manual live check
 

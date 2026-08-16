@@ -10,7 +10,8 @@
 
 mod common;
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::{TcpListener, TcpStream};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
@@ -40,10 +41,20 @@ impl Drop for ChildGuard {
 /// than reading its stdout inline) means a hung child blocks only the
 /// bounded `recv_timeout` in [`recv`], never the test thread itself.
 fn spawn_serve(db: &std::path::Path) -> (ChildGuard, ChildStdin, Receiver<String>) {
+    spawn_serve_with_args(db, &["--no-upstream"])
+}
+
+/// Like [`spawn_serve`], but with extra CLI args after `--db <db>` (e.g.
+/// `--upstream <url>` for the proxy e2e test).
+fn spawn_serve_with_args(
+    db: &std::path::Path,
+    extra_args: &[&str],
+) -> (ChildGuard, ChildStdin, Receiver<String>) {
     let bin = assert_cmd::cargo::cargo_bin("figmog");
     let mut child = Command::new(bin)
         .args(["serve", "--no-watch", "--db"])
         .arg(db)
+        .args(extra_args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -153,9 +164,13 @@ fn serve_e2e_initialize_tools_list_and_tool_calls() {
         .as_str()
         .expect("instructions is a string");
     assert!(!instructions.is_empty());
+    // v3 steering text (build design §12/§11 point 3): figmog is now the
+    // only Figma MCP an agent connects to — a cached proxy in front of
+    // Figma's native capabilities — which supersedes the v2 "second,
+    // separate server" text this assertion used to pin.
     assert!(
-        instructions.contains("official Figma MCP"),
-        "instructions should mention the official Figma MCP: {instructions}"
+        instructions.contains("cached proxy"),
+        "instructions should mention the cached proxy: {instructions}"
     );
 
     // notifications/initialized: no `id`, so no response frame is expected
@@ -238,4 +253,224 @@ fn serve_e2e_initialize_tools_list_and_tool_calls() {
     drop(stdin);
     let status = wait_with_timeout(&mut guard.0, TIMEOUT);
     assert!(status.success(), "figmog serve exited with {status:?}");
+}
+
+// ---- cached-proxy e2e: figmog serve against an in-process HTTP fake ----
+//
+// Minimal hand-rolled HTTP/1.1 server (std `TcpListener`, no new deps) that
+// answers exactly the handshake + one `tools/call` `HttpUpstream::initialize`
+// and a proxied call make: `initialize`, `notifications/initialized`,
+// `tools/list`, then one `tools/call`. Mirrors `upstream.rs`'s own
+// in-process fake (same wire mechanics), recreated here because that one
+// lives in a `#[cfg(test)]` module private to the lib crate and isn't
+// reachable from this integration-test binary.
+
+fn read_request(stream: &mut TcpStream) -> String {
+    let mut header_bytes = Vec::new();
+    let mut byte = [0u8; 1];
+    loop {
+        stream.read_exact(&mut byte).expect("read request byte");
+        header_bytes.push(byte[0]);
+        if header_bytes.ends_with(b"\r\n\r\n") {
+            break;
+        }
+    }
+    let header_text = String::from_utf8_lossy(&header_bytes).to_string();
+    let content_length: usize = header_text
+        .lines()
+        .find_map(|line| {
+            let lower = line.to_ascii_lowercase();
+            lower
+                .strip_prefix("content-length:")
+                .map(|v| v.trim().parse().unwrap_or(0))
+        })
+        .unwrap_or(0);
+    let mut body_bytes = vec![0u8; content_length];
+    if content_length > 0 {
+        stream
+            .read_exact(&mut body_bytes)
+            .expect("read request body");
+    }
+    String::from_utf8_lossy(&body_bytes).to_string()
+}
+
+fn write_response(stream: &mut TcpStream, status: &str, headers: &[(&str, &str)], body: &str) {
+    let mut resp = format!("HTTP/1.1 {status}\r\n");
+    resp.push_str(&format!("Content-Length: {}\r\n", body.len()));
+    resp.push_str("Connection: close\r\n");
+    for (k, v) in headers {
+        resp.push_str(&format!("{k}: {v}\r\n"));
+    }
+    resp.push_str("\r\n");
+    resp.push_str(body);
+    stream.write_all(resp.as_bytes()).expect("write response");
+    stream.flush().expect("flush response");
+}
+
+fn request_id(body: &str) -> Value {
+    serde_json::from_str::<Value>(body)
+        .ok()
+        .and_then(|v| v.get("id").cloned())
+        .unwrap_or(Value::Null)
+}
+
+/// Spawn a fake upstream MCP server answering exactly 4 requests: the
+/// `HttpUpstream::initialize` handshake (`initialize`,
+/// `notifications/initialized`, `tools/list` — advertising one tool,
+/// `get_code`), then one `tools/call` returning canned content. Returns
+/// its address and a join handle; the test drives exactly one real
+/// `tools/call` through the child, so a second, cache-served call never
+/// reaches this server — proven by the fake never accepting a 5th
+/// connection (the accept loop simply ends).
+fn spawn_fake_upstream() -> (String, std::thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("local_addr");
+    let handle = std::thread::spawn(move || {
+        for i in 0..4u32 {
+            let (mut stream, _) = listener.accept().expect("accept");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .expect("set_read_timeout");
+            let body = read_request(&mut stream);
+            match i {
+                0 => {
+                    let resp = json!({
+                        "jsonrpc": "2.0",
+                        "id": request_id(&body),
+                        "result": {
+                            "protocolVersion": "2025-06-18",
+                            "capabilities": {},
+                            "serverInfo": {"name": "fake-figma-desktop", "version": "1.0"},
+                        },
+                    })
+                    .to_string();
+                    write_response(
+                        &mut stream,
+                        "200 OK",
+                        &[("Content-Type", "application/json")],
+                        &resp,
+                    );
+                }
+                1 => {
+                    write_response(&mut stream, "202 Accepted", &[], "");
+                }
+                2 => {
+                    let resp = json!({
+                        "jsonrpc": "2.0",
+                        "id": request_id(&body),
+                        "result": {"tools": [
+                            {
+                                "name": "get_code",
+                                "description": "Returns code for a node",
+                                "inputSchema": {"type": "object", "properties": {"nodeId": {"type": "string"}}},
+                            },
+                        ]},
+                    })
+                    .to_string();
+                    write_response(
+                        &mut stream,
+                        "200 OK",
+                        &[("Content-Type", "application/json")],
+                        &resp,
+                    );
+                }
+                3 => {
+                    let resp = json!({
+                        "jsonrpc": "2.0",
+                        "id": request_id(&body),
+                        "result": {"content": [{"type": "text", "text": "CODE_HERE"}], "isError": false},
+                    })
+                    .to_string();
+                    write_response(
+                        &mut stream,
+                        "200 OK",
+                        &[("Content-Type", "application/json")],
+                        &resp,
+                    );
+                }
+                _ => unreachable!(),
+            }
+        }
+    });
+    (format!("http://{addr}/mcp"), handle)
+}
+
+#[test]
+fn serve_e2e_proxied_tool_lists_round_trips_and_second_call_is_cache_served() {
+    let (_dir, db) = common::fixture_db();
+    let (fake_addr, fake_handle) = spawn_fake_upstream();
+    let (mut guard, mut stdin, rx) = spawn_serve_with_args(&db, &["--upstream", &fake_addr]);
+
+    send(
+        &mut stdin,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {"protocolVersion": "2025-06-18", "capabilities": {}},
+        }),
+    );
+    let resp = recv(&rx);
+    assert_eq!(resp["id"], json!(1));
+
+    send(
+        &mut stdin,
+        &json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+    );
+
+    // -- tools/list: 17 local + 1 proxied, prefixed description --
+    send(
+        &mut stdin,
+        &json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
+    );
+    let resp = recv(&rx);
+    let tools = resp["result"]["tools"].as_array().expect("tools array");
+    assert_eq!(tools.len(), 18, "tools: {tools:#?}");
+    let proxied = tools
+        .iter()
+        .find(|t| t["name"] == json!("get_code"))
+        .expect("get_code should be in the merged registry");
+    assert_eq!(
+        proxied["description"],
+        json!("[via Figma desktop] Returns code for a node")
+    );
+
+    // -- figmog_status: upstream connected --
+    let resp = call(&mut stdin, &rx, 3, "figmog_status", json!({}));
+    assert_eq!(resp["result"]["isError"], json!(false));
+    assert_eq!(result_json(&resp)["upstream"], json!("connected"));
+
+    // -- first get_code call with an explicit nodeId: round-trips the
+    // fake's canned content, and is cacheable (get_* + string nodeId). --
+    let resp = call(&mut stdin, &rx, 4, "get_code", json!({"nodeId": "1:2"}));
+    assert_eq!(resp["result"]["isError"], json!(false));
+    assert_eq!(
+        resp["result"]["content"][0]["text"],
+        json!(
+            serde_json::to_string(
+                &json!({"content": [{"type": "text", "text": "CODE_HERE"}], "isError": false})
+            )
+            .unwrap()
+        )
+    );
+
+    // -- second identical call: served from the version-keyed cache — the
+    // fake upstream server only ever accepts 4 connections total (the
+    // handshake's 3 plus this test's one real `tools/call`), so if this
+    // call reached the network the fake's accept loop would still be
+    // blocked waiting for a 5th connection and `fake_handle.join()` below
+    // would hang past the test harness's own timeout.
+    let resp2 = call(&mut stdin, &rx, 5, "get_code", json!({"nodeId": "1:2"}));
+    assert_eq!(
+        resp2["result"], resp["result"],
+        "second identical call should be served byte-identically from cache"
+    );
+
+    drop(stdin);
+    let status = wait_with_timeout(&mut guard.0, TIMEOUT);
+    assert!(status.success(), "figmog serve exited with {status:?}");
+
+    fake_handle
+        .join()
+        .expect("fake upstream server thread should finish after exactly 4 requests");
 }

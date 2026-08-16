@@ -12,14 +12,17 @@ use fold::pipeline::terminal::{InvertedIndexReader, MultimapReader, TableReader}
 use fold::stream::Readable;
 
 use crate::api::{ApiError, FigmaApi, UreqApi};
+use crate::dispatch;
 use crate::flatten::flatten_file;
 use crate::ident::parse_file_ref;
 use crate::model::{
     ComponentRec, ComponentSetRec, FileMeta, Id, NodeRec, StyleRec, VariableCollectionRec,
     VariableRec,
 };
+use crate::proxy;
 use crate::query::{self, TextReader};
 use crate::store::{Churn, collect_sweepable, sync};
+use crate::upstream::{HttpUpstream, UpstreamMcp};
 use crate::watch::{BACKOFF_CAP, BACKOFF_START, Tick, Watcher};
 
 #[derive(Parser)]
@@ -56,7 +59,9 @@ enum Cmd {
         interval: u64,
     },
     /// MCP stdio server: `figmog_*` tools over the local mirror, with the
-    /// sync loop built in (one process owns the store).
+    /// sync loop built in (one process owns the store), plus (unless
+    /// `--no-upstream`) a cached proxy to Figma's native desktop MCP
+    /// server — figmog is the only Figma MCP an agent needs to connect.
     Serve {
         /// File key or figma.com URL. Optional after the first pull, or
         /// with `--no-watch` and `--db` for a read-only, offline server.
@@ -67,6 +72,36 @@ enum Cmd {
         /// Disable the poll loop (offline/fixture use).
         #[arg(long)]
         no_watch: bool,
+        /// Figma desktop app's Dev Mode MCP server URL.
+        #[arg(long, default_value = crate::serve::DEFAULT_UPSTREAM_URL)]
+        upstream: String,
+        /// Serve local `figmog_*` tools only — no upstream proxy.
+        #[arg(long)]
+        no_upstream: bool,
+    },
+    /// List every tool figmog would serve: the local registry, plus
+    /// upstream tools when reachable.
+    Tools {
+        /// Figma desktop app's Dev Mode MCP server URL.
+        #[arg(long, default_value = crate::serve::DEFAULT_UPSTREAM_URL)]
+        upstream: String,
+        /// List local `figmog_*` tools only — no upstream probe.
+        #[arg(long)]
+        no_upstream: bool,
+    },
+    /// Invoke any tool by name through the same dispatch `figmog serve`
+    /// uses — local `figmog_*` tools included.
+    Call {
+        tool: String,
+        /// JSON object of arguments (default `{}`).
+        #[arg(long)]
+        args: Option<String>,
+        /// Figma desktop app's Dev Mode MCP server URL.
+        #[arg(long, default_value = crate::serve::DEFAULT_UPSTREAM_URL)]
+        upstream: String,
+        /// Don't probe upstream — fail on a non-`figmog_*` tool name.
+        #[arg(long)]
+        no_upstream: bool,
     },
     /// File name, version, last modified, node count.
     Status,
@@ -175,7 +210,19 @@ fn dispatch(cli: Cli) -> Result<(), String> {
             file,
             interval,
             no_watch,
-        } => crate::serve::run_serve(&db, file, interval, no_watch),
+            upstream,
+            no_upstream,
+        } => crate::serve::run_serve(&db, file, interval, no_watch, upstream, no_upstream),
+        Cmd::Tools {
+            upstream,
+            no_upstream,
+        } => cmd_tools(upstream, no_upstream, cli.json),
+        Cmd::Call {
+            tool,
+            args,
+            upstream,
+            no_upstream,
+        } => cmd_call(&db, tool, args, upstream, no_upstream, cli.json),
         other => {
             // `open_store!`'s pipeline type contains fn items and can't be
             // named, so the store-reading dispatch below must live at this
@@ -269,7 +316,9 @@ fn dispatch(cli: Cli) -> Result<(), String> {
                 Cmd::Pull { .. }
                 | Cmd::Watch { .. }
                 | Cmd::ImportVariables { .. }
-                | Cmd::Serve { .. } => {
+                | Cmd::Serve { .. }
+                | Cmd::Tools { .. }
+                | Cmd::Call { .. } => {
                     unreachable!("handled above")
                 }
             }
@@ -595,6 +644,148 @@ fn cmd_import_variables(db: &Db, path: PathBuf, json: bool) -> Result<(), String
 pub(crate) fn read_watermark(db: &Db) -> Option<String> {
     let st = crate::open_store!(&db.path);
     st.rtx(|(_, _, _, _, _, _, meta, _)| meta.get(&0).map(|m| m.last_modified))
+}
+
+// ---- cached-proxy CLI parity: `figmog tools` / `figmog call` ----
+
+/// Probe `upstream_url` unless `no_upstream`, matching `figmog serve`'s own
+/// startup behavior exactly: on failure, one stderr line and local-only
+/// (never a hard error — see build design §12 "Startup").
+fn attach_upstream(
+    upstream_url: String,
+    no_upstream: bool,
+) -> (Option<HttpUpstream>, &'static str) {
+    if no_upstream {
+        return (None, "disabled");
+    }
+    let mut client = HttpUpstream::new(upstream_url);
+    match client.initialize() {
+        Ok(()) => (Some(client), "connected"),
+        Err(e) => {
+            eprintln!("figmog: upstream unreachable, serving local tools only: {e}");
+            (None, "unreachable")
+        }
+    }
+}
+
+/// `figmog tools`: the merged registry `figmog serve` would expose for this
+/// mirror — local tools always, upstream tools when reachable.
+fn cmd_tools(upstream_url: String, no_upstream: bool, json: bool) -> Result<(), String> {
+    let (upstream, status) = attach_upstream(upstream_url, no_upstream);
+    let (tools, dropped) = match &upstream {
+        Some(u) => proxy::merge_registry(dispatch::tool_registry(), u.tools()),
+        None => (dispatch::tool_registry(), Vec::new()),
+    };
+    for name in &dropped {
+        eprintln!("figmog: dropping upstream tool named like a local tool: {name}");
+    }
+
+    if json {
+        let rows: Vec<Value> = tools
+            .iter()
+            .map(|t| {
+                json!({
+                    "name": t.name,
+                    "source": if proxy::is_local_tool(t.name) { "local" } else { "upstream" },
+                    "cacheable": proxy::tool_name_cache_capable(t.name),
+                })
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string(&rows).map_err(|e| e.to_string())?
+        );
+    } else {
+        for t in &tools {
+            let source = if proxy::is_local_tool(t.name) {
+                "local"
+            } else {
+                "upstream"
+            };
+            println!(
+                "{}  [{source}]  cacheable={}",
+                t.name,
+                proxy::tool_name_cache_capable(t.name)
+            );
+        }
+        if status != "connected" {
+            eprintln!("figmog: upstream {status} — showing local tools only");
+        }
+    }
+    Ok(())
+}
+
+/// `figmog call <tool> [--args json]`: invoke any tool by name through the
+/// same routing `figmog serve` uses — local `figmog_*` tools (including
+/// `figmog_sync`) and, when attached, the upstream proxy with the same
+/// cacheable-rule lookup/store.
+fn cmd_call(
+    db: &Db,
+    tool: String,
+    args: Option<String>,
+    upstream_url: String,
+    no_upstream: bool,
+    json: bool,
+) -> Result<(), String> {
+    let args: Value = match args {
+        Some(raw) => {
+            serde_json::from_str(&raw).map_err(|e| format!("--args: invalid JSON: {e}"))?
+        }
+        None => json!({}),
+    };
+
+    let (mut upstream, upstream_status) = attach_upstream(upstream_url, no_upstream);
+    let mut st = crate::open_store!(&db.path);
+
+    let result: Result<Value, String> = if tool == "figmog_sync" {
+        do_pull(db, None, None, false)
+            .map(|(churn, _name, _version)| serde_json::to_value(&churn).unwrap_or_default())
+            .map_err(|e| e.to_string())
+    } else if proxy::is_local_tool(&tool) {
+        match st.rtx(|r| dispatch::dispatch_read_tool(&tool, &args, upstream_status, r)) {
+            Some(r) => r,
+            None => Err(format!("unknown tool: {tool}")),
+        }
+    } else {
+        let up = upstream
+            .as_mut()
+            .ok_or_else(|| format!("upstream not attached: {tool}"))?;
+        let args_canonical = proxy::canonical_args(&args);
+        let version_and_hit = if proxy::is_cacheable(&tool, &args) {
+            st.rtx(|(_, _, _, _, _, _, meta, cache)| {
+                let version = meta.get(&0).map(|m| m.version.clone());
+                let hit = version
+                    .as_ref()
+                    .and_then(|v| crate::cache::lookup(&cache, &tool, &args_canonical, v));
+                (version, hit)
+            })
+        } else {
+            (None, None)
+        };
+        proxy::proxy_call(&mut st, up, &tool, &args, version_and_hit).map(|(value, trigger_poll)| {
+            if trigger_poll {
+                eprintln!(
+                    "figmog: {tool} may have changed the file — run `figmog pull` (or `figmog serve`, which polls automatically) to refresh the mirror"
+                );
+            }
+            value
+        })
+    };
+
+    match result {
+        Ok(v) => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?
+            );
+            Ok(())
+        }
+        Err(e) if json => {
+            println!("{}", json!({"error": e}));
+            Ok(())
+        }
+        Err(e) => Err(e),
+    }
 }
 
 // ---- core reads ----
