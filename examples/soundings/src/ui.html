@@ -1,0 +1,893 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Soundings</title>
+<style>
+  :root {
+    --paper: #f6f1e7; --ink: #2a251d; --faint: #8a7f6d; --line: #d8cfbd;
+    --card: #fffdf7; --cool: #3f6079; --warm: #a1701c; --moss: #4a6b4f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font-family: Georgia, 'Iowan Old Style', serif;
+  }
+  .page {
+    display: grid; grid-template-columns: 1fr minmax(0, 640px) 300px 1fr;
+    gap: 28px; padding: 48px 24px 120px;
+  }
+  main { grid-column: 2; }
+  aside { grid-column: 3; }
+  h1 { font-size: 20px; font-weight: normal; letter-spacing: .04em; margin: 0 0 2px; }
+  .sub { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--faint); margin-bottom: 22px; }
+  .chips { display: flex; gap: 8px; margin-bottom: 6px; }
+  .chip {
+    font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--card); color: var(--faint);
+    padding: 4px 10px; border-radius: 999px;
+  }
+  .chip.on { color: var(--ink); border-color: var(--ink); }
+  .lenskey { font-family: ui-monospace, Menlo, monospace; font-size: 10.5px; color: var(--faint); min-height: 16px; margin-bottom: 26px; }
+  #doc { font-size: 18.5px; line-height: 1.85; }
+  .s {
+    cursor: pointer; border-radius: 3px; padding: 1px 2px;
+    transition: background .25s ease;
+  }
+  .s:hover { text-decoration: underline dotted var(--faint); text-underline-offset: 4px; }
+  .s.sel { outline: 1px solid var(--line); }
+  .editbox { margin: 10px 0; }
+  .editbox textarea {
+    width: 100%; font: inherit; font-size: 17px; line-height: 1.6;
+    background: var(--card); color: var(--ink); border: 1px solid var(--line);
+    border-radius: 4px; padding: 10px; resize: vertical; min-height: 66px;
+  }
+  .editbox .row { display: flex; gap: 8px; margin-top: 6px; }
+  .editbox button {
+    font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--card); color: var(--ink);
+    padding: 4px 12px; border-radius: 3px;
+  }
+  .editbox button.danger { color: #8c3b2e; margin-left: auto; }
+  #addbtn {
+    margin-top: 26px; font-family: ui-monospace, Menlo, monospace; font-size: 11.5px;
+    cursor: pointer; border: 1px dashed var(--line); background: none; color: var(--faint);
+    padding: 5px 12px; border-radius: 3px;
+  }
+  #addbtn:hover { color: var(--ink); border-color: var(--ink); }
+  .lane { position: sticky; top: 48px; }
+  .lanehead { font-family: ui-monospace, Menlo, monospace; font-size: 10.5px; letter-spacing: .12em; color: var(--faint); text-transform: uppercase; margin-bottom: 10px; }
+  #voice .hit { background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: 10px 12px; margin-bottom: 8px; }
+  #voice .hit .t { font-size: 13.5px; line-height: 1.5; }
+  #voice .hit .m { font-family: ui-monospace, Menlo, monospace; font-size: 10px; color: var(--faint); margin-top: 6px; }
+  #voice .empty { font-size: 12.5px; color: var(--faint); font-style: italic; line-height: 1.6; }
+  /* the instrument plate — black-and-amber, numbers that cannot be faked.
+     tokens from docs/corrigenda-and-chalk.html `.plate` */
+  #hud {
+    --pl-bg: #15110B; --pl-amber: #E5B54B; --pl-cream: #EFE7D2; --pl-dim: #8D7B4F; --pl-crim: #E0554A;
+    --pl-line: rgba(229,181,75,.35);
+    position: fixed; left: 0; right: 0; bottom: 0;
+    display: flex; flex-direction: column; gap: 4px;
+    font-family: Menlo, 'SF Mono', ui-monospace, monospace; font-size: 11px; line-height: 1.55;
+    font-variant-numeric: tabular-nums;
+    background: var(--pl-bg); color: var(--pl-cream); padding: 7px 16px 7px;
+    border-top: 1px solid var(--pl-line);
+  }
+  #hud .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-height: 18px; }
+  #hud .row.ledger { color: var(--pl-dim); font-size: 10px; gap: 18px; }
+  #hud .row.ledger .canon { margin-left: auto; color: var(--pl-cream); }
+  #hud .head {
+    font-family: 'American Typewriter', 'Courier New', Courier, monospace;
+    font-size: 9.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--pl-dim);
+    padding-right: 6px; border-right: 1px solid var(--pl-line); margin-right: 2px;
+  }
+  #hud .head .op { color: var(--pl-amber); }
+  #hud .head .op.retract { color: var(--pl-crim); }
+  #hud .head .op.resume { color: var(--pl-cream); }
+  #hud .arrow { color: var(--pl-dim); }
+  #hud .stage { border: 1px solid var(--pl-line); border-radius: 3px; padding: 1px 6px; white-space: nowrap; }
+  #hud .stage b, #hud b { color: var(--pl-amber); font-weight: 600; }
+  #hud .stage .neg { color: var(--pl-crim); }
+  #hud .wall { margin-left: auto; white-space: nowrap; }
+  #hud .stage .lbl { color: var(--pl-dim); font-size: 9px; letter-spacing: .06em; }
+  #hud .wall .note { color: var(--pl-dim); font-size: 9.5px; margin-left: 10px; }
+  #hud .ledger .entry { white-space: nowrap; }
+  #hud .ledger .entry .n { color: var(--pl-dim); }
+  #hud .ledger .entry.newest { color: var(--pl-cream); }
+  #hud .ledger .entry.newest .n { color: var(--pl-amber); }
+  #hud .ledger .entry .retract { color: var(--pl-crim); }
+  #hud .dead { color: var(--pl-crim); }
+  #hud .empty { color: var(--pl-dim); }
+  @media (max-width: 1020px) { .page { grid-template-columns: 1fr; } main, aside { grid-column: 1; } .lane { position: static; } }
+
+  /* ---- gale (G5): split lanes, instrument tiles, referee line, moral card ---- */
+  .page { grid-template-rows: auto auto auto; }
+  main, aside, #naivelane { grid-row: 2; }
+  #galechip {
+    font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; cursor: pointer;
+    border: 1px dashed var(--line); background: none; color: var(--faint);
+    padding: 4px 10px; border-radius: 999px; margin-left: 6px;
+  }
+  #galechip:hover { color: var(--ink); border-color: var(--ink); }
+  #galechip[disabled] { cursor: default; opacity: .55; }
+  .page.galing { grid-template-columns: 1fr minmax(0, 560px) minmax(0, 560px) 1fr; }
+  .page.galing aside { display: none; }
+  #galebar { display: none; grid-column: 2 / 4; grid-row: 1; align-items: center; gap: 14px;
+    font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--faint); margin-bottom: 8px; }
+  .page.galing #galebar { display: flex; }
+  #galebar b { color: var(--ink); font-weight: normal; }
+  #galebar .track { flex: 1; height: 2px; background: var(--line); position: relative; }
+  #galebar .track i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--ink); }
+  #naivelane { display: none; grid-column: 3; }
+  .page.galing #naivelane { display: block; }
+  .lanetitle { font-family: ui-monospace, Menlo, monospace; font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--faint); margin: 0 0 4px; }
+  .lanetitle.naive { color: #8c3b2e; }
+  .lanenote { font-family: ui-monospace, Menlo, monospace; font-size: 10px; color: var(--faint); min-height: 14px; margin-bottom: 26px; }
+  #naivedoc { font-size: 18.5px; line-height: 1.85; opacity: .78; }
+  #naivedoc .s.stale { background-image: repeating-linear-gradient(45deg, rgba(0,0,0,.07) 0 3px, transparent 3px 6px); }
+  .page.galing #addbtn { display: none; }
+  .page.galing #naivelane, .page.galing main { padding-top: 0; }
+  /* instrument tiles — the board's black-and-amber plate */
+  .tile { display: none; margin-top: 26px; background: #15110B; color: #EFE7D2; border: 1px solid #E5B54B; border-radius: 4px;
+    font-family: ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums; overflow: hidden; }
+  .page.galing .tile { display: block; }
+  .tile .th { font-size: 9.5px; letter-spacing: .14em; text-transform: uppercase; color: #A8925B; padding: 6px 12px; border-bottom: 1px solid rgba(229,181,75,.35); }
+  .tile .tb { display: flex; gap: 22px; padding: 10px 12px 12px; flex-wrap: wrap; }
+  .tile .k { font-size: 9px; letter-spacing: .1em; color: #8D7B4F; text-transform: uppercase; }
+  .tile .v { font-size: 19px; color: #E5B54B; line-height: 1.2; }
+  .tile .v.crim { color: #E0554A; }
+  .tile .v.dim { color: #8D7B4F; }
+  #referee { display: none; grid-column: 2 / 4; grid-row: 3; margin-top: 12px;
+    font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--ink); line-height: 1.7; }
+  .page.galing #referee { display: block; }
+  #referee .fn { color: var(--faint); font-size: 10.5px; }
+  #referee .ok { color: #1D5C49; }
+  #referee .bad { color: #8c3b2e; }
+  /* moral card */
+  #moral { display: none; position: fixed; inset: 0; align-items: center; justify-content: center; background: rgba(246,241,231,.72); z-index: 20; }
+  #moral.show { display: flex; }
+  #moral .card { background: var(--card); border: 1px solid #cfc6b4; border-radius: 6px; box-shadow: 0 12px 40px rgba(40,30,10,.18);
+    padding: 26px 30px 22px; max-width: 620px; font-size: 16px; line-height: 1.6; }
+  #moral .card h2 { font-weight: normal; font-size: 22px; margin: 0 0 10px; letter-spacing: .01em; }
+  #moral .card .nums { font-family: ui-monospace, Menlo, monospace; font-size: 12px; line-height: 1.8; margin: 8px 0 12px; }
+  #moral .card .disc { font-family: ui-monospace, Menlo, monospace; font-size: 10.5px; color: var(--faint); line-height: 1.6; border-top: 1px solid var(--line); padding-top: 10px; }
+  #moral .card button { margin-top: 12px; font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--card); color: var(--ink); padding: 4px 12px; border-radius: 3px; }
+  /* ---- corrigendum (branch C): the line stays struck, never deleted ---- */
+  /* correction crimson that never deletes: line-through so the rule follows the sentence across wrapped lines
+     (the board’s rotated pseudo-element only works on a single-line box) */
+  .ghost { color: #B7AC99; padding: 1px 2px; cursor: default; white-space: normal;
+    text-decoration: line-through; text-decoration-color: #A2231F; text-decoration-thickness: 0.13em; text-decoration-skip-ink: none; }
+  .ghost.fading { transition: opacity .6s ease; opacity: 0; }
+  #corrigenda:empty { display: none; }
+  #corrigenda { margin-bottom: 14px; }
+  .chit { position: relative; background: #FBF7ED; border: 1px dashed #33567A; border-radius: 3px; padding: 9px 12px 8px;
+    font-family: 'American Typewriter', 'Courier New', Courier, monospace; font-size: 11px; color: #4A4234; line-height: 1.55; margin-bottom: 8px; }
+  .chit .hole { position: absolute; top: 9px; right: 10px; width: 10px; height: 10px; border-radius: 50%; background: #A2231F; border: 1.5px solid #A2231F; }
+  .chit .ch-h { text-transform: uppercase; letter-spacing: .1em; color: #33567A; font-size: 10px; margin-bottom: 3px; padding-right: 18px; }
+  .chit .ch-b { font-family: Georgia, 'Iowan Old Style', serif; font-size: 12px; color: #29231B; }
+  .chit .ch-m { color: #8D8271; font-size: 10px; margin-top: 3px; }
+  .chit .ch-row { display: flex; gap: 6px; margin-top: 7px; }
+  .chit button { font-family: inherit; font-size: 10px; letter-spacing: .06em; cursor: pointer; background: transparent;
+    border: 1px solid #B7AC99; color: #4A4234; border-radius: 2px; padding: 1px 7px; }
+  .chit button.restore { color: #1D5C49; border-color: #1D5C49; }
+  .chit button.restore:hover { background: #1D5C49; color: #FBF7ED; }
+  .chit button.dismiss { margin-left: auto; }
+  #voice .hit.released { opacity: .32; }
+  #hud .head .op.restore { color: #6FBF9A; }
+
+  /* ---- lens authoring (E): user lenses as chips, an inline authoring card ---- */
+  .chip.dash { border-style: dashed; background: none; }
+  .chip.user { display: inline-flex; align-items: center; gap: 6px; }
+  .chip.user .hue { display: inline-block; width: 10px; height: 10px; border-radius: 50%; border: 1px solid var(--line); }
+  .chip.user .x { margin-left: 2px; opacity: .55; padding: 0 2px; }
+  .chip.user .x:hover { opacity: 1; color: #8c3b2e; }
+  #lenscard { background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: 10px 12px 9px; margin: 6px 0 12px; max-width: 540px; font-size: 13px; }
+  #lenscard .lc-h { font-family: ui-monospace, Menlo, monospace; font-size: 9px; letter-spacing: .14em; color: var(--faint); margin-bottom: 4px; }
+  #lenscard .lc-row { display: flex; gap: 8px; align-items: baseline; margin-top: 6px; }
+  #lenscard .lc-row .k { font-family: ui-monospace, Menlo, monospace; font-size: 10px; color: var(--faint); width: 32px; flex: none; }
+  #lenscard .lc-row input { flex: 1; font: inherit; font-size: 15px; background: none; border: 0; border-bottom: 1px solid var(--line); padding: 2px 0; color: var(--ink); outline: none; }
+  #lenscard .lc-row input:focus { border-bottom-color: var(--ink); }
+  #lenscard .lc-name input { font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; }
+  #lenscard .lc-actions { display: flex; gap: 12px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+  #lenscard .lc-go { font-family: ui-monospace, Menlo, monospace; font-size: 11px; cursor: pointer; border: 1px solid var(--ink); background: var(--card); color: var(--ink); padding: 3px 10px; border-radius: 3px; }
+  #lenscard .lc-note { font-family: ui-monospace, Menlo, monospace; font-size: 9.5px; color: var(--faint); }
+  #lenscard.shake { animation: lcshake .32s ease; }
+  @keyframes lcshake { 0%,100% { transform: translateX(0) } 25% { transform: translateX(-4px) } 75% { transform: translateX(4px) } }
+  .page.galing #lenscard, .page.galing .chip.user, .page.galing #lensadd { display: none; }
+  #hud .head .op.unlens { color: var(--pl-crim); }
+  /* ---- gutter chips (D): felt latency beside the edited sentence + length percentile vs canon ---- */
+  #doc { position: relative; }
+  .gchip {
+    position: absolute; left: -100px; width: 88px; text-align: right;
+    font-family: ui-monospace, Menlo, monospace; line-height: 1.45; pointer-events: none;
+    opacity: 1; transition: opacity 3s ease-in;
+  }
+  .gchip.fade { opacity: 0; }
+  .gchip .us {
+    display: inline-block; font-size: 11px; color: var(--ink);
+    background: var(--card); border: 1px solid var(--line); border-radius: 3px; padding: 0 6px;
+  }
+  .gchip .us .lbl { color: var(--faint); font-size: 8.5px; margin-left: 4px; letter-spacing: .06em; }
+  .gchip .pct { display: block; font-size: 10px; color: var(--faint); margin-top: 3px; }
+  .page.galing .gchip { display: none; }
+  @media (max-width: 1020px) { .gchip { display: none; } }
+</style>
+</head>
+<body>
+<div class="page">
+  <div id="galebar"></div>
+  <main>
+    <h1>Soundings</h1>
+    <div class="sub">every edit is a fold delta · ese re-embeds in µs · kill me and relaunch — the doc survives</div>
+    <div class="chips">
+      <button class="chip" data-lens="off">plain</button>
+      <button class="chip on" data-lens="axis">concrete —— abstract</button>
+      <button class="chip" data-lens="len">length</button>
+      <button id="galechip" title="replay scripted edits at 60/s for 10s against a naive full-rescan arm">▶ gale</button>
+    </div>
+    <div class="lenskey" id="lenskey"></div>
+    <div id="doc"></div>
+    <button id="addbtn">+ add a sentence</button>
+    <div class="tile" id="foldtile"></div>
+  </main>
+  <aside>
+    <div class="lane">
+      <div id="corrigenda"></div>
+      <div class="lanehead">Nearest voices</div>
+      <div id="voice"><div class="empty">Click a sentence to hear which of 20 books it stands closest to.</div></div>
+    </div>
+  </aside>
+  <section id="naivelane">
+    <div class="lanetitle naive">Naive arm · full rescan</div>
+    <div class="lanenote" id="naivenote"></div>
+    <div id="naivedoc"></div>
+    <div class="tile" id="naivetile"></div>
+  </section>
+  <div id="referee"></div>
+</div>
+<div id="moral"><div class="card" id="moralcard"></div></div>
+<div id="hud"><div class="row" id="hudl"><span class="empty">connecting…</span></div><div class="row ledger" id="hudr"></div></div>
+
+<script>
+let state = { rows: [], hud: {} };
+let canon = "";
+let lens = "axis";
+let selId = null, editId = null, adding = false;
+let pending = false;
+
+const $ = (id) => document.getElementById(id);
+
+const LENSKEY = {
+  off: "",
+  axis: "cool wash = concrete, amber wash = abstract — projection onto a sentence-anchored axis",
+  len: "deeper moss = longer sentence (words, relative to this document) · hover a line for its percentile vs 129,097 canon sentences",
+};
+
+function paint(r, maxW) {
+  if (lens.startsWith("user:")) {
+    // a runtime axis is not calibrated like the seeded one, so paint it
+    // relative to THIS document: centred on the median projection, scaled to
+    // the widest excursion (the length lens makes the same choice)
+    const i = userLensIndex(+lens.slice(5));
+    const t = i >= 0 && r.lens_t && r.lens_t.length > i ? r.lens_t[i] : 0.5;
+    const { mid, span } = userLensScale(i);
+    const d = span > 0 ? (t - mid) / span : 0, pr = LENS_PAIR(i);
+    return d < 0 ? pr.cool(Math.min(0.34, -d * 0.34)) : pr.warm(Math.min(0.34, d * 0.34));
+  }
+  if (lens === "len") {
+    const a = maxW ? (r.words / maxW) * 0.30 : 0;
+    return `rgba(74,107,79,${a.toFixed(3)})`;
+  }
+  if (lens === "axis") {
+    const d = r.t - 0.5;
+    return d < 0
+      ? `rgba(63,96,121,${Math.min(0.34, -d * 0.9).toFixed(3)})`
+      : `rgba(161,112,28,${Math.min(0.34, d * 0.9).toFixed(3)})`;
+  }
+  return "transparent";
+}
+
+function render() {
+  if (editId !== null || adding) { pending = true; return; }
+  renderLensChips();
+  $("lenskey").textContent = lensKey();
+  const doc = $("doc");
+  const maxW = Math.max(1, ...state.rows.map((r) => r.words));
+  doc.replaceChildren(...state.rows.map((r) => {
+    const s = document.createElement("span");
+    s.className = "s" + (r.id === selId ? " sel" : "");
+    s.textContent = r.text + " ";
+    s.style.background = paint(r, maxW);
+    s.title = `t=${r.t.toFixed(2)} · ${r.words} words` + (r.pct != null ? ` · ${ordinal(r.pct)} pct of canon` : "");
+    s.onclick = () => beginEdit(r);
+    return s;
+  }));
+  renderGhosts(doc);
+  renderChips(doc);
+  renderHud();
+}
+
+// the ledger: last few ops, newest first — kept client-side from each hud
+const LEDGER_MAX = 4;
+let ledger = [];
+let lastLedgerSeq = null;
+
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+// "keys 2 (−1 +1)" — deltas with their sign breakdown when it isn't all +
+function deltaLabel(st) {
+  if (!st) return "";
+  const parts = [];
+  if (st.retracts) parts.push(`<span class="neg">−${st.retracts}</span>`);
+  if (st.inserts) parts.push(`+${st.inserts}`);
+  const mixed = st.retracts && st.inserts;
+  return mixed || st.retracts ? ` (${parts.join(" ")})` : "";
+}
+
+function renderHud() {
+  const h = state.hud || {};
+  const verbs = { seed: "seeded", resume: "RESUMED FROM DISK", upsert: "upsert", insert: "insert", retract: "retract", restore: "restored", lens: "lens authored", unlens: "lens retracted" };
+  const l = $("hudl"), r = $("hudr");
+  if (!h.op) {
+    l.innerHTML = '<span class="empty">…</span>';
+    r.innerHTML = `<span class="canon">${esc(canon)}</span>`;
+    return;
+  }
+  const st = Object.fromEntries((h.stages || []).map((s) => [s.name, s]));
+  const keys = st.keys || {}, embed = st.embed || {}, scored = st.scored || {};
+  const untouched = Math.max(0, (h.rows || 0) - (h.keys || 0));
+  const opClass = h.op === "retract" ? "retract" : h.op === "resume" ? "resume" : h.op === "restore" ? "restore" : h.op === "unlens" ? "unlens" : h.op === "lens" ? "lens" : "";
+  const target = h.key != null ? ` s${h.key}` : "";
+  const isResume = h.op === "resume";
+  const isLensOp = h.op === "lens" || h.op === "unlens";
+  const arrow = `<span class="arrow">→</span>`;
+  // the tape is generic over h.stages: the doc taps keep their exact boxes,
+  // any other tap (lens_keys, lens_scored, …) renders as name · deltas · µs
+  const stageBox = (s) => {
+    if (!s) return "";
+    if (s.name === "keys") return `<span class="stage">keys <b>${s.deltas}</b>${deltaLabel(s)}</span>`;
+    if (s.name === "embed") return `<span class="stage">embed <b>${s.deltas}</b> · <b>${s.us}</b>µs</span>`;
+    if (s.name === "scored") return `<span class="stage">scored <b>${s.deltas}</b> rows</span>`;
+    return `<span class="stage">${esc(s.name)} <b>${s.deltas}</b>${deltaLabel(s)}${s.us ? ` · <b>${s.us}</b>µs` : (s.name.endsWith("scored") ? " rows" : "")}</span>`;
+  };
+  const extra = (h.stages || []).filter((s) => !["keys", "embed", "scored"].includes(s.name));
+  const tape = isResume
+    ? `<span class="stage">keys <b>0</b></span>${arrow}` +
+      `<span class="stage">embed <b>0</b></span>${arrow}` +
+      `<span class="stage">scored <b>0</b> rows</span>` +
+      `<span class="stage">${esc(h.note || "views were on disk")}</span>`
+    : isLensOp
+    ? extra.map(stageBox).join(arrow) + (h.note ? `${arrow}<span class="stage">${esc(h.note)}</span>` : "")
+    : [st.keys, st.embed, st.scored].filter(Boolean).map(stageBox).join(arrow) + arrow +
+      `<span class="stage">views <b>2</b></span>` +
+      extra.map((s) => arrow + stageBox(s)).join("") +
+      (h.voice_us ? `${arrow}<span class="stage">kNN·canon <b>1</b> · <b>${h.voice_us}</b>µs <span class="lbl">stopwatch</span></span>` : "");
+  l.innerHTML =
+    `<span class="head">fold · doc stream · <span class="op ${opClass}">${esc(verbs[h.op] || h.op)}${esc(target)}</span></span>` +
+    tape +
+    `<span class="wall">wall <b>${h.wall_us}</b>µs · <b>${h.rows}</b> rows maintained, <b>${untouched}</b> never visited` +
+    `<span class="note">counted by Meter ops in the pipeline · wall = stopwatch</span></span>`;
+
+  // ledger
+  if (h.seq !== lastLedgerSeq) {
+    lastLedgerSeq = h.seq;
+    ledger.unshift({ seq: h.seq, op: h.op, key: h.key, us: h.wall_us });
+    ledger = ledger.slice(0, LEDGER_MAX);
+  }
+  r.innerHTML =
+    ledger
+      .map((e, i) => {
+        const v = e.op === "resume" ? "RESUMED FROM DISK" : (verbs[e.op] || e.op) + (e.key != null ? ` s${e.key}` : "");
+        const cls = e.op === "retract" ? "retract" : e.op === "restore" ? "restore" : "";
+        return `<span class="entry ${i === 0 ? "newest" : ""}"><span class="n">#${String(e.seq).padStart(4, "0")}</span> <span class="${cls}">${esc(v)}</span> · ${e.us}µs</span>`;
+      })
+      .join("") + `<span class="canon">${esc(canon)}</span>`;
+}
+
+function beginEdit(r) {
+  if (editId !== null || adding) return;
+  selId = r.id; editId = r.id;
+  render2edit(r);
+  fetchVoice(r.text, r.id);
+}
+
+function render2edit(r) {
+  const doc = $("doc");
+  // re-render read-only spans, then swap the target span for an edit box
+  editId = null; render(); editId = r.id;
+  const spans = doc.children;
+  const idx = state.rows.findIndex((x) => x.id === r.id);
+  const box = document.createElement("div");
+  box.className = "editbox";
+  const ta = document.createElement("textarea");
+  ta.value = r.text;
+  const rowEl = document.createElement("div");
+  rowEl.className = "row";
+  const commit = document.createElement("button");
+  commit.textContent = "commit ⏎";
+  commit.onclick = () => { send({ op: "edit", id: r.id, text: ta.value.trim() }); endEdit(); };
+  const cancel = document.createElement("button");
+  cancel.textContent = "cancel esc";
+  cancel.onclick = endEdit;
+  const rm = document.createElement("button");
+  rm.textContent = "retract ⌫";
+  rm.className = "danger";
+  rm.onclick = () => { noteRetract(r); send({ op: "remove", id: r.id }); selId = null; endEdit(); };
+  rowEl.append(commit, cancel, rm);
+  box.append(ta, rowEl);
+  ta.onkeydown = (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); commit.onclick(); }
+    if (e.key === "Escape") endEdit();
+  };
+  if (idx >= 0 && spans[idx]) doc.replaceChild(box, spans[idx]);
+  ta.focus();
+}
+
+function endEdit() {
+  editId = null; adding = false;
+  if (pending) { pending = false; }
+  render();
+}
+
+$("addbtn").onclick = () => {
+  if (editId !== null || adding) return;
+  adding = true;
+  const box = document.createElement("div");
+  box.className = "editbox";
+  const ta = document.createElement("textarea");
+  ta.placeholder = "a new sentence…";
+  const rowEl = document.createElement("div");
+  rowEl.className = "row";
+  const commit = document.createElement("button");
+  commit.textContent = "commit ⏎";
+  commit.onclick = () => { if (ta.value.trim()) send({ op: "add", text: ta.value.trim() }); endEdit(); };
+  const cancel = document.createElement("button");
+  cancel.textContent = "cancel esc";
+  cancel.onclick = endEdit;
+  rowEl.append(commit, cancel);
+  box.append(ta, rowEl);
+  ta.onkeydown = (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); commit.onclick(); }
+    if (e.key === "Escape") endEdit();
+  };
+  $("doc").after(box);
+  ta.focus();
+};
+
+// one delegated handler: seeded chips, user-lens chips (dynamic), their × and + lens
+document.querySelector(".chips").addEventListener("click", (e) => {
+  const x = e.target.closest("[data-unlens]");
+  if (x) { e.stopPropagation(); send({ op: "unlens", id: +x.dataset.unlens }); return; }
+  if (e.target.closest("#lensadd")) { openLensCard(); return; }
+  const c = e.target.closest(".chip[data-lens]");
+  if (!c) return;
+  lens = c.dataset.lens;
+  document.querySelectorAll(".chip[data-lens]").forEach((y) => y.classList.toggle("on", y === c));
+  render();
+});
+
+// ---- corrigendum (branch C): retract = strike, never delete ----
+// A retracted sentence stays on the page as a struck ghost at its old
+// position, a corrigendum chit pins into the margin with what fold rolled
+// back, and the voice cards the lane fetched for it fade to "released".
+// restore ↩ sends the un-retcon: one upsert on the old id, one mutation.
+const GHOST_MAX = 3, GHOST_TTL_MS = 45000;
+let ghosts = [];          // [{ id, text, t, words, seq, wall_us, released, timer }] newest last
+let voiceForId = null;    // which sentence id the Nearest-voices lane currently belongs to
+const galeActive = () => { const g = gale || {}; return !!g.running || (!!g.finished && !galeDismissed); };
+
+function noteRetract(r) {
+  ghosts = ghosts.filter((g) => g.id !== r.id);
+  const g = { id: r.id, text: r.text, t: r.t, words: r.words, seq: null, wall_us: null, released: 0, timer: null };
+  g.timer = setTimeout(() => dropGhost(g.id, true), GHOST_TTL_MS);
+  ghosts.push(g);
+  while (ghosts.length > GHOST_MAX) { const old = ghosts.shift(); clearTimeout(old.timer); }
+  // release the lane's cards if they were fetched for this sentence
+  if (voiceForId === r.id) {
+    const hits = [...document.querySelectorAll("#voice .hit")];
+    hits.forEach((h) => { h.classList.add("released"); const m = h.querySelector(".m"); if (m && !/released$/.test(m.textContent)) m.textContent += " · released"; });
+    g.released = hits.length;
+  }
+  renderCorrigenda();
+}
+
+function dropGhost(id, fade) {
+  const g = ghosts.find((x) => x.id === id);
+  if (!g) return;
+  clearTimeout(g.timer);
+  ghosts = ghosts.filter((x) => x.id !== id);
+  const el = document.querySelector(`.ghost[data-id="${id}"]`);
+  if (el && fade) { el.classList.add("fading"); setTimeout(() => el.remove(), 650); } else if (el) el.remove();
+  renderCorrigenda();
+}
+
+function restoreGhost(id) {
+  const g = ghosts.find((x) => x.id === id);
+  if (!g) return;
+  send({ op: "restore", id: g.id, text: g.text });
+  dropGhost(id, false);
+}
+
+// ghosts sit where the sentence was: before the first live span whose id is greater
+function renderGhosts(doc) {
+  if (galeActive()) return;
+  // the retract HUD arrives after the click — fill the chit when it lands
+  const h = state.hud || {};
+  if (h.op === "retract" && h.key != null) {
+    const g = ghosts.find((x) => x.id === h.key);
+    if (g && g.seq !== h.seq) { g.seq = h.seq; g.wall_us = h.wall_us; renderCorrigenda(); }
+  }
+  // a restore (or any re-insert of the id) retires the ghost
+  // …but only once the retract was confirmed (g.seq set) — the click-time render still has the row
+  for (const g of [...ghosts]) if (g.seq != null && state.rows.some((r) => r.id === g.id)) dropGhost(g.id, false);
+  const spans = [...doc.querySelectorAll(".s")];
+  const rowIds = state.rows.map((r) => r.id);
+  for (const g of ghosts) {
+    const el = document.createElement("span");
+    el.className = "ghost";
+    el.dataset.id = g.id;
+    el.textContent = g.text + " ";
+    el.title = `s${g.id} withdrawn — the line stays struck, never deleted`;
+    const idx = rowIds.findIndex((id) => id > g.id);
+    if (idx >= 0 && spans[idx]) doc.insertBefore(el, spans[idx]); else doc.appendChild(el);
+  }
+}
+
+function renderCorrigenda() {
+  const box = $("corrigenda");
+  if (!box) return;
+  if (galeActive() || !ghosts.length) { box.replaceChildren(); return; }
+  box.replaceChildren(...[...ghosts].reverse().map((g) => {
+    const d = document.createElement("div");
+    d.className = "chit";
+    const meta = g.wall_us == null
+      ? "−1 row · views rolling back…"
+      : `−1 row · axis, len views rolled back · ${g.released} voice card${g.released === 1 ? "" : "s"} released · ${g.wall_us}µs`;
+    d.innerHTML = `<span class="hole"></span>
+      <div class="ch-h">Corrigendum · s${g.id}</div>
+      <div class="ch-b">withdrawn — the line stays struck, never deleted.</div>
+      <div class="ch-m"></div>
+      <div class="ch-row"><button class="restore" title="one upsert on the old id — the un-retcon is one mutation">restore ↩</button><button class="dismiss" title="dismiss the chit and its ghost">×</button></div>`;
+    d.querySelector(".ch-m").textContent = meta;
+    d.querySelector(".restore").onclick = () => restoreGhost(g.id);
+    d.querySelector(".dismiss").onclick = () => dropGhost(g.id, true);
+    return d;
+  }));
+}
+
+// ?demo=retract — drive the beat without a click (headless screenshots, dry-runs):
+// once the doc is up and the canon is ready, fetch row 9's voices, then retract it.
+let demoFired = false;
+function maybeDemo() {
+  if (demoFired || new URLSearchParams(location.search).get("demo") !== "retract") return;
+  const r = state.rows.find((x) => x.id === 9);
+  if (!r || !canon.startsWith("canon ready")) return;
+  demoFired = true;
+  selId = r.id;
+  fetchVoice(r.text, r.id).then(() => { noteRetract(r); send({ op: "remove", id: r.id }); selId = null; render(); });
+  // dry-run hygiene: the un-retcon fires by itself after 12s so a screenshot pass leaves the doc as it was
+  setTimeout(() => restoreGhost(r.id), 12000);
+}
+// ---- lens authoring (E): runtime lenses as (lens, sentence) keys ----
+// hue pairs per user lens (cool ↔ warm), legible on paper, same alpha curve as the seeded axis
+const LENS_PAIRS = [
+  [[74, 107, 79], [90, 77, 122]],   // moss ↔ violet
+  [[140, 59, 46], [46, 110, 110]],  // rust ↔ teal-slate
+  [[110, 50, 90], [110, 110, 40]],  // plum ↔ olive
+];
+const LENS_PAIR = (i) => {
+  const [c, w] = LENS_PAIRS[((i % LENS_PAIRS.length) + LENS_PAIRS.length) % LENS_PAIRS.length];
+  return { cool: (a) => `rgba(${c[0]},${c[1]},${c[2]},${a.toFixed(3)})`, warm: (a) => `rgba(${w[0]},${w[1]},${w[2]},${a.toFixed(3)})` };
+};
+const userLensIndex = (id) => (state.lenses || []).findIndex((d) => d.id === id);
+function userLensScale(i) {
+  const ts = (state.rows || []).map((r) => (r.lens_t || [])[i]).filter((t) => t != null).sort((a, b) => a - b);
+  if (!ts.length) return { mid: 0.5, span: 0 };
+  const mid = ts[Math.floor(ts.length / 2)];
+  const span = Math.max(mid - ts[0], ts[ts.length - 1] - mid, 1e-6);
+  return { mid, span };
+}
+function lensKey() {
+  if (lens.startsWith("user:")) {
+    const d = (state.lenses || []).find((x) => x.id === +lens.slice(5));
+    return d ? `cool = toward “${d.a}” · warm = toward “${d.b}” — your axis, ${state.rows.length} rows backfilled in one wtx · painted relative to this document’s median` : "";
+  }
+  return LENSKEY[lens] || "";
+}
+
+let lensCard = null, pendingLensSelect = false, knownLensIds = [];
+const DEMO_LENS = new URLSearchParams(location.search).get("demo") === "lens";
+let demoLensDone = false, demoLensSelect = false;
+const DEMO_A = "The rain hit the tin roof all night.", DEMO_B = "Meaning is what survives translation.";
+
+function renderLensChips() {
+  const chips = document.querySelector(".chips");
+  let box = $("userchips");
+  if (!box) {
+    box = document.createElement("span");
+    box.id = "userchips";
+    box.style.display = "contents";
+    chips.querySelector('.chip[data-lens="len"]').after(box);
+    const add = document.createElement("button");
+    add.id = "lensadd";
+    add.className = "chip dash";
+    add.textContent = "+ lens";
+    add.title = "author a lens from two anchor sentences — one backfill wtx over the doc";
+    box.after(add);
+  }
+  const defs = state.lenses || [];
+  const ids = defs.map((d) => d.id);
+  if (ids.length > knownLensIds.length && (pendingLensSelect || demoLensSelect)) {
+    lens = "user:" + Math.max(...ids);
+    if (pendingLensSelect) closeLensCard();
+    pendingLensSelect = false; demoLensSelect = false;
+  }
+  knownLensIds = ids;
+  if (lens.startsWith("user:") && !ids.includes(+lens.slice(5))) lens = "axis";
+  box.replaceChildren(...defs.map((d, i) => {
+    const b = document.createElement("button");
+    b.className = "chip user" + (lens === "user:" + d.id ? " on" : "");
+    b.dataset.lens = "user:" + d.id;
+    const pr = LENS_PAIR(i);
+    b.innerHTML = `<i class="hue" style="background:linear-gradient(90deg,${pr.cool(.55)},${pr.warm(.55)})"></i>${esc(d.name)} ✎<span class="x" data-unlens="${d.id}" title="retract this lens — one wtx">×</span>`;
+    b.title = `A: ${d.a}\nB: ${d.b}`;
+    return b;
+  }));
+  document.querySelectorAll(".chip[data-lens]").forEach((x) => x.classList.toggle("on", x.dataset.lens === lens));
+  if (lensCard) { const go = lensCard.querySelector(".lc-go"); if (go) go.textContent = `backfill · ${state.rows.length} rows · one wtx ⏎`; }
+  // ?demo=lens — for the headless screenshot: author the rain/meaning lens once, select it, open the card too
+  if (DEMO_LENS && !demoLensDone && state.rows && state.rows.length) {
+    demoLensDone = true;
+    if (!defs.length) { demoLensSelect = true; send({ op: "lens", a: DEMO_A, b: DEMO_B, name: "rain —— meaning" }); }
+    else { lens = "user:" + Math.max(...ids); render(); }
+    setTimeout(() => openLensCard({ a: DEMO_A, b: DEMO_B }), 700);
+  }
+}
+
+const autoLensName = (a, b) => {
+  const f = (s) => s.trim().replace(/^(the|a|an)\s+/i, "").split(/\s+/).slice(0, 2).join(" ").replace(/[.,;:!?"“”]+$/, "").toLowerCase();
+  return a.trim() && b.trim() ? `${f(a)} —— ${f(b)}` : "";
+};
+function openLensCard(prefill) {
+  if (lensCard) { lensCard.querySelector("input").focus(); return; }
+  const card = document.createElement("div");
+  card.id = "lenscard";
+  card.innerHTML =
+    `<div class="lc-h">NEW LENS · TWO ANCHOR SENTENCES</div>` +
+    `<div class="lc-row"><span class="k">A</span><input id="lcA" placeholder="a sentence at the cool end of your axis…" autocomplete="off"></div>` +
+    `<div class="lc-row"><span class="k">B</span><input id="lcB" placeholder="a sentence at the warm end…" autocomplete="off"></div>` +
+    `<div class="lc-row lc-name"><span class="k">name</span><input id="lcN" placeholder="first words —— first words" autocomplete="off"></div>` +
+    `<div class="lc-actions"><button class="lc-go">backfill · ${state.rows.length} rows · one wtx ⏎</button>` +
+    `<span class="lc-note">anchors are sentences, never words · esc cancels</span></div>`;
+  document.querySelector(".chips").after(card);
+  lensCard = card;
+  const A = card.querySelector("#lcA"), B = card.querySelector("#lcB"), N = card.querySelector("#lcN");
+  const auto = () => { if (!N.dataset.touched) N.value = autoLensName(A.value, B.value); };
+  A.oninput = B.oninput = auto;
+  N.oninput = () => { N.dataset.touched = "1"; };
+  card.onkeydown = (e) => {
+    if (e.key === "Enter") { e.preventDefault(); submitLens(); }
+    if (e.key === "Escape") { e.preventDefault(); closeLensCard(); }
+  };
+  card.querySelector(".lc-go").onclick = submitLens;
+  if (prefill) { A.value = prefill.a; B.value = prefill.b; auto(); }
+  A.focus();
+}
+function submitLens() {
+  if (!lensCard) return;
+  const A = $("lcA").value.trim(), B = $("lcB").value.trim();
+  const N = $("lcN").value.trim() || autoLensName(A, B);
+  const words = (t) => t.split(/\s+/).filter(Boolean).length;
+  if (words(A) < 2 || words(B) < 2) {   // sentences, never words
+    lensCard.classList.remove("shake"); void lensCard.offsetWidth; lensCard.classList.add("shake");
+    return;
+  }
+  pendingLensSelect = true;
+  send({ op: "lens", a: A, b: B, name: N });
+}
+function closeLensCard() { if (lensCard) { lensCard.remove(); lensCard = null; } }
+// ---- gutter chips (D) ----
+// After an edit, the number lands beside the sentence you touched, not just
+// in the strip: wall µs of the wtx (stopwatch — the strip's tape has the
+// Meter-counted split), and the sentence's length percentile against the
+// full canon from a fold Histogram sink (pct.rs). One chip at a time; it
+// fades over ~5s and is replaced by the next op.
+function ordinal(x) {
+  const n = Math.max(0, Math.min(100, Math.round(x)));
+  const m100 = n % 100, m10 = n % 10;
+  const suf = m100 >= 11 && m100 <= 13 ? "th" : m10 === 1 ? "st" : m10 === 2 ? "nd" : m10 === 3 ? "rd" : "th";
+  return `${n}${suf}`;
+}
+let chipSeq = null;
+function renderChips(doc) {
+  maybeDemoChips();
+  const h = state.hud || {};
+  const old = doc.querySelector(".gchip");
+  const galing = document.querySelector(".page").classList.contains("galing");
+  const wants = h.key != null && h.op !== "retract" && !galing;
+  if (!wants) { if (old) old.remove(); chipSeq = null; return; }
+  if (old && chipSeq === h.seq) {
+    // same op, fresh repaint: keep the chip (and its fade) but re-seat it
+    const idx = state.rows.findIndex((r) => r.id === h.key);
+    const span = doc.querySelectorAll(".s")[idx];
+    if (span) old.style.top = (span.getBoundingClientRect().top - doc.getBoundingClientRect().top) + "px";
+    return;
+  }
+  if (old) old.remove();
+  const idx = state.rows.findIndex((r) => r.id === h.key);
+  const row = state.rows[idx];
+  const span = doc.querySelectorAll(".s")[idx];
+  if (!row || !span) { chipSeq = null; return; }
+  chipSeq = h.seq;
+  const chip = document.createElement("div");
+  chip.className = "gchip";
+  chip.style.top = (span.getBoundingClientRect().top - doc.getBoundingClientRect().top) + "px";
+  chip.innerHTML = `<span class="us"><b>${h.wall_us}µs</b><span class="lbl">wtx</span></span>` +
+    (row.pct != null ? `<span class="pct">len · ${ordinal(row.pct)} pct of canon</span>` : "");
+  doc.appendChild(chip);
+  // hold long enough to read, then fade; the next op replaces it outright
+  setTimeout(() => chip.classList.add("fade"), 4000);
+}
+// ?demo=chips — headless/dry-run hook: once rows carry percentiles, edit row 3
+// once so the chips render without a click. Fires only with the param.
+const demoChips = new URLSearchParams(location.search).get("demo") === "chips";
+let demoChipsFired = false;
+function maybeDemoChips() {
+  if (!demoChips || demoChipsFired) return;
+  const r3 = state.rows.find((r) => r.id === 3);
+  if (!r3 || r3.pct == null || !ws || ws.readyState !== 1) return;
+  demoChipsFired = true;
+  const orig = r3.text.replace(/ — hazards blinking\.$/, "."); // idempotent across runs
+  setTimeout(() => send({ op: "edit", id: 3, text: orig.replace(/\.$/, "") + " — hazards blinking." }), 400);
+  setTimeout(() => send({ op: "edit", id: 3, text: orig }), 9000); // leave the doc as it was
+}
+
+let voiceSeq = 0;
+async function fetchVoice(text, forId) {
+  const seq = ++voiceSeq;
+  voiceForId = forId == null ? null : forId;
+  const v = $("voice");
+  v.innerHTML = '<div class="empty">listening…</div>';
+  try {
+    const res = await fetch(`/voice?text=${encodeURIComponent(text)}`);
+    const data = await res.json();
+    if (seq !== voiceSeq) return;
+    if (data.status !== "ok" || !data.hits.length) {
+      v.innerHTML = '<div class="empty">canon still reshelving — try again in a moment.</div>';
+      return;
+    }
+    v.replaceChildren(...data.hits.map((h) => {
+      const d = document.createElement("div");
+      d.className = "hit";
+      d.innerHTML = `<div class="t"></div><div class="m"></div>`;
+      d.querySelector(".t").textContent = h.text.length > 140 ? h.text.slice(0, 140) + "…" : h.text;
+      d.querySelector(".m").textContent = `${h.title} · cos-dist ${h.score.toFixed(3)}`;
+      return d;
+    }));
+  } catch { /* server gone; ws banner covers it */ }
+}
+
+// ---- gale (G5): two arms, one script, one clock ----
+let naive = null, gale = null, galeDismissed = false;
+const fmtUs = (us) => us == null ? "—" : us >= 1000 ? (us / 1000).toFixed(us >= 10000 ? 0 : 1) + "ms" : us + "µs";
+const fmtS = (ms) => (ms / 1000).toFixed(1) + "s";
+const clock = (ms) => { const s = Math.floor(ms / 1000); return String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0"); };
+const tile = (head, cells) =>
+  `<div class="th">${head}</div><div class="tb">` +
+  cells.map(([k, v, cls]) => `<div><div class="k">${k}</div><div class="v ${cls || ""}">${v}</div></div>`).join("") + `</div>`;
+
+function renderGale() {
+  const g = gale || {}, n = naive || {};
+  const chip = $("galechip");
+  const ready = canon.startsWith("canon ready") && n.ready;
+  chip.disabled = !ready || !!g.running;
+  chip.textContent = g.running ? "▶ gale · running" : ready ? "▶ gale" : "▶ gale · waiting for canon";
+  if (g.running) galeDismissed = false;
+  const active = !!g.running || (!!g.finished && !galeDismissed);
+  document.querySelector(".page").classList.toggle("galing", active);
+  $("moral").classList.toggle("show", active && !!g.finished && !galeDismissed);
+  if (!active) return;
+
+  // gale bar
+  const pct = g.total ? Math.min(100, (100 * g.sent) / g.total) : 0;
+  const phase = g.phase === "draining" ? `<b>naive arm still counting…</b> behind ${fmtS(n.behind_ms || 0)}`
+              : g.phase === "done" ? `<b>gale done</b>` : `<b>▶ gale</b>`;
+  $("galebar").innerHTML = `${phase}<span>${g.rate} edits/s</span><span>${g.sent} / ${g.total}</span><span>${clock(g.elapsed_ms || 0)}</span>` +
+    `<span class="track"><i style="width:${pct}%"></i></span><span>same script → both arms · seed ${g.seed}</span>`;
+
+  // naive lane: same painter, hatched where its text lags fold's
+  const foldText = new Map(state.rows.map((r) => [r.id, r.text]));
+  const rows = n.rows || [];
+  const maxW = Math.max(1, ...rows.map((r) => r.words));
+  $("naivedoc").replaceChildren(...rows.map((r) => {
+    const s = document.createElement("span");
+    const stale = foldText.has(r.id) && foldText.get(r.id) !== r.text;
+    s.className = "s" + (stale ? " stale" : "");
+    s.textContent = r.text + " ";
+    s.style.background = paint(r, maxW);
+    s.title = (r.voice ? `voice · ${r.voice.title} · ` : "") + `t=${(r.t || 0).toFixed(2)} · ${r.words} words` + (stale ? " · stale" : "");
+    return s;
+  }));
+  const behind = n.behind_ms || 0;
+  $("naivenote").textContent = `re-embeds every row · rescans ${(n.canon_n || 0).toLocaleString()} canon vectors per row · ` +
+    (behind > 200 ? `behind by ${fmtS(behind)}` : "keeping up");
+
+  // instrument tiles
+  // completed updates within the run; the post-run restore edits are not part of the race
+  const foldDone = Math.min(Math.max(0, (state.seq || 0) - (g.base || 0)), g.finished ? (g.total || Infinity) : Infinity);
+  const h = state.hud || {};
+  $("foldtile").innerHTML = tile("Fold · doc stream · deltas", [
+    // the fold arm's full per-edit cost: the wtx plus its one HNSW voice
+    // refresh — the same work the naive rescan is being timed on
+    ["last delta", fmtUs((h.wall_us || 0) + (h.voice_us || 0))],
+    ["completed", foldDone],
+    ["dropped", 0, "dim"],
+    ["rows visited", h.keys != null ? `${h.keys} of ${h.rows}` : "—", "dim"],
+  ]);
+  $("naivetile").innerHTML = tile("Naive arm · full rescan · no index", [
+    ["last rescan", fmtUs(n.stride_us)],
+    ["completed", n.completed || 0],
+    ["dropped", n.dropped || 0, (n.dropped || 0) > 0 ? "crim" : "dim"],
+    ["behind", fmtS(behind), behind > 200 ? "crim" : "dim"],
+  ]);
+
+  // referee
+  const checks = n.referee_checks || 0, matches = n.referee_matches || 0;
+  const den = n.voice_agree_den || 0, num = n.voice_agree_num || 0;
+  const refCls = checks && matches === checks ? "ok" : checks ? "bad" : "";
+  $("referee").innerHTML =
+    `referee · <span class="${refCls}">${matches}/${checks} score digests match at the same cursor</span>` +
+    (den ? ` · voice agreement ${Math.round((100 * num) / den)}% (HNSW ≈ vs exact scan, ${num}/${den})` : " · voice agreement — (waiting for the canon)") +
+    `<br><span class="fn">naive arm · same scoring code · no deltas · no index — linear scan over ${(n.canon_n || 0).toLocaleString()} vectors · both arms fed the same edits on the same clock</span>`;
+
+  // moral card
+  if (g.finished && !galeDismissed) {
+    const f = g.finished;
+    const ratio = f.naive_stride_p50_us && f.fold_stride_p50_us ? Math.round(f.naive_stride_p50_us / f.fold_stride_p50_us) : null;
+    const agree = f.voice_agree && f.voice_agree[1] ? `${Math.round((100 * f.voice_agree[0]) / f.voice_agree[1])}% (${f.voice_agree[0]}/${f.voice_agree[1]})` : "—";
+    $("moralcard").innerHTML =
+      `<h2>Deltas kept up. The rescan did homework.</h2>` +
+      `<div>${f.sent} scripted edits at ${f.rate}/s. Fold completed <b>${f.fold_completed}</b> updates at a median <b>${fmtUs(f.fold_stride_p50_us)}</b>; ` +
+      `the naive arm completed <b>${f.naive_completed}</b>, dropped <b>${f.naive_dropped}</b>, and fell <b>${fmtS(f.behind_ms_max)}</b> behind at worst` +
+      (ratio ? ` — a <b>${ratio}×</b> stride ratio.` : ".") + `</div>` +
+      `<div class="nums">referee · ${f.referee_matches}/${f.referee_checks} score digests matched at the same cursor<br>` +
+      `voice agreement · ${agree} — HNSW (approximate) vs exact scan<br>` +
+      `canon · ${(f.canon_n || 0).toLocaleString()} sentences · fold median ${fmtUs(f.fold_stride_p50_us)} · naive median ${fmtUs(f.naive_stride_p50_us)}</div>` +
+      `<div class="disc">disclosure: replay at ${f.rate} edits/s for ${f.secs}s, seed ${f.seed} · positions are completed updates, strides wall-clock · ` +
+      `both arms fed the same edits on the same clock · naive arm scopes the ANN index out (linear scan) — nothing scripted</div>` +
+      `<button id="moraldismiss">dismiss</button>`;
+    $("moraldismiss").onclick = () => { galeDismissed = true; renderGale(); };
+  }
+}
+
+$("galechip").onclick = async () => {
+  try {
+    const r = await fetch("/gale?rate=60&secs=10");
+    const j = await r.json();
+    if (j.status !== "started") { $("galechip").textContent = `▶ gale · ${j.status}`; }
+  } catch { /* server gone; ws banner covers it */ }
+};
+
+let ws;
+function send(o) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
+function connect() {
+  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onmessage = (ev) => {
+    const m = JSON.parse(ev.data);
+    state = m.doc; canon = m.canon;
+    naive = m.naive; gale = m.gale;
+    render();
+    renderGale();
+    maybeDemo();
+  };
+  ws.onclose = () => {
+    $("hudl").innerHTML = '<span class="dead">stream down — waiting for relaunch (the doc is on disk)</span>';
+    setTimeout(connect, 800);
+  };
+}
+connect();
+</script>
+</body>
+</html>
