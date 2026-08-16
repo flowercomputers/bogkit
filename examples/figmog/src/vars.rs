@@ -3,9 +3,10 @@
 
 use std::collections::BTreeMap;
 
+use serde::Serialize;
 use serde_json::Value;
 
-use crate::model::{Id, Rec, VariableCollectionRec, VariableRec};
+use crate::model::{Id, NodeRec, Rec, VariableCollectionRec, VariableRec};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ImportError {
@@ -81,4 +82,61 @@ pub fn parse_variables_export(v: &Value) -> Result<Vec<(Id, Rec)>, ImportError> 
         ));
     }
     Ok(recs)
+}
+
+/// Everything known about one variable from its usage sites alone.
+#[derive(Debug, Serialize)]
+pub struct VarUsage {
+    pub variable_id: String,
+    /// (node_id, json-pointer of the bound property), sorted.
+    pub sites: Vec<(String, String)>,
+    /// Distinct resolved values observed at those sites (canonical JSON),
+    /// sorted. Usually one value; more indicates multi-mode usage.
+    pub observed: Vec<String>,
+}
+
+/// Free-plan inference: fold every node's variable bindings into per-variable
+/// usage + observed resolved values (the concrete values Figma bakes in
+/// next to each binding — default-mode values unless a frame overrides its
+/// mode).
+pub fn infer_from_nodes<'a>(nodes: impl Iterator<Item = &'a NodeRec>) -> Vec<VarUsage> {
+    type VarData = (Vec<(String, String)>, Vec<String>);
+    let mut by_var: BTreeMap<String, VarData> = BTreeMap::new();
+    for node in nodes {
+        let raw: serde_json::Value = match serde_json::from_str(&node.raw) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        for (pointer, var_id) in &node.bound_variables {
+            let entry = by_var.entry(var_id.clone()).or_default();
+            entry.0.push((node.id.clone(), pointer.clone()));
+            if let Some(v) = raw.pointer(pointer) {
+                entry.1.push(serde_json::to_string(v).expect("Value serializes"));
+            }
+        }
+    }
+    by_var
+        .into_iter()
+        .map(|(variable_id, (mut sites, mut observed))| {
+            sites.sort();
+            observed.sort();
+            observed.dedup();
+            VarUsage { variable_id, sites, observed }
+        })
+        .collect()
+}
+
+/// Derive a style's definition from one consumer node's raw JSON.
+/// Style definitions are not in the file JSON; consumers carry the
+/// resolved properties.
+pub fn style_value_from_consumer(style_type: &str, consumer_raw: &str) -> Option<Value> {
+    let raw: Value = serde_json::from_str(consumer_raw).ok()?;
+    let pointer = match style_type {
+        "TEXT" => "/style",
+        "FILL" => "/fills",
+        "EFFECT" => "/effects",
+        "GRID" => "/layoutGrids",
+        _ => return None,
+    };
+    raw.pointer(pointer).cloned()
 }
