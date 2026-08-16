@@ -8,6 +8,8 @@ what the pipeline actually did — counted from inside it.
 
 ```bash
 python3 scripts/prep_corpus.py     # once: 20 Gutenberg books -> data/canon.jsonl
+python3 scripts/prep_movies.py     # optional: 1,172 film scripts (HF, Apache-2.0) -> data/screen.jsonl
+python3 scripts/prep_contracts.py <path-to-mcc-archive>  # optional: 10-K contracts -> data/contracts.jsonl
 cargo run -p soundings -- serve    # the instrument, http://localhost:4600
 cargo run -p soundings             # embedding-quality probe (axis / drift gates)
 cargo run -p soundings -- bench    # corpus-scale measurements
@@ -21,6 +23,14 @@ canon are back before you can alt-tab.
 
 ## What it is, for a writer
 
+- **The library is a choice.** The masthead's "Type of writing" slot swaps
+  the whole reference world: *novel* (the Gutenberg canon), *screenplay*
+  (1,172 films), *contract* (5,984 contracts from 10-K filings, Stanford's
+  Materials Contracts Corpus). Voices, percentiles, and rewrite targets all
+  re-aim — a lawyer's indemnification sentence finds real clauses from
+  named companies; a 40-word sentence is 90th-percentile prose in the canon
+  but 74th among contracts. First use of a library builds its index once;
+  every later switch is a snapshot fast-load. Writing never pauses.
 - **Lenses, not opinions.** Sentences wear translucent washes from a
   concrete↔abstract axis (anchored with example *sentences* — the only way
   static embeddings hold an axis) and a length lens. The tool never suggests
@@ -60,10 +70,10 @@ canon are back before you can alt-tab.
 | Surface | Mechanism |
 |---|---|
 | Doc stream | `KeyedStream<u32, String>` at `data/doc.db`: `Meter("keys") → (Table sents, Meter("embed") → Map(ese + axis) → Meter("scored") → Table scores)` — capturing-closure `Map`, scores as a materialized view |
-| Canon stream | Second `KeyedStream` (separate thread): `Map(ese) → Hnsw<u32,f32,Cosine,512>` + `Table`, with the graph-snapshot fast-load so reopen never rebuilds |
+| Library stream | Second `KeyedStream` (separate thread), one per *reference library* (canon / films / contracts — config, not code): `Map(ese) → Hnsw<u32,f32,Cosine,512>` + `Table`; switching drops one stream and opens another, graph-snapshot fast-load so no switch rebuilds |
 | Corrigendum | fold's algebraic retraction: one `remove` un-happens every view; restore is a plain upsert — `t` returns bit-identical because ese is a pure function of the text |
 | Authored lenses | Third stream: keys `(lens_id, sentence_id) → t`, one-wtx backfill, mirrored on every later edit — runtime structure as *data* on a compile-time-static operator graph; survives kill -9 |
-| Length percentile | `Histogram` sink over all canon word counts — a materialized distribution, built once, constant-time per keystroke |
+| Length percentile | `Histogram` sink per library over its word counts — a materialized distribution, built once, constant-time per keystroke, re-aimed on switch |
 | HUD | the `Meter` operator (this PR): deltas counted and stages timed *inside* the pipeline; the wall-clock stopwatch is labelled as such |
 | Voice cards | anny true deletion (retract a sentence, its card is released — no tombstones) · one HNSW query per edited key |
 
