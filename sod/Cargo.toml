@@ -5,8 +5,8 @@ edition = "2024"
 
 [features]
 default = ["fold-engine", "ws", "os-rng"]
-# The fold-backed Engine (pulls in fold and, transitively, fjall — native only).
-fold-engine = ["dep:fold"]
+# The fold-backed Engine (pulls in fold and fjall — native only).
+fold-engine = ["dep:fold", "dep:fjall"]
 # Blocking websocket transport.
 ws = ["dep:tungstenite"]
 # ReplicaId::generate() via the OS RNG. Off on targets without getrandom
@@ -18,5 +18,6 @@ serde = { version = "1", features = ["derive"] }
 postcard = { version = "1", features = ["use-std"] }
 blake3 = "1"
 fold = { path = "../fold", optional = true }
+fjall = { version = "3", default-features = false, optional = true }
 tungstenite = { version = "0.24", optional = true }
 getrandom = { version = "0.2", optional = true }

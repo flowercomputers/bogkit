@@ -22,11 +22,14 @@
 //! Design spec: `docs/superpowers/specs/2026-08-15-sod-design.md`.
 
 pub mod engine;
+#[cfg(feature = "fold-engine")]
+pub mod engine_fold;
 pub mod frame;
 pub mod log_file;
 pub mod replica;
 pub mod store;
 pub mod sync;
+pub mod time;
 pub mod vector;
 
 pub use frame::{Frame, FrameHash, ReplicaId, ZERO_HASH, decode_record};
