@@ -1,4 +1,6 @@
 /target
 target/
-.DS_Storedata/
+.DS_Store
 data/
+.env
+examples/soundings/.env

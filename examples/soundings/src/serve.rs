@@ -334,7 +334,29 @@ struct AppState {
     lib_rx: watch::Receiver<(String, String)>,
 }
 
+/// Load `./.env` and `examples/soundings/.env` (KEY=VALUE, quotes stripped,
+/// `#` comments) into the process environment — real env vars win. Runs
+/// before any thread spawns, so the unsafe set_var is sound.
+fn load_dotenv() {
+    for path in ["./.env", "examples/soundings/.env"] {
+        let Ok(txt) = std::fs::read_to_string(path) else { continue };
+        for line in txt.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if let Some((k, v)) = line.split_once('=') {
+                let (k, v) = (k.trim(), v.trim().trim_matches('"').trim_matches('\''));
+                if !k.is_empty() && std::env::var(k).is_err() {
+                    unsafe { std::env::set_var(k, v) };
+                }
+            }
+        }
+    }
+}
+
 pub fn run() {
+    load_dotenv();
     let (edit_tx, edit_rx) = mpsc::channel::<Edit>();
     let (doc_tx, doc_rx) = watch::channel(DocState::default());
     let (status_tx, status_rx) = watch::channel("opening the library…".to_string());
