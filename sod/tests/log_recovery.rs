@@ -82,6 +82,51 @@ fn torn_tail_truncated() {
 }
 
 #[test]
+fn replica_crash_heals_by_replay_and_truncation() {
+    use sod::Replica;
+    use sod::engine::MemEngine;
+
+    let path = tmp("replica-crash");
+    let me = ReplicaId([9; 16]);
+
+    // Two committed writes, then "crash": the engine (in-memory) is lost.
+    {
+        let log = FileLog::open(&path).unwrap();
+        let mut r = Replica::open(me, log, MemEngine::new()).unwrap();
+        r.commit(vec![(b"a".to_vec(), 1)], 10).unwrap();
+        r.commit(vec![(b"b".to_vec(), 2)], 20).unwrap();
+    }
+    // Reopen with a fresh engine: replay restores everything (SOD-1/SOD-5).
+    {
+        let log = FileLog::open(&path).unwrap();
+        let r = Replica::open(me, log, MemEngine::new()).unwrap();
+        assert_eq!(r.engine().count(b"a"), 1);
+        assert_eq!(r.engine().count(b"b"), 2);
+        assert_eq!(r.vector().get(&me), 2);
+        assert_eq!(r.watermark(), 20);
+    }
+    // A third commit torn mid-append: chop bytes off the file tail.
+    {
+        let log = FileLog::open(&path).unwrap();
+        let mut r = Replica::open(me, log, MemEngine::new()).unwrap();
+        r.commit(vec![(b"c".to_vec(), 1)], 30).unwrap();
+    }
+    let full = std::fs::read(&path).unwrap();
+    std::fs::write(&path, &full[..full.len() - 7]).unwrap();
+    // Reopen: the torn third frame is truncated, state equals the durable
+    // two-frame prefix, and committing resumes at seq 3.
+    {
+        let log = FileLog::open(&path).unwrap();
+        let mut r = Replica::open(me, log, MemEngine::new()).unwrap();
+        assert_eq!(r.engine().count(b"c"), 0);
+        assert_eq!(r.vector().get(&me), 2);
+        r.commit(vec![(b"c".to_vec(), 5)], 40).unwrap();
+        assert_eq!(r.vector().get(&me), 3);
+        assert_eq!(r.engine().count(b"c"), 5);
+    }
+}
+
+#[test]
 fn mid_file_corruption_refuses() {
     let path = tmp("midcorrupt");
     let frames = chain(1, 3);

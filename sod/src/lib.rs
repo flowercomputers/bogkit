@@ -24,10 +24,12 @@
 pub mod engine;
 pub mod frame;
 pub mod log_file;
+pub mod replica;
 pub mod store;
 pub mod vector;
 
 pub use frame::{Frame, FrameHash, ReplicaId, ZERO_HASH, decode_record};
+pub use replica::Replica;
 pub use vector::VersionVector;
 
 /// Errors across sod's ports and protocol.
