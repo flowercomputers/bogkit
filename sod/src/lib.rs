@@ -22,6 +22,8 @@
 //! Design spec: `docs/superpowers/specs/2026-08-15-sod-design.md`.
 
 pub mod frame;
+pub mod log_file;
+pub mod store;
 pub mod vector;
 
 pub use frame::{Frame, FrameHash, ReplicaId, ZERO_HASH, decode_record};
