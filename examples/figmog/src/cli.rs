@@ -64,19 +64,41 @@ enum Cmd {
     /// List pages.
     Pages,
     /// Subtree outline (default: whole document).
-    Tree { id: Option<String>, #[arg(long)] depth: Option<usize> },
+    Tree {
+        id: Option<String>,
+        #[arg(long)]
+        depth: Option<usize>,
+    },
     /// Full raw JSON of one node.
-    Get { id: String, #[arg(long)] children: bool },
+    Get {
+        id: String,
+        #[arg(long)]
+        children: bool,
+    },
     /// Nodes by type, optionally within one page.
-    Find { #[arg(long = "type")] node_type: String, #[arg(long)] page: Option<String> },
+    Find {
+        #[arg(long = "type")]
+        node_type: String,
+        #[arg(long)]
+        page: Option<String>,
+    },
     /// BM25 search over layer names and text content.
-    Search { query: String, #[arg(short = 'n', long, default_value = "10")] limit: usize },
+    Search {
+        query: String,
+        #[arg(short = 'n', long, default_value = "10")]
+        limit: usize,
+    },
     /// Instances of a component (by node id, key, or name).
     Instances { target: String },
     /// Design-system inventory: sets, variant axes, standalone components.
     Components,
     /// Styles with usage counts; --values derives definitions from consumers.
-    Styles { #[arg(long = "type")] style_type: Option<String>, #[arg(long)] values: bool },
+    Styles {
+        #[arg(long = "type")]
+        style_type: Option<String>,
+        #[arg(long)]
+        values: bool,
+    },
     /// Nodes using a style id or bound to a variable id.
     Uses { id: String },
     /// Variables: authoritative if imported, else inferred from bindings.
@@ -85,6 +107,8 @@ enum Cmd {
     ImportVariables { path: PathBuf },
 }
 
+/// Parse `argv`, dispatch, and return the process exit code (0 on success,
+/// 1 with a one-line `figmog: <message>` on stderr otherwise).
 pub fn run() -> i32 {
     let cli = Cli::parse();
     match dispatch(cli) {
@@ -99,7 +123,11 @@ pub fn run() -> i32 {
 fn dispatch(cli: Cli) -> Result<(), String> {
     let db = resolve_db(&cli)?;
     match cli.cmd {
-        Cmd::Pull { file, from_file, fresh } => cmd_pull(&db, file, from_file, fresh, cli.json),
+        Cmd::Pull {
+            file,
+            from_file,
+            fresh,
+        } => cmd_pull(&db, file, from_file, fresh, cli.json),
         Cmd::Watch { file, interval } => cmd_watch(&db, file, interval, cli.json),
         Cmd::ImportVariables { path } => cmd_import_variables(&db, path, cli.json),
         other => {
@@ -115,26 +143,37 @@ fn dispatch(cli: Cli) -> Result<(), String> {
                 Cmd::Status => st.rtx(|((nodes, _, _, _, _, _, _), _, _, _, _, _, meta)| {
                     cmd_status(&nodes, &meta, json)
                 }),
-                Cmd::Pages => {
-                    st.rtx(|((nodes, _, _, _, _, _, by_type), ..)| cmd_pages(&nodes, &by_type, json))
+                Cmd::Pages => st
+                    .rtx(|((nodes, _, _, _, _, _, by_type), ..)| cmd_pages(&nodes, &by_type, json)),
+                Cmd::Tree { id, depth } => {
+                    st.rtx(|((nodes, children, _, _, _, _, by_type), ..)| {
+                        cmd_tree(&nodes, &children, &by_type, id, depth, json)
+                    })
                 }
-                Cmd::Tree { id, depth } => st.rtx(|((nodes, children, _, _, _, _, by_type), ..)| {
-                    cmd_tree(&nodes, &children, &by_type, id, depth, json)
-                }),
-                Cmd::Get { id, children: with_children } => st.rtx(|((nodes, children, ..), ..)| {
+                Cmd::Get {
+                    id,
+                    children: with_children,
+                } => st.rtx(|((nodes, children, ..), ..)| {
                     cmd_get(&nodes, &children, id, with_children, json)
                 }),
                 Cmd::Find { node_type, page } => st.rtx(|((nodes, _, _, _, _, _, by_type), ..)| {
                     cmd_find(&nodes, &by_type, node_type, page, json)
                 }),
-                Cmd::Search { query, limit } => {
-                    st.rtx(|((nodes, _, text, ..), ..)| cmd_search(&nodes, &text, query, limit, json))
-                }
-                Cmd::Instances { target } => {
-                    st.rtx(|((nodes, _, _, instances_of, ..), components, component_sets, ..)| {
-                        cmd_instances(&nodes, &instances_of, &components, &component_sets, target, json)
-                    })
-                }
+                Cmd::Search { query, limit } => st.rtx(|((nodes, _, text, ..), ..)| {
+                    cmd_search(&nodes, &text, query, limit, json)
+                }),
+                Cmd::Instances { target } => st.rtx(
+                    |((nodes, _, _, instances_of, ..), components, component_sets, ..)| {
+                        cmd_instances(
+                            &nodes,
+                            &instances_of,
+                            &components,
+                            &component_sets,
+                            target,
+                            json,
+                        )
+                    },
+                ),
                 Cmd::Components => st.rtx(|((nodes, ..), components, component_sets, ..)| {
                     cmd_components(&component_sets, &components, &nodes, json)
                 }),
@@ -146,9 +185,11 @@ fn dispatch(cli: Cli) -> Result<(), String> {
                 Cmd::Uses { id } => st.rtx(|((nodes, _, _, _, styled_by, bound_to, _), ..)| {
                     cmd_uses(&nodes, &styled_by, &bound_to, id, json)
                 }),
-                Cmd::Vars { id } => st.rtx(|((nodes, ..), _, _, _, variables, variable_collections, _)| {
-                    cmd_vars(&nodes, &variables, &variable_collections, id, json)
-                }),
+                Cmd::Vars { id } => st.rtx(
+                    |((nodes, ..), _, _, _, variables, variable_collections, _)| {
+                        cmd_vars(&nodes, &variables, &variable_collections, id, json)
+                    },
+                ),
                 Cmd::Pull { .. } | Cmd::Watch { .. } | Cmd::ImportVariables { .. } => {
                     unreachable!("handled above")
                 }
@@ -169,14 +210,20 @@ const CURRENT_FILE: &str = ".figmog/current";
 
 fn resolve_db(cli: &Cli) -> Result<Db, String> {
     if let Some(path) = &cli.db {
-        return Ok(Db { path: path.clone(), key: None });
+        return Ok(Db {
+            path: path.clone(),
+            key: None,
+        });
     }
 
     // pull/watch with an explicit file ref establish (and remember) the key.
     if let Cmd::Pull { file: Some(f), .. } | Cmd::Watch { file: Some(f), .. } = &cli.cmd {
         let key = parse_file_ref(f).ok_or_else(|| format!("not a Figma file key or URL: {f}"))?;
         write_current(&key)?;
-        return Ok(Db { path: db_path_for(&key), key: Some(key) });
+        return Ok(Db {
+            path: db_path_for(&key),
+            key: Some(key),
+        });
     }
 
     let key = std::fs::read_to_string(CURRENT_FILE)
@@ -186,7 +233,10 @@ fn resolve_db(cli: &Cli) -> Result<Db, String> {
     if key.is_empty() {
         return Err("no mirror here — run `figmog pull <file-url>` first".into());
     }
-    Ok(Db { path: db_path_for(&key), key: Some(key) })
+    Ok(Db {
+        path: db_path_for(&key),
+        key: Some(key),
+    })
 }
 
 fn db_path_for(key: &str) -> PathBuf {
@@ -199,7 +249,10 @@ fn write_current(key: &str) -> Result<(), String> {
 }
 
 fn now_ms() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64
 }
 
 // ---- engine commands ----
@@ -227,7 +280,8 @@ fn do_pull(
         Some(path) => {
             let content = std::fs::read_to_string(&path)
                 .map_err(|e| format!("reading {}: {e}", path.display()))?;
-            serde_json::from_str(&content).map_err(|e| format!("parsing {}: {e}", path.display()))?
+            serde_json::from_str(&content)
+                .map_err(|e| format!("parsing {}: {e}", path.display()))?
         }
         None => {
             let key = db
@@ -253,12 +307,19 @@ fn do_pull(
     });
     let churn = sync(&mut st, &prior, &flattened, now_ms());
 
-    Ok((churn, flattened.file.name.clone(), flattened.file.version.clone()))
+    Ok((
+        churn,
+        flattened.file.name.clone(),
+        flattened.file.version.clone(),
+    ))
 }
 
 fn print_churn(churn: &Churn, name: &str, version: &str, json: bool) -> Result<(), String> {
     if json {
-        println!("{}", serde_json::to_string(churn).map_err(|e| e.to_string())?);
+        println!(
+            "{}",
+            serde_json::to_string(churn).map_err(|e| e.to_string())?
+        );
     } else {
         println!(
             "synced {name} v{version}: +{} ~{} -{} (={} unchanged)",
@@ -337,10 +398,10 @@ fn cmd_watch(db: &Db, file: Option<String>, interval: u64, json: bool) -> Result
 }
 
 fn cmd_import_variables(db: &Db, path: PathBuf, json: bool) -> Result<(), String> {
-    let content = std::fs::read_to_string(&path)
-        .map_err(|e| format!("reading {}: {e}", path.display()))?;
-    let v: Value = serde_json::from_str(&content)
-        .map_err(|e| format!("parsing {}: {e}", path.display()))?;
+    let content =
+        std::fs::read_to_string(&path).map_err(|e| format!("reading {}: {e}", path.display()))?;
+    let v: Value =
+        serde_json::from_str(&content).map_err(|e| format!("parsing {}: {e}", path.display()))?;
     let recs = crate::vars::parse_variables_export(&v).map_err(|e| e.to_string())?;
 
     let mut st = crate::open_store!(&db.path);
@@ -350,9 +411,15 @@ fn cmd_import_variables(db: &Db, path: PathBuf, json: bool) -> Result<(), String
         }
     });
 
-    let imported = recs.iter().filter(|(id, _)| matches!(id, Id::Variable(_))).count();
+    let imported = recs
+        .iter()
+        .filter(|(id, _)| matches!(id, Id::Variable(_)))
+        .count();
     if json {
-        println!("{}", serde_json::to_string(&json!({"imported": imported})).map_err(|e| e.to_string())?);
+        println!(
+            "{}",
+            serde_json::to_string(&json!({"imported": imported})).map_err(|e| e.to_string())?
+        );
     } else {
         println!("imported {imported} variables");
     }
@@ -385,7 +452,10 @@ fn cmd_status<R: Readable>(
         });
         println!("{}", serde_json::to_string(&v).map_err(|e| e.to_string())?);
     } else {
-        println!("{} v{} — {count} nodes (last modified {})", m.name, m.version, m.last_modified);
+        println!(
+            "{} v{} — {count} nodes (last modified {})",
+            m.name, m.version, m.last_modified
+        );
     }
     Ok(())
 }
@@ -405,8 +475,14 @@ fn cmd_pages<R: Readable>(
     pages.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
 
     if json {
-        let arr: Vec<Value> = pages.iter().map(|(_, id, name)| json!({"id": id, "name": name})).collect();
-        println!("{}", serde_json::to_string(&arr).map_err(|e| e.to_string())?);
+        let arr: Vec<Value> = pages
+            .iter()
+            .map(|(_, id, name)| json!({"id": id, "name": name}))
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string(&arr).map_err(|e| e.to_string())?
+        );
     } else {
         for (_, id, name) in &pages {
             println!("{name}  {id}");
@@ -440,7 +516,12 @@ fn build_tree<R: Readable>(
             }
         }
     }
-    TreeNode { id: node.id.clone(), name: node.name.clone(), node_type: node.node_type.clone(), children: kids }
+    TreeNode {
+        id: node.id.clone(),
+        name: node.name.clone(),
+        node_type: node.node_type.clone(),
+        children: kids,
+    }
 }
 
 fn tree_to_json(t: &TreeNode) -> Value {
@@ -453,7 +534,13 @@ fn tree_to_json(t: &TreeNode) -> Value {
 }
 
 fn print_tree_human(t: &TreeNode, indent: usize) {
-    println!("{}{}  [{}]  {}", "  ".repeat(indent), t.name, t.node_type, t.id);
+    println!(
+        "{}{}  [{}]  {}",
+        "  ".repeat(indent),
+        t.name,
+        t.node_type,
+        t.id
+    );
     for c in &t.children {
         print_tree_human(c, indent + 1);
     }
@@ -472,14 +559,21 @@ fn cmd_tree<R: Readable>(
         None => {
             let mut docs = by_type.search(&"DOCUMENT".to_string());
             docs.sort();
-            docs.into_iter().next().ok_or_else(|| "no DOCUMENT node in the mirror".to_string())?
+            docs.into_iter()
+                .next()
+                .ok_or_else(|| "no DOCUMENT node in the mirror".to_string())?
         }
     };
-    let root = nodes.get(&start).ok_or_else(|| format!("no node {start} in the mirror"))?;
+    let root = nodes
+        .get(&start)
+        .ok_or_else(|| format!("no node {start} in the mirror"))?;
     let tree = build_tree(nodes, children, &root, depth);
 
     if json {
-        println!("{}", serde_json::to_string(&tree_to_json(&tree)).map_err(|e| e.to_string())?);
+        println!(
+            "{}",
+            serde_json::to_string(&tree_to_json(&tree)).map_err(|e| e.to_string())?
+        );
     } else {
         print_tree_human(&tree, 0);
     }
@@ -494,7 +588,9 @@ fn cmd_get<R: Readable>(
     _json: bool,
 ) -> Result<(), String> {
     let id = normalize_node_id(&id);
-    let node = nodes.get(&id).ok_or_else(|| format!("no node {id} in the mirror"))?;
+    let node = nodes
+        .get(&id)
+        .ok_or_else(|| format!("no node {id} in the mirror"))?;
     let mut value: Value = serde_json::from_str(&node.raw).map_err(|e| e.to_string())?;
 
     if with_children {
@@ -503,7 +599,9 @@ fn cmd_get<R: Readable>(
         let kids: Vec<Value> = edges
             .into_iter()
             .filter_map(|(_, child_id)| {
-                nodes.get(&child_id).map(|n| json!({"id": n.id, "name": n.name, "type": n.node_type}))
+                nodes
+                    .get(&child_id)
+                    .map(|n| json!({"id": n.id, "name": n.name, "type": n.node_type}))
             })
             .collect();
         if let Some(obj) = value.as_object_mut() {
@@ -512,7 +610,10 @@ fn cmd_get<R: Readable>(
     }
 
     // Get's output is always JSON, whether or not --json was passed.
-    println!("{}", serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?);
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?
+    );
     Ok(())
 }
 
@@ -540,7 +641,10 @@ fn cmd_find<R: Readable>(
             .iter()
             .map(|(id, name, page_id)| json!({"id": id, "name": name, "page_id": page_id}))
             .collect();
-        println!("{}", serde_json::to_string(&arr).map_err(|e| e.to_string())?);
+        println!(
+            "{}",
+            serde_json::to_string(&arr).map_err(|e| e.to_string())?
+        );
     } else {
         for (id, name, page_id) in &rows {
             println!("{id}  {name}  ({page_id})");
@@ -564,7 +668,10 @@ fn cmd_search<R: Readable>(
         .iter()
         .filter_map(|hit| {
             let node = nodes.get(&hit.val)?;
-            let snippet = node.text.as_ref().map(|t| t.chars().take(80).collect::<String>());
+            let snippet = node
+                .text
+                .as_ref()
+                .map(|t| t.chars().take(80).collect::<String>());
             Some(json!({
                 "id": node.id,
                 "score": hit.score,
@@ -577,7 +684,10 @@ fn cmd_search<R: Readable>(
         .collect();
 
     if json {
-        println!("{}", serde_json::to_string(&rows).map_err(|e| e.to_string())?);
+        println!(
+            "{}",
+            serde_json::to_string(&rows).map_err(|e| e.to_string())?
+        );
     } else {
         for row in &rows {
             println!(
@@ -621,13 +731,21 @@ fn resolve_component_ids<R: Readable>(
     if !set_ids.is_empty() {
         ids = components
             .iter()
-            .filter(|(_, c)| c.component_set_id.as_deref().is_some_and(|s| set_ids.iter().any(|sid| sid == s)))
+            .filter(|(_, c)| {
+                c.component_set_id
+                    .as_deref()
+                    .is_some_and(|s| set_ids.iter().any(|sid| sid == s))
+            })
             .map(|(id, _)| id)
             .collect();
         return ids;
     }
 
-    components.iter().filter(|(_, c)| c.name == target).map(|(id, _)| id).collect()
+    components
+        .iter()
+        .filter(|(_, c)| c.name == target)
+        .map(|(id, _)| id)
+        .collect()
 }
 
 fn cmd_instances<R: Readable>(
@@ -653,7 +771,10 @@ fn cmd_instances<R: Readable>(
         .collect();
 
     if json {
-        println!("{}", serde_json::to_string(&rows).map_err(|e| e.to_string())?);
+        println!(
+            "{}",
+            serde_json::to_string(&rows).map_err(|e| e.to_string())?
+        );
     } else {
         for row in &rows {
             println!(
@@ -711,7 +832,10 @@ fn cmd_components<R: Readable>(
     let out = json!({"sets": sets_json, "components": standalone});
 
     if json {
-        println!("{}", serde_json::to_string(&out).map_err(|e| e.to_string())?);
+        println!(
+            "{}",
+            serde_json::to_string(&out).map_err(|e| e.to_string())?
+        );
     } else {
         for s in &sets_json {
             println!(
@@ -721,7 +845,11 @@ fn cmd_components<R: Readable>(
             );
         }
         for c in &standalone {
-            println!("{}  {}", c["node_id"].as_str().unwrap_or_default(), c["name"].as_str().unwrap_or_default());
+            println!(
+                "{}  {}",
+                c["node_id"].as_str().unwrap_or_default(),
+                c["name"].as_str().unwrap_or_default()
+            );
         }
     }
     Ok(())
@@ -766,7 +894,10 @@ fn cmd_styles<R: Readable>(
         .collect();
 
     if json {
-        println!("{}", serde_json::to_string(&out).map_err(|e| e.to_string())?);
+        println!(
+            "{}",
+            serde_json::to_string(&out).map_err(|e| e.to_string())?
+        );
     } else {
         for row in &out {
             println!(
@@ -801,7 +932,10 @@ fn cmd_uses<R: Readable>(
         .collect();
 
     if json {
-        println!("{}", serde_json::to_string(&rows).map_err(|e| e.to_string())?);
+        println!(
+            "{}",
+            serde_json::to_string(&rows).map_err(|e| e.to_string())?
+        );
     } else {
         for row in &rows {
             println!(
@@ -824,8 +958,10 @@ fn cmd_vars<R: Readable>(
 ) -> Result<(), String> {
     let owned_nodes: Vec<NodeRec> = nodes.iter().map(|(_, n)| n).collect();
     let inferred = crate::vars::infer_from_nodes(owned_nodes.iter());
-    let mut inferred_by_id: HashMap<String, crate::vars::VarUsage> =
-        inferred.into_iter().map(|u| (u.variable_id.clone(), u)).collect();
+    let mut inferred_by_id: HashMap<String, crate::vars::VarUsage> = inferred
+        .into_iter()
+        .map(|u| (u.variable_id.clone(), u))
+        .collect();
 
     let mut all_ids: BTreeSet<String> = inferred_by_id.keys().cloned().collect();
     all_ids.extend(variables.iter().map(|(k, _)| k));
@@ -837,9 +973,7 @@ fn cmd_vars<R: Readable>(
         .iter()
         .map(|vid| {
             let usage = inferred_by_id.remove(vid);
-            let (sites, observed) = usage
-                .map(|u| (u.sites, u.observed))
-                .unwrap_or_default();
+            let (sites, observed) = usage.map(|u| (u.sites, u.observed)).unwrap_or_default();
 
             if let Some(var) = variables.get(vid) {
                 let collection = variable_collections.get(&var.collection_id);
@@ -875,7 +1009,10 @@ fn cmd_vars<R: Readable>(
         .collect();
 
     if json {
-        println!("{}", serde_json::to_string(&rows).map_err(|e| e.to_string())?);
+        println!(
+            "{}",
+            serde_json::to_string(&rows).map_err(|e| e.to_string())?
+        );
     } else {
         for row in &rows {
             println!(

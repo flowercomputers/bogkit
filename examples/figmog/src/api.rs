@@ -31,26 +31,35 @@ pub struct FileMetaResp {
 /// The two calls figmog makes. `file_meta` is Tier 3 (cheap, poll it);
 /// `file` is Tier 1 (expensive, call only on change).
 pub trait FigmaApi {
+    /// `GET /v1/files/:key/meta` — Tier 3, cheap enough to poll.
     fn file_meta(&self, key: &str) -> Result<FileMetaResp, ApiError>;
+    /// `GET /v1/files/:key` — Tier 1, the full document tree.
     fn file(&self, key: &str) -> Result<Value, ApiError>;
 }
 
 pub(crate) fn parse_meta_response(v: &Value) -> Result<FileMetaResp, ApiError> {
-    let file = v.get("file").ok_or_else(|| ApiError::Parse("no `file` object".into()))?;
+    let file = v
+        .get("file")
+        .ok_or_else(|| ApiError::Parse("no `file` object".into()))?;
     let get = |k: &str| {
         file.get(k)
             .and_then(Value::as_str)
             .map(str::to_string)
             .ok_or_else(|| ApiError::Parse(format!("meta missing `{k}`")))
     };
-    Ok(FileMetaResp { name: get("name")?, last_touched_at: get("last_touched_at")? })
+    Ok(FileMetaResp {
+        name: get("name")?,
+        last_touched_at: get("last_touched_at")?,
+    })
 }
 
 pub(crate) fn error_from_status(status: u16, retry_after: Option<&str>, msg: String) -> ApiError {
     match status {
         429 => ApiError::RateLimited {
             retry_after: Duration::from_secs(
-                retry_after.and_then(|s| s.trim().parse().ok()).unwrap_or(60),
+                retry_after
+                    .and_then(|s| s.trim().parse().ok())
+                    .unwrap_or(60),
             ),
         },
         401 | 403 => ApiError::Auth,
@@ -65,6 +74,8 @@ pub struct UreqApi {
 }
 
 impl UreqApi {
+    /// Client against the real `api.figma.com`, authenticated with a
+    /// personal access token (`FIGMA_TOKEN`).
     pub fn new(token: String) -> Self {
         Self::with_base_url(token, "https://api.figma.com".into())
     }
@@ -76,9 +87,7 @@ impl UreqApi {
     fn get_json(&self, path: &str) -> Result<Value, ApiError> {
         let url = format!("{}{}", self.base_url, path);
         match ureq::get(&url).set("X-Figma-Token", &self.token).call() {
-            Ok(resp) => resp
-                .into_json()
-                .map_err(|e| ApiError::Parse(e.to_string())),
+            Ok(resp) => resp.into_json().map_err(|e| ApiError::Parse(e.to_string())),
             Err(ureq::Error::Status(status, resp)) => {
                 let retry = resp.header("Retry-After").map(str::to_string);
                 let msg = resp.into_string().unwrap_or_default();
@@ -131,7 +140,10 @@ mod tests {
             error_from_status(429, None, String::new()),
             ApiError::RateLimited { retry_after } if retry_after == std::time::Duration::from_secs(60)
         ));
-        assert!(matches!(error_from_status(403, None, String::new()), ApiError::Auth));
+        assert!(matches!(
+            error_from_status(403, None, String::new()),
+            ApiError::Auth
+        ));
         assert!(matches!(
             error_from_status(500, None, "boom".into()),
             ApiError::Http { status: 500, .. }

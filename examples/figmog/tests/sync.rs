@@ -47,37 +47,66 @@ fn initial_pull_populates_every_sink() {
     let mut st = open_probed!(dir.path().join("db"), counter);
 
     let churn = pull(&mut st, &common::fixture_v1());
-    assert_eq!(churn, Churn { added: 18, changed: 0, removed: 0, unchanged: 0 });
+    assert_eq!(
+        churn,
+        Churn {
+            added: 18,
+            changed: 0,
+            removed: 0,
+            unchanged: 0
+        }
+    );
     // 18 records + 1 meta row, all fresh inserts -> 19 pushes
     assert_eq!(counter.get(), 19);
 
-    st.rtx(|((nodes, children, text, instances_of, styled_by, bound_to, by_type),
-             components, component_sets, styles, _vars, _colls, meta)| {
-        assert_eq!(nodes.iter().count(), 12);
-        assert_eq!(nodes.get(&"1:2".to_string()).unwrap().name, "Title");
+    st.rtx(
+        |(
+            (nodes, children, text, instances_of, styled_by, bound_to, by_type),
+            components,
+            component_sets,
+            styles,
+            _vars,
+            _colls,
+            meta,
+        )| {
+            assert_eq!(nodes.iter().count(), 12);
+            assert_eq!(nodes.get(&"1:2".to_string()).unwrap().name, "Title");
 
-        let mut kids = children.get(&"1:1".to_string());
-        kids.sort();
-        assert_eq!(kids, vec![(0, "1:2".to_string()), (1, "1:3".to_string())]);
+            let mut kids = children.get(&"1:1".to_string());
+            kids.sort();
+            assert_eq!(kids, vec![(0, "1:2".to_string()), (1, "1:3".to_string())]);
 
-        let hits = text.search("garden", 5);
-        assert!(hits.iter().any(|h| h.val == "1:2"), "bm25 finds the title text");
+            let hits = text.search("garden", 5);
+            assert!(
+                hits.iter().any(|h| h.val == "1:2"),
+                "bm25 finds the title text"
+            );
 
-        assert_eq!(instances_of.search(&"2:2".to_string()), vec!["1:3".to_string()]);
-        assert_eq!(styled_by.search(&"S:2".to_string()), vec!["1:2".to_string()]);
-        assert_eq!(bound_to.search(&"VariableID:100".to_string()), vec!["1:1".to_string()]);
+            assert_eq!(
+                instances_of.search(&"2:2".to_string()),
+                vec!["1:3".to_string()]
+            );
+            assert_eq!(
+                styled_by.search(&"S:2".to_string()),
+                vec!["1:2".to_string()]
+            );
+            assert_eq!(
+                bound_to.search(&"VariableID:100".to_string()),
+                vec!["1:1".to_string()]
+            );
 
-        let mut texts = by_type.search(&"TEXT".to_string());
-        texts.sort();
-        assert_eq!(texts, vec!["1:2".to_string()]);
+            let mut texts = by_type.search(&"TEXT".to_string());
+            texts.sort();
+            assert_eq!(texts, vec!["1:2".to_string()]);
 
-        assert_eq!(components.iter().count(), 3);
-        assert_eq!(component_sets.iter().count(), 1);
-        assert_eq!(styles.iter().count(), 2);
-        let m = meta.get(&0).unwrap();
-        assert_eq!(m.version, "100");
-        assert_eq!(m.synced_at_unix_ms, 1_000);
-    });
+            assert_eq!(components.iter().count(), 3);
+            assert_eq!(component_sets.iter().count(), 1);
+            assert_eq!(styles.iter().count(), 2);
+            let m = meta.get(&0).unwrap();
+            assert_eq!(m.version, "100");
+            assert_eq!(m.synced_at_unix_ms, 1_000);
+        },
+    );
 }
 
 #[test]
@@ -89,8 +118,20 @@ fn identical_repull_causes_zero_churn() {
     pull(&mut st, &common::fixture_v1());
     counter.set(0);
     let churn = pull(&mut st, &common::fixture_v1()); // same synced_at too
-    assert_eq!(churn, Churn { added: 0, changed: 0, removed: 0, unchanged: 18 });
-    assert_eq!(counter.get(), 0, "no delta may enter the graph on an identical re-pull");
+    assert_eq!(
+        churn,
+        Churn {
+            added: 0,
+            changed: 0,
+            removed: 0,
+            unchanged: 18
+        }
+    );
+    assert_eq!(
+        counter.get(),
+        0,
+        "no delta may enter the graph on an identical re-pull"
+    );
 }
 
 #[test]
@@ -126,37 +167,66 @@ fn v1_to_v2_minimal_churn_and_index_consistency() {
     let mut st = open_probed!(dir.path().join("db"), counter);
     pull(&mut st, &common::fixture_v1());
 
-    let prior = st.rtx(|((nodes, ..), components, component_sets, styles, _, _, _)| {
-        figmog::store::collect_sweepable(&nodes, &components, &component_sets, &styles)
-    });
+    let prior = st.rtx(
+        |((nodes, ..), components, component_sets, styles, _, _, _)| {
+            figmog::store::collect_sweepable(&nodes, &components, &component_sets, &styles)
+        },
+    );
     counter.set(0);
     let churn = pull_with_sweep(&mut st, &common::fixture_v2(), prior, 1_000);
 
     // v2 has 18 records: 12 nodes (12 - 1:9 + 1:4) + 3 components + 1 set
     // + 2 styles. changed: 1:2 (rename), 1:3 (variant repoint). added: 1:4.
     // removed: 1:9. unchanged: 18 - 1 - 2 = 15 (meta row is not counted).
-    assert_eq!(churn, Churn { added: 1, changed: 2, removed: 1, unchanged: 15 });
+    assert_eq!(
+        churn,
+        Churn {
+            added: 1,
+            changed: 2,
+            removed: 1,
+            unchanged: 15
+        }
+    );
     // pushes: changed 2×2 + added 1 + removed 1 + meta retract/insert 2 = 8
     assert_eq!(counter.get(), 8);
 
-    st.rtx(|((nodes, children, text, instances_of, _styled, _bound, by_type),
-             _c, _cs, _s, _v, _vc, meta)| {
-        // rename re-indexed in bm25
-        assert!(text.search("Headline", 5).iter().any(|h| h.val == "1:2"));
-        assert!(!text.search("Title", 5).iter().any(|h| h.val == "1:2"));
-        // deleted node gone everywhere
-        assert!(nodes.get(&"1:9".to_string()).is_none());
-        assert!(!by_type.search(&"RECTANGLE".to_string()).contains(&"1:9".to_string()));
-        let kids = children.get(&"0:1".to_string());
-        assert!(!kids.iter().any(|(_, id)| id == "1:9"));
-        // instance repoint moved the inverted index posting
-        assert_eq!(instances_of.search(&"2:2".to_string()), Vec::<String>::new());
-        assert_eq!(instances_of.search(&"2:3".to_string()), vec!["1:3".to_string()]);
-        // new node present
-        assert_eq!(nodes.get(&"1:4".to_string()).unwrap().name, "Subtitle");
-        assert!(text.search("Planting", 5).iter().any(|h| h.val == "1:4"));
-        assert_eq!(meta.get(&0).unwrap().version, "101");
-    });
+    st.rtx(
+        |(
+            (nodes, children, text, instances_of, _styled, _bound, by_type),
+            _c,
+            _cs,
+            _s,
+            _v,
+            _vc,
+            meta,
+        )| {
+            // rename re-indexed in bm25
+            assert!(text.search("Headline", 5).iter().any(|h| h.val == "1:2"));
+            assert!(!text.search("Title", 5).iter().any(|h| h.val == "1:2"));
+            // deleted node gone everywhere
+            assert!(nodes.get(&"1:9".to_string()).is_none());
+            assert!(
+                !by_type
+                    .search(&"RECTANGLE".to_string())
+                    .contains(&"1:9".to_string())
+            );
+            let kids = children.get(&"0:1".to_string());
+            assert!(!kids.iter().any(|(_, id)| id == "1:9"));
+            // instance repoint moved the inverted index posting
+            assert_eq!(
+                instances_of.search(&"2:2".to_string()),
+                Vec::<String>::new()
+            );
+            assert_eq!(
+                instances_of.search(&"2:3".to_string()),
+                vec!["1:3".to_string()]
+            );
+            // new node present
+            assert_eq!(nodes.get(&"1:4".to_string()).unwrap().name, "Subtitle");
+            assert!(text.search("Planting", 5).iter().any(|h| h.val == "1:4"));
+            assert_eq!(meta.get(&0).unwrap().version, "101");
+        },
+    );
 }
 
 #[test]
@@ -189,9 +259,11 @@ fn sweep_never_touches_variables() {
             }),
         );
     });
-    let prior = st.rtx(|((nodes, ..), components, component_sets, styles, _, _, _)| {
-        figmog::store::collect_sweepable(&nodes, &components, &component_sets, &styles)
-    });
+    let prior = st.rtx(
+        |((nodes, ..), components, component_sets, styles, _, _, _)| {
+            figmog::store::collect_sweepable(&nodes, &components, &component_sets, &styles)
+        },
+    );
     pull_with_sweep(&mut st, &common::fixture_v2(), prior, 2_000);
     st.rtx(|(_, _, _, _, vars, colls, _)| {
         assert!(vars.get(&"VariableID:100".to_string()).is_some());
@@ -232,7 +304,10 @@ fn panicking_transaction_rolls_back_entirely() {
     }));
     assert!(result.is_err());
     st.rtx(|((nodes, ..), _, _, _, _, _, meta)| {
-        assert!(nodes.get(&"9:9".to_string()).is_none(), "aborted upsert must not persist");
+        assert!(
+            nodes.get(&"9:9".to_string()).is_none(),
+            "aborted upsert must not persist"
+        );
         assert_eq!(nodes.iter().count(), 12);
         assert_eq!(meta.get(&0).unwrap().version, "100");
     });

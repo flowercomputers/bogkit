@@ -15,6 +15,7 @@ use crate::model::{FileMeta, Id, NodeRec, Rec};
 
 // ---- pipeline branch functions (pure; fold requires determinism) ----
 
+/// Feeds the `nodes` table: keep only `Rec::Node` records, keyed by node id.
 pub fn node_only(d: &Keyed<Id, Rec>) -> Option<Keyed<String, NodeRec>> {
     match &d.val {
         Rec::Node(n) => Some(Keyed::new(n.id.clone(), n.clone())),
@@ -22,11 +23,15 @@ pub fn node_only(d: &Keyed<Id, Rec>) -> Option<Keyed<String, NodeRec>> {
     }
 }
 
+/// Feeds the `children` multimap: parent id -> (child_index, child id).
+/// The document root has no `parent_id` and so contributes no edge.
 pub fn child_edge(d: &Keyed<String, NodeRec>) -> Option<Keyed<String, (u32, String)>> {
     let parent = d.val.parent_id.clone()?;
     Some(Keyed::new(parent, (d.val.child_index, d.val.id.clone())))
 }
 
+/// Feeds the `text` BM25 sink: node name plus (if TEXT) its `characters`,
+/// keyed by node id. Nodes with no searchable text drop out.
 pub fn text_doc(d: &Keyed<String, NodeRec>) -> Option<Keyed<String, String>> {
     let mut s = d.val.name.clone();
     if let Some(t) = &d.val.text {
@@ -37,6 +42,8 @@ pub fn text_doc(d: &Keyed<String, NodeRec>) -> Option<Keyed<String, String>> {
     (!s.is_empty()).then(|| Keyed::new(d.val.id.clone(), s))
 }
 
+/// Feeds the `instances_of` inverted index: node id -> the component id it
+/// instances (INSTANCE nodes only).
 pub fn instance_edge(d: &Keyed<String, NodeRec>) -> Option<Keyed<String, String>> {
     d.val
         .component_id
@@ -44,6 +51,8 @@ pub fn instance_edge(d: &Keyed<String, NodeRec>) -> Option<Keyed<String, String>
         .map(|c| Keyed::new(d.val.id.clone(), c))
 }
 
+/// Feeds the `styled_by` inverted index: node id -> each style id it
+/// references (fill, text, effect, grid).
 pub fn style_edges(d: &Keyed<String, NodeRec>) -> Vec<Keyed<String, String>> {
     d.val
         .style_refs
@@ -52,6 +61,9 @@ pub fn style_edges(d: &Keyed<String, NodeRec>) -> Vec<Keyed<String, String>> {
         .collect()
 }
 
+/// Feeds the `bound_to` inverted index: node id -> each variable id bound
+/// somewhere on it (one edge per distinct variable, even if bound at
+/// multiple property paths).
 pub fn variable_edges(d: &Keyed<String, NodeRec>) -> Vec<Keyed<String, String>> {
     let mut edges: Vec<_> = d
         .val
@@ -63,10 +75,15 @@ pub fn variable_edges(d: &Keyed<String, NodeRec>) -> Vec<Keyed<String, String>> 
     edges
 }
 
+/// Feeds the `by_type` inverted index: node id -> its Figma node type.
 pub fn type_edge(d: &Keyed<String, NodeRec>) -> Keyed<String, String> {
     Keyed::new(d.val.id.clone(), d.val.node_type.clone())
 }
 
+/// Defines a `fn(&Keyed<Id, Rec>) -> Option<Keyed<String, $rec>>` that keeps
+/// only the matching `Id`/`Rec` variant pair, keyed by its own id — one such
+/// branch per non-node table (`components`, `component_sets`, `styles`,
+/// `variables`, `variable_collections`).
 macro_rules! rec_branch {
     ($name:ident, $idvar:ident, $recvar:ident, $rec:ty) => {
         pub fn $name(d: &Keyed<Id, Rec>) -> Option<Keyed<String, $rec>> {
@@ -77,13 +94,30 @@ macro_rules! rec_branch {
         }
     };
 }
-rec_branch!(component_only, Component, Component, crate::model::ComponentRec);
-rec_branch!(component_set_only, ComponentSet, ComponentSet, crate::model::ComponentSetRec);
+rec_branch!(
+    component_only,
+    Component,
+    Component,
+    crate::model::ComponentRec
+);
+rec_branch!(
+    component_set_only,
+    ComponentSet,
+    ComponentSet,
+    crate::model::ComponentSetRec
+);
 rec_branch!(style_only, Style, Style, crate::model::StyleRec);
 rec_branch!(variable_only, Variable, Variable, crate::model::VariableRec);
-rec_branch!(collection_only, VariableCollection, VariableCollection, crate::model::VariableCollectionRec);
+rec_branch!(
+    collection_only,
+    VariableCollection,
+    VariableCollection,
+    crate::model::VariableCollectionRec
+);
 
-// key is u8(0), not (): () postcard-encodes to zero bytes and the store forbids empty keys
+/// Feeds the `meta` table: the single [`FileMeta`] row, keyed by `0u8`
+/// (not `()`: `()` postcard-encodes to zero bytes and the store forbids
+/// empty keys).
 pub fn meta_only(d: &Keyed<Id, Rec>) -> Option<Keyed<u8, FileMeta>> {
     match &d.val {
         Rec::Meta(m) => Some(Keyed::new(0u8, m.clone())),
@@ -101,19 +135,46 @@ macro_rules! figmog_pipeline {
                 $crate::store::node_only,
                 (
                     terminal::Table::new("nodes"),
-                    FilterMap::new($crate::store::child_edge, terminal::Multimap::new("children")),
+                    FilterMap::new(
+                        $crate::store::child_edge,
+                        terminal::Multimap::new("children"),
+                    ),
                     FilterMap::new($crate::store::text_doc, terminal::search::Bm25::new("text")),
-                    FilterMap::new($crate::store::instance_edge, terminal::InvertedIndex::new("instances_of")),
-                    FlatMap::new($crate::store::style_edges, terminal::InvertedIndex::new("styled_by")),
-                    FlatMap::new($crate::store::variable_edges, terminal::InvertedIndex::new("bound_to")),
-                    Map::new($crate::store::type_edge, terminal::InvertedIndex::new("by_type")),
+                    FilterMap::new(
+                        $crate::store::instance_edge,
+                        terminal::InvertedIndex::new("instances_of"),
+                    ),
+                    FlatMap::new(
+                        $crate::store::style_edges,
+                        terminal::InvertedIndex::new("styled_by"),
+                    ),
+                    FlatMap::new(
+                        $crate::store::variable_edges,
+                        terminal::InvertedIndex::new("bound_to"),
+                    ),
+                    Map::new(
+                        $crate::store::type_edge,
+                        terminal::InvertedIndex::new("by_type"),
+                    ),
                 ),
             ),
-            FilterMap::new($crate::store::component_only, terminal::Table::new("components")),
-            FilterMap::new($crate::store::component_set_only, terminal::Table::new("component_sets")),
+            FilterMap::new(
+                $crate::store::component_only,
+                terminal::Table::new("components"),
+            ),
+            FilterMap::new(
+                $crate::store::component_set_only,
+                terminal::Table::new("component_sets"),
+            ),
             FilterMap::new($crate::store::style_only, terminal::Table::new("styles")),
-            FilterMap::new($crate::store::variable_only, terminal::Table::new("variables")),
-            FilterMap::new($crate::store::collection_only, terminal::Table::new("variable_collections")),
+            FilterMap::new(
+                $crate::store::variable_only,
+                terminal::Table::new("variables"),
+            ),
+            FilterMap::new(
+                $crate::store::collection_only,
+                terminal::Table::new("variable_collections"),
+            ),
             FilterMap::new($crate::store::meta_only, terminal::Table::new("meta")),
         )
     }};
@@ -188,7 +249,12 @@ pub fn sync<P: Push<Keyed<Id, Rec>>>(
 pub fn collect_sweepable<R: fold::stream::Readable>(
     nodes: &fold::pipeline::terminal::TableReader<'_, R, String, NodeRec>,
     components: &fold::pipeline::terminal::TableReader<'_, R, String, crate::model::ComponentRec>,
-    component_sets: &fold::pipeline::terminal::TableReader<'_, R, String, crate::model::ComponentSetRec>,
+    component_sets: &fold::pipeline::terminal::TableReader<
+        '_,
+        R,
+        String,
+        crate::model::ComponentSetRec,
+    >,
     styles: &fold::pipeline::terminal::TableReader<'_, R, String, crate::model::StyleRec>,
 ) -> BTreeSet<Id> {
     let mut out = BTreeSet::new();

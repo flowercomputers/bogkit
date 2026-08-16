@@ -24,6 +24,7 @@ pub struct Flattened {
     pub file: FileInfo,
 }
 
+/// Errors from [`flatten_file`].
 #[derive(Debug, thiserror::Error)]
 pub enum FlattenError {
     #[error("missing field: {0}")]
@@ -35,9 +36,12 @@ pub fn flatten_file(resp: &Value) -> Result<Flattened, FlattenError> {
     let file = FileInfo {
         name: str_field(resp, "name").ok_or(FlattenError::Missing("name"))?,
         version: str_field(resp, "version").ok_or(FlattenError::Missing("version"))?,
-        last_modified: str_field(resp, "lastModified").ok_or(FlattenError::Missing("lastModified"))?,
+        last_modified: str_field(resp, "lastModified")
+            .ok_or(FlattenError::Missing("lastModified"))?,
     };
-    let document = resp.get("document").ok_or(FlattenError::Missing("document"))?;
+    let document = resp
+        .get("document")
+        .ok_or(FlattenError::Missing("document"))?;
 
     let mut recs = Vec::new();
     walk(document, None, 0, None, &mut recs);
@@ -132,7 +136,8 @@ fn walk(
         text: str_field(node, "characters"),
         component_id: str_field(node, "componentId"),
         component_properties: sorted_map(node.get("componentProperties"), |v| {
-            v.get("value").map(|val| serde_json::to_string(val).expect("Value serializes"))
+            v.get("value")
+                .map(|val| serde_json::to_string(val).expect("Value serializes"))
         }),
         property_definitions: node
             .get("componentPropertyDefinitions")

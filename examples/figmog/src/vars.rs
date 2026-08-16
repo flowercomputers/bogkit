@@ -1,5 +1,5 @@
 //! Variables: authoritative import parsing (this module also hosts the
-//! free-plan inference in `infer`).
+//! free-plan inference in [`infer_from_nodes`]).
 
 use std::collections::BTreeMap;
 
@@ -8,6 +8,7 @@ use serde_json::Value;
 
 use crate::model::{Id, NodeRec, Rec, VariableCollectionRec, VariableRec};
 
+/// Errors from [`parse_variables_export`].
 #[derive(Debug, thiserror::Error)]
 pub enum ImportError {
     #[error("unrecognized variables export shape: {0}")]
@@ -28,7 +29,12 @@ pub fn parse_variables_export(v: &Value) -> Result<Vec<(Id, Rec)>, ImportError> 
         .and_then(Value::as_object)
         .ok_or_else(|| ImportError::Shape("missing `variableCollections` object".into()))?;
 
-    let s = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).unwrap_or_default().to_string();
+    let s = |v: &Value, k: &str| {
+        v.get(k)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string()
+    };
 
     let mut recs = Vec::new();
     let sorted: BTreeMap<_, _> = collections.iter().collect();
@@ -57,7 +63,10 @@ pub fn parse_variables_export(v: &Value) -> Result<Vec<(Id, Rec)>, ImportError> 
             .map(|m| {
                 m.iter()
                     .map(|(mode, val)| {
-                        (mode.clone(), serde_json::to_string(val).expect("Value serializes"))
+                        (
+                            mode.clone(),
+                            serde_json::to_string(val).expect("Value serializes"),
+                        )
                     })
                     .collect()
             })
@@ -66,7 +75,12 @@ pub fn parse_variables_export(v: &Value) -> Result<Vec<(Id, Rec)>, ImportError> 
         let scopes: Vec<String> = var
             .get("scopes")
             .and_then(Value::as_array)
-            .map(|xs| xs.iter().filter_map(Value::as_str).map(str::to_string).collect())
+            .map(|xs| {
+                xs.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
             .unwrap_or_default();
         recs.push((
             Id::Variable(id.clone()),
@@ -111,7 +125,9 @@ pub fn infer_from_nodes<'a>(nodes: impl Iterator<Item = &'a NodeRec>) -> Vec<Var
             let entry = by_var.entry(var_id.clone()).or_default();
             entry.0.push((node.id.clone(), pointer.clone()));
             if let Some(v) = raw.pointer(pointer) {
-                entry.1.push(serde_json::to_string(v).expect("Value serializes"));
+                entry
+                    .1
+                    .push(serde_json::to_string(v).expect("Value serializes"));
             }
         }
     }
@@ -121,7 +137,11 @@ pub fn infer_from_nodes<'a>(nodes: impl Iterator<Item = &'a NodeRec>) -> Vec<Var
             sites.sort();
             observed.sort();
             observed.dedup();
-            VarUsage { variable_id, sites, observed }
+            VarUsage {
+                variable_id,
+                sites,
+                observed,
+            }
         })
         .collect()
 }

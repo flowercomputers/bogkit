@@ -30,9 +30,14 @@ impl Watcher {
     /// `last_seen`: the stored `FileMeta.last_modified`, if any. A spurious
     /// mismatch only costs one pull that produces zero churn.
     pub fn new(last_seen: Option<String>) -> Self {
-        Watcher { last_seen, backoff: BACKOFF_START }
+        Watcher {
+            last_seen,
+            backoff: BACKOFF_START,
+        }
     }
 
+    /// Poll `file_meta` once and classify the result. Never fetches the
+    /// file itself — that's the caller's job on [`Tick::Changed`].
     pub fn tick(&mut self, api: &dyn FigmaApi, key: &str) -> Tick {
         match api.file_meta(key) {
             Ok(meta) => {
@@ -41,7 +46,9 @@ impl Watcher {
                     Tick::Unchanged
                 } else {
                     self.last_seen = Some(meta.last_touched_at.clone());
-                    Tick::Changed { last_touched_at: meta.last_touched_at }
+                    Tick::Changed {
+                        last_touched_at: meta.last_touched_at,
+                    }
                 }
             }
             Err(ApiError::RateLimited { retry_after }) => Tick::Wait { after: retry_after },
@@ -71,7 +78,10 @@ mod tests {
     }
     impl FigmaApi for Script {
         fn file_meta(&self, _key: &str) -> Result<FileMetaResp, ApiError> {
-            self.0.borrow_mut().pop().expect("unexpected extra file_meta call")
+            self.0
+                .borrow_mut()
+                .pop()
+                .expect("unexpected extra file_meta call")
         }
         fn file(&self, _key: &str) -> Result<serde_json::Value, ApiError> {
             panic!("watcher must never fetch the file itself");
@@ -79,7 +89,10 @@ mod tests {
     }
 
     fn meta(t: &str) -> Result<FileMetaResp, ApiError> {
-        Ok(FileMetaResp { name: "F".into(), last_touched_at: t.into() })
+        Ok(FileMetaResp {
+            name: "F".into(),
+            last_touched_at: t.into(),
+        })
     }
 
     #[test]
@@ -104,11 +117,15 @@ mod tests {
     #[test]
     fn rate_limit_uses_retry_after() {
         let api = Script::new(vec![
-            Err(ApiError::RateLimited { retry_after: Duration::from_secs(30) }),
+            Err(ApiError::RateLimited {
+                retry_after: Duration::from_secs(30),
+            }),
             meta("t1"),
         ]);
         let mut w = Watcher::new(Some("t1".into()));
-        assert!(matches!(w.tick(&api, "k"), Tick::Wait { after } if after == Duration::from_secs(30)));
+        assert!(
+            matches!(w.tick(&api, "k"), Tick::Wait { after } if after == Duration::from_secs(30))
+        );
         assert!(matches!(w.tick(&api, "k"), Tick::Unchanged));
     }
 
@@ -122,17 +139,26 @@ mod tests {
             Err(ApiError::Network("down".into())),
         ]);
         let mut w = Watcher::new(Some("t1".into()));
-        assert!(matches!(w.tick(&api, "k"), Tick::Wait { after } if after == Duration::from_secs(5)));
-        assert!(matches!(w.tick(&api, "k"), Tick::Wait { after } if after == Duration::from_secs(10)));
-        assert!(matches!(w.tick(&api, "k"), Tick::Wait { after } if after == Duration::from_secs(20)));
+        assert!(
+            matches!(w.tick(&api, "k"), Tick::Wait { after } if after == Duration::from_secs(5))
+        );
+        assert!(
+            matches!(w.tick(&api, "k"), Tick::Wait { after } if after == Duration::from_secs(10))
+        );
+        assert!(
+            matches!(w.tick(&api, "k"), Tick::Wait { after } if after == Duration::from_secs(20))
+        );
         assert!(matches!(w.tick(&api, "k"), Tick::Unchanged));
-        assert!(matches!(w.tick(&api, "k"), Tick::Wait { after } if after == Duration::from_secs(5)));
+        assert!(
+            matches!(w.tick(&api, "k"), Tick::Wait { after } if after == Duration::from_secs(5))
+        );
     }
 
     #[test]
     fn backoff_caps_at_five_minutes() {
-        let mut responses: Vec<Result<FileMetaResp, ApiError>> =
-            (0..10).map(|_| Err(ApiError::Network("down".into()))).collect();
+        let mut responses: Vec<Result<FileMetaResp, ApiError>> = (0..10)
+            .map(|_| Err(ApiError::Network("down".into())))
+            .collect();
         responses.push(meta("t1"));
         let api = Script::new(responses);
         let mut w = Watcher::new(Some("t1".into()));

@@ -9,11 +9,21 @@ use assert_cmd::Command;
 fn fixture_db() -> (tempfile::TempDir, String) {
     let dir = tempfile::tempdir().unwrap();
     let response = dir.path().join("resp.json");
-    std::fs::write(&response, serde_json::to_string(&common::fixture_v1()).unwrap()).unwrap();
+    std::fs::write(
+        &response,
+        serde_json::to_string(&common::fixture_v1()).unwrap(),
+    )
+    .unwrap();
     let db = dir.path().join("db").display().to_string();
     Command::cargo_bin("figmog")
         .unwrap()
-        .args(["pull", "--from-file", response.to_str().unwrap(), "--db", &db])
+        .args([
+            "pull",
+            "--from-file",
+            response.to_str().unwrap(),
+            "--db",
+            &db,
+        ])
         .assert()
         .success();
     (dir, db)
@@ -23,18 +33,40 @@ fn fixture_db() -> (tempfile::TempDir, String) {
 fn pull_from_file_reports_churn_and_is_idempotent() {
     let dir = tempfile::tempdir().unwrap();
     let response = dir.path().join("resp.json");
-    std::fs::write(&response, serde_json::to_string(&common::fixture_v1()).unwrap()).unwrap();
+    std::fs::write(
+        &response,
+        serde_json::to_string(&common::fixture_v1()).unwrap(),
+    )
+    .unwrap();
     let db = dir.path().join("db").display().to_string();
 
-    let out = Command::cargo_bin("figmog").unwrap()
-        .args(["pull", "--from-file", response.to_str().unwrap(), "--db", &db, "--json"])
-        .assert().success();
+    let out = Command::cargo_bin("figmog")
+        .unwrap()
+        .args([
+            "pull",
+            "--from-file",
+            response.to_str().unwrap(),
+            "--db",
+            &db,
+            "--json",
+        ])
+        .assert()
+        .success();
     let v: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
     assert_eq!(v["added"], 18);
 
-    let out = Command::cargo_bin("figmog").unwrap()
-        .args(["pull", "--from-file", response.to_str().unwrap(), "--db", &db, "--json"])
-        .assert().success();
+    let out = Command::cargo_bin("figmog")
+        .unwrap()
+        .args([
+            "pull",
+            "--from-file",
+            response.to_str().unwrap(),
+            "--db",
+            &db,
+            "--json",
+        ])
+        .assert()
+        .success();
     let v: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
     assert_eq!(v["unchanged"], 18);
     assert_eq!(v["added"], 0);
@@ -44,9 +76,12 @@ fn pull_from_file_reports_churn_and_is_idempotent() {
 fn status_pages_tree_get_find() {
     let (_dir, db) = fixture_db();
     let run = |args: &[&str]| {
-        let out = Command::cargo_bin("figmog").unwrap()
-            .args(args).args(["--db", &db, "--json"])
-            .assert().success();
+        let out = Command::cargo_bin("figmog")
+            .unwrap()
+            .args(args)
+            .args(["--db", &db, "--json"])
+            .assert()
+            .success();
         serde_json::from_slice::<serde_json::Value>(&out.get_output().stdout).unwrap()
     };
 
@@ -81,7 +116,8 @@ fn status_pages_tree_get_find() {
 #[test]
 fn get_unknown_node_fails_cleanly() {
     let (_dir, db) = fixture_db();
-    Command::cargo_bin("figmog").unwrap()
+    Command::cargo_bin("figmog")
+        .unwrap()
         .args(["get", "99:99", "--db", &db])
         .assert()
         .failure()
@@ -92,9 +128,12 @@ fn get_unknown_node_fails_cleanly() {
 fn search_instances_components_styles_uses_vars() {
     let (_dir, db) = fixture_db();
     let run = |args: &[&str]| {
-        let out = Command::cargo_bin("figmog").unwrap()
-            .args(args).args(["--db", &db, "--json"])
-            .assert().success();
+        let out = Command::cargo_bin("figmog")
+            .unwrap()
+            .args(args)
+            .args(["--db", &db, "--json"])
+            .assert()
+            .success();
         serde_json::from_slice::<serde_json::Value>(&out.get_output().stdout).unwrap()
     };
 
@@ -114,7 +153,10 @@ fn search_instances_components_styles_uses_vars() {
     assert_eq!(sets[0]["name"], "Button");
     assert_eq!(sets[0]["variants"].as_array().unwrap().len(), 2);
     let axes = &sets[0]["property_definitions"];
-    assert_eq!(axes["Size"]["variantOptions"], serde_json::json!(["Large", "Small"]));
+    assert_eq!(
+        axes["Size"]["variantOptions"],
+        serde_json::json!(["Large", "Small"])
+    );
     assert_eq!(comps["components"].as_array().unwrap().len(), 1); // standalone only
     assert_eq!(comps["components"][0]["name"], "IconStar");
 
@@ -144,16 +186,24 @@ fn import_variables_upgrades_vars_to_authoritative() {
     let export = dir.path().join("vars.json");
     std::fs::write(&export, include_str!("fixtures/variables-export.json")).unwrap();
 
-    Command::cargo_bin("figmog").unwrap()
+    Command::cargo_bin("figmog")
+        .unwrap()
         .args(["import-variables", export.to_str().unwrap(), "--db", &db])
-        .assert().success();
+        .assert()
+        .success();
 
-    let out = Command::cargo_bin("figmog").unwrap()
+    let out = Command::cargo_bin("figmog")
+        .unwrap()
         .args(["vars", "--db", &db, "--json"])
-        .assert().success();
+        .assert()
+        .success();
     let vars: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
-    let v100 = vars.as_array().unwrap().iter()
-        .find(|v| v["variable_id"] == "VariableID:100").unwrap();
+    let v100 = vars
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["variable_id"] == "VariableID:100")
+        .unwrap();
     assert_eq!(v100["source"], "imported");
     assert_eq!(v100["name"], "color/surface/primary");
     assert_eq!(v100["collection"], "colors");

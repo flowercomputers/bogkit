@@ -29,11 +29,16 @@ fn walks_the_whole_tree() {
     let node_ids: Vec<&str> = out
         .recs
         .iter()
-        .filter_map(|(k, _)| match k { Id::Node(n) => Some(n.as_str()), _ => None })
+        .filter_map(|(k, _)| match k {
+            Id::Node(n) => Some(n.as_str()),
+            _ => None,
+        })
         .collect();
     assert_eq!(
         node_ids,
-        ["0:0", "0:1", "1:1", "1:2", "1:3", "1:9", "0:2", "2:1", "2:2", "2:3", "3:1", "0:3"],
+        [
+            "0:0", "0:1", "1:1", "1:2", "1:3", "1:9", "0:2", "2:1", "2:2", "2:3", "3:1", "0:3"
+        ],
         "depth-first order, all 12 nodes"
     );
     assert_eq!(out.file.name, "Fixture");
@@ -124,7 +129,10 @@ fn property_definitions_on_set_and_component() {
     let set = node(&out.recs, "2:1");
     let defs: serde_json::Value =
         serde_json::from_str(set.property_definitions.as_deref().unwrap()).unwrap();
-    assert_eq!(defs["Size"]["variantOptions"], serde_json::json!(["Large", "Small"]));
+    assert_eq!(
+        defs["Size"]["variantOptions"],
+        serde_json::json!(["Large", "Small"])
+    );
     // standalone component without the field -> None
     assert_eq!(node(&out.recs, "3:1").property_definitions, None);
 }
@@ -132,8 +140,14 @@ fn property_definitions_on_set_and_component() {
 #[test]
 fn style_refs_extracted_sorted() {
     let out = flatten_file(&common::fixture_v1()).unwrap();
-    assert_eq!(node(&out.recs, "1:1").style_refs, vec![("fill".to_string(), "S:1".to_string())]);
-    assert_eq!(node(&out.recs, "1:2").style_refs, vec![("text".to_string(), "S:2".to_string())]);
+    assert_eq!(
+        node(&out.recs, "1:1").style_refs,
+        vec![("fill".to_string(), "S:1".to_string())]
+    );
+    assert_eq!(
+        node(&out.recs, "1:2").style_refs,
+        vec![("text".to_string(), "S:2".to_string())]
+    );
 }
 
 #[test]
@@ -158,13 +172,22 @@ fn envelope_maps_flattened() {
     assert_eq!(c.component_set_id.as_deref(), Some("2:1"));
     assert!(!c.remote);
 
-    let styles: Vec<figmog::model::StyleRec> = out.recs.iter()
-        .filter_map(|(_, r)| match r { Rec::Style(s) => Some(s.clone()), _ => None })
+    let styles: Vec<figmog::model::StyleRec> = out
+        .recs
+        .iter()
+        .filter_map(|(_, r)| match r {
+            Rec::Style(s) => Some(s.clone()),
+            _ => None,
+        })
         .collect();
     assert_eq!(styles.len(), 2);
     assert_eq!(styles[0].style_id, "S:1"); // sorted by style id
     assert_eq!(styles[0].style_type, "FILL");
 
-    let sets = out.recs.iter().filter(|(k, _)| matches!(k, Id::ComponentSet(_))).count();
+    let sets = out
+        .recs
+        .iter()
+        .filter(|(k, _)| matches!(k, Id::ComponentSet(_)))
+        .count();
     assert_eq!(sets, 1);
 }
