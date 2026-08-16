@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 //! figmog — a fold-backed local mirror of one Figma file.
 //!
 //! A sync engine pulls the file when it changes (change detection on the
