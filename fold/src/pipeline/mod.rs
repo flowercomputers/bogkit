@@ -18,6 +18,8 @@
 //! - [`Filter`] — drop data failing a predicate
 //! - [`FilterMap`] — map and filter in one step
 //! - [`FlatMap`] — expand each datum into zero or more outputs
+//! - [`Meter`] — count deltas and time the downstream node, into a
+//!   process-local registry
 //!
 //! Stateful operators persist per-element state in their own keyspace,
 //! buffering within a transaction and emitting downstream deltas at commit:
