@@ -52,6 +52,18 @@
   }
   .editbox button.danger { color: #8c3b2e; margin-left: auto; }
   .lane { position: sticky; top: 48px; }
+  #pullrow { display: flex; gap: 6px; margin: -4px 0 10px; min-height: 22px; }
+  #pullrow button, .hit .pull {
+    font-family: ui-monospace, Menlo, monospace; font-size: 10px; letter-spacing: .04em; cursor: pointer;
+    border: 1px solid var(--line); background: var(--card); color: var(--faint); border-radius: 999px; padding: 2px 9px;
+  }
+  #pullrow button:hover, .hit .pull:hover { color: var(--ink); border-color: var(--ink); }
+  .hit .pull { display: block; margin-top: 6px; }
+  #proposal .ch-p { font-size: 13.5px; line-height: 1.55; font-style: italic; margin: 6px 0 4px; }
+  #proposal .ch-h { color: #4a6b4f; }
+  #proposal .verdict { font-family: ui-monospace, Menlo, monospace; font-size: 10px; margin-top: 4px; }
+  #proposal .verdict.ok { color: #1D5C49; }
+  #proposal .verdict.meh { color: #8c3b2e; }
   .lanehead { font-family: ui-monospace, Menlo, monospace; font-size: 10.5px; letter-spacing: .12em; color: var(--faint); text-transform: uppercase; margin-bottom: 10px; }
   #voice .hit { background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: 10px 12px; margin-bottom: 8px; }
   #voice .hit .t { font-size: 13.5px; line-height: 1.5; }
@@ -240,8 +252,10 @@
   </main>
   <aside>
     <div class="lane">
+      <div id="proposal"></div>
       <div id="corrigenda"></div>
       <div class="lanehead" id="voicehead">Nearest voices</div>
+      <div id="pullrow"></div>
       <div id="voice"><div class="empty">Put your caret in a sentence to hear which of 20 books it stands closest to.</div></div>
     </div>
   </aside>
@@ -593,14 +607,78 @@ function caretSentence() {
   }
   return null;
 }
+let lastCaret = null;
 function penFollow() {
   const cs = caretSentence();
   if (!cs || cs.text.split(/\s+/).length < 3) return;
+  lastCaret = cs;
   const row = state.rows.find((r) => r.para === cs.para && r.text === cs.text);
   $("voicehead").textContent = row
     ? `Nearest voices — at your caret · t ${row.t.toFixed(2)} · ${row.words}w` + (row.pct != null ? ` · ${ordinal(row.pct)} pct` : "")
     : "Nearest voices — following your pen";
+  renderPullRow();
   fetchVoice(cs.text, row ? row.id : null);
+}
+
+// ---- precision rewrites: the AI writes only where you point, and the
+// lenses check its work. Accepting is an ordinary edit — one fold upsert.
+function renderPullRow() {
+  const box = $("pullrow");
+  if (!lastCaret) { box.replaceChildren(); return; }
+  box.replaceChildren();
+  for (const [dir, label] of [["concrete", "→ more concrete"], ["abstract", "→ more abstract"]]) {
+    const b = document.createElement("button");
+    b.textContent = label;
+    b.title = "redraft this sentence along the axis — the instrument verifies the move";
+    b.onclick = () => askRestyle({ mode: "axis", dir });
+    box.appendChild(b);
+  }
+}
+function paraTextOf(pi) {
+  const block = blocks()[pi];
+  return block ? readBlock(block) : "";
+}
+async function askRestyle(opts) {
+  if (!lastCaret) return;
+  const cs = lastCaret;
+  const box = $("proposal");
+  box.innerHTML = `<div class="chit"><span class="hole"></span><div class="ch-h">Proposal · drafting…</div><div class="ch-m">the guest model is writing · the lenses will check its work</div></div>`;
+  let resp;
+  try {
+    resp = await (await fetch("/restyle", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: cs.text, passage: paraTextOf(cs.para), mode: opts.mode, dir: opts.dir || "", target_text: opts.target_text || "", target_title: opts.target_title || "" }),
+    })).json();
+  } catch { box.innerHTML = ""; return; }
+  if (resp.status !== "ok") {
+    box.innerHTML = `<div class="chit"><span class="hole"></span><div class="ch-h">Proposal</div><div class="ch-m">${esc(resp.note || resp.status)}</div><div class="ch-row"><button class="dismiss">×</button></div></div>`;
+    box.querySelector(".dismiss").onclick = () => (box.innerHTML = "");
+    return;
+  }
+  const toward = opts.mode === "voice" ? `toward ${opts.target_title || "the canon"}` : `toward ${opts.dir}`;
+  const receipt = opts.mode === "voice"
+    ? `cos-dist ${resp.before.dist.toFixed(3)} → ${resp.after.dist.toFixed(3)}`
+    : `t ${resp.before.t.toFixed(2)} → ${resp.after.t.toFixed(2)}`;
+  const verdict = resp.verified
+    ? `<div class="verdict ok">${receipt} · VERIFIED in ${resp.attempts} draft${resp.attempts === 1 ? "" : "s"}</div>`
+    : `<div class="verdict meh">${receipt} · did not move the needle — your call</div>`;
+  box.innerHTML =
+    `<div class="chit"><span class="hole"></span>` +
+    `<div class="ch-h">Proposal · ${esc(toward)}</div>` +
+    `<div class="ch-p"></div>` + verdict +
+    `<div class="ch-m">guest model ${esc(resp.model)} · verified by the instrument's own lenses</div>` +
+    `<div class="ch-row"><button class="restore">accept ✓ — one upsert</button><button class="dismiss">reject ×</button></div></div>`;
+  box.querySelector(".ch-p").textContent = resp.proposal;
+  box.querySelector(".restore").onclick = () => {
+    const block = blocks()[cs.para];
+    if (block && blockRaw(block).includes(cs.text)) {
+      block.textContent = blockRaw(block).replace(cs.text, resp.proposal);
+      $("doc").dispatchEvent(new InputEvent("input", { bubbles: true }));
+    }
+    box.innerHTML = "";
+  };
+  box.querySelector(".dismiss").onclick = () => (box.innerHTML = "");
 }
 
 // ---------- instruments: the machinery is passive until surfaced ----------
@@ -994,6 +1072,14 @@ async function fetchVoice(text, forId) {
       d.innerHTML = `<div class="t"></div><div class="m"></div>`;
       d.querySelector(".t").textContent = h.text.length > 140 ? h.text.slice(0, 140) + "…" : h.text;
       d.querySelector(".m").textContent = `${h.title} · cos-dist ${h.score.toFixed(3)}`;
+      if (lastCaret) {
+        const b = document.createElement("button");
+        b.className = "pull";
+        b.textContent = "→ pull toward this voice";
+        b.title = "redraft your caret sentence closer to this exemplar's cadence — verified by cos-dist";
+        b.onclick = () => askRestyle({ mode: "voice", target_text: h.text, target_title: h.title });
+        d.appendChild(b);
+      }
       return d;
     }));
   } catch { /* server gone; ws banner covers it */ }

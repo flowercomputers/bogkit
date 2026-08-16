@@ -74,16 +74,19 @@ pub struct Score {
     pub t: f32, // concrete 0 —— 1 abstract
 }
 
-/// Sentence values pack their paragraph: `"<para>\u{1}<text>"`. A bare
-/// string (no separator) decodes as paragraph 0, so documents written
-/// before paragraphs existed load unchanged.
-pub fn enc_val(para: u32, text: &str) -> String {
-    format!("{para}\u{0001}{text}")
+/// Sentence values pack paragraph and order: `"<para>\u{1}<ord>\u{1}<text>"`.
+/// Bare strings decode as `(0, None, text)` and the older two-part pack as
+/// `(para, None, text)` — `None` means "order by id", so documents written
+/// before paragraphs or ordering existed load unchanged.
+pub fn enc_val(para: u32, ord: f64, text: &str) -> String {
+    format!("{para}\u{0001}{ord}\u{0001}{text}")
 }
-pub fn dec_val(val: &str) -> (u32, &str) {
-    match val.split_once('\u{0001}') {
-        Some((p, t)) => (p.parse().unwrap_or(0), t),
-        None => (0, val),
+pub fn dec_val(val: &str) -> (u32, Option<f64>, &str) {
+    let mut it = val.splitn(3, '\u{0001}');
+    match (it.next(), it.next(), it.next()) {
+        (Some(p), Some(o), Some(t)) => (p.parse().unwrap_or(0), o.parse().ok(), t),
+        (Some(p), Some(t), None) => (p.parse().unwrap_or(0), None, t),
+        _ => (0, None, val),
     }
 }
 
@@ -123,8 +126,10 @@ impl Axis {
 #[derive(Debug, Clone, Serialize)]
 pub struct Row {
     pub id: u32,
-    /// paragraph this sentence belongs to (grouping only — order is id order)
+    /// paragraph this sentence belongs to
     pub para: u32,
+    /// position within the document (fractional so inserts never renumber)
+    pub ord: f64,
     pub text: String,
     pub words: u32,
     pub t: f32,
@@ -237,11 +242,20 @@ pub struct DocState {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "op", rename_all = "lowercase")]
 pub enum EditOp {
-    Edit { id: u32, text: String },
+    Edit {
+        id: u32,
+        text: String,
+        #[serde(default)]
+        para: Option<u32>,
+        #[serde(default)]
+        ord: Option<f64>,
+    },
     Add {
         text: String,
         #[serde(default)]
         para: u32,
+        #[serde(default)]
+        ord: f64,
     },
     Remove { id: u32 },
     /// The un-retcon: put a retracted sentence back under its old id — an
@@ -252,6 +266,8 @@ pub enum EditOp {
         text: String,
         #[serde(default)]
         para: u32,
+        #[serde(default)]
+        ord: f64,
     },
     /// Author a lens from two anchor sentences: one backfill wtx over the doc.
     Lens { a: String, b: String, name: String },
@@ -342,14 +358,14 @@ macro_rules! doc_snapshot {
             let mut rows: Vec<Row> = sents
                 .iter()
                 .map(|(id, val)| {
-                    let (para, text) = dec_val(&val);
+                    let (para, ord, text) = dec_val(&val);
                     let text = text.to_string();
                     let s: Score = scores.get(&id).unwrap_or_default();
                     let pct = cdf.as_ref().map(|c| c.percentile(s.words));
-                    Row { id, para, text, words: s.words, t: s.t, voice: $voices.get(&id).cloned(), lens_t: Vec::new(), pct }
+                    Row { id, para, ord: ord.unwrap_or(id as f64), text, words: s.words, t: s.t, voice: $voices.get(&id).cloned(), lens_t: Vec::new(), pct }
                 })
                 .collect();
-            rows.sort_by_key(|r| r.id);
+            rows.sort_by(|a, b| (a.para, a.ord, a.id).partial_cmp(&(b.para, b.ord, b.id)).unwrap());
             let defs: Vec<LensDef> = $defs.clone();
             if !defs.is_empty() {
                 $lens_st.rtx(|lt| {
@@ -395,7 +411,7 @@ fn doc_ingest(
                     &reg,
                     "embed",
                     Map::new(
-                        move |d: &Keyed<u32, String>| Keyed::new(d.key, axis.score(dec_val(&d.val).1)),
+                        move |d: &Keyed<u32, String>| Keyed::new(d.key, axis.score(dec_val(&d.val).2)),
                         Meter::new(&reg, "scored", terminal::Table::<u32, Score>::new("scores")),
                     ),
                 ),
@@ -445,7 +461,7 @@ fn doc_ingest(
         st.wtx(|tx| {
             for (i, s) in SEED.iter().enumerate() {
                 let para = match i { 0..=3 => 0, 4..=5 => 1, _ => 2 };
-                tx.upsert(&(i as u32), &enc_val(para, s));
+                tx.upsert(&(i as u32), &enc_val(para, i as f64, s));
             }
         });
         if !lens_defs.is_empty() {
@@ -501,16 +517,21 @@ fn doc_ingest(
         let mut mirror: Option<(u32, Option<String>)> = None;
         let mut lens_hud: Option<(u32, String)> = None; // (keys, note) for lens ops
         let (name, key) = match &op {
-            EditOp::Edit { id, text } => {
-                // an edit keeps its sentence's paragraph
-                let para = st.rtx(|(sents, _)| sents.get(id).map(|v| dec_val(&v).0)).unwrap_or(0);
-                st.wtx(|tx| tx.upsert(id, &enc_val(para, text)));
+            EditOp::Edit { id, text, para, ord } => {
+                // an edit keeps its sentence's place unless the op moves it
+                let (sp, so) = st
+                    .rtx(|(sents, _)| sents.get(id).map(|v| { let d = dec_val(&v); (d.0, d.1) }))
+                    .unwrap_or((0, None));
+                let para = para.unwrap_or(sp);
+                let ord = ord.or(so).unwrap_or(*id as f64);
+                st.wtx(|tx| tx.upsert(id, &enc_val(para, ord, text)));
                 mirror = Some((*id, Some(text.clone())));
                 ("upsert", Some(*id))
             }
-            EditOp::Add { text, para } => {
+            EditOp::Add { text, para, ord } => {
                 let id = st.rtx(|(sents, _)| sents.iter().map(|(id, _)| id).max().map_or(0, |m| m + 1));
-                st.wtx(|tx| tx.upsert(&id, &enc_val(*para, text)));
+                let ord = if *ord == 0.0 { id as f64 } else { *ord };
+                st.wtx(|tx| tx.upsert(&id, &enc_val(*para, ord, text)));
                 mirror = Some((id, Some(text.clone())));
                 ("insert", Some(id))
             }
@@ -532,7 +553,7 @@ fn doc_ingest(
                 let sents: Vec<(u32, String)> = st.rtx(|(sents, _)| sents.iter().collect());
                 lens_st.wtx(|tx| {
                     for (sid, val) in &sents {
-                        tx.upsert(&(id, *sid), &dec_val(val).1.to_string());
+                        tx.upsert(&(id, *sid), &dec_val(val).2.to_string());
                     }
                 });
                 lens_hud = Some((sents.len() as u32, format!("{lname} · {} keys → 1 wtx", sents.len())));
@@ -554,8 +575,9 @@ fn doc_ingest(
                 lens_hud = Some((sids.len() as u32, format!("{name_of} · {} keys retracted → 1 wtx", sids.len())));
                 ("unlens", None)
             }
-            EditOp::Restore { id, text, para } => {
-                st.wtx(|tx| tx.upsert(id, &enc_val(*para, text)));
+            EditOp::Restore { id, text, para, ord } => {
+                let ord = if *ord == 0.0 { *id as f64 } else { *ord };
+                st.wtx(|tx| tx.upsert(id, &enc_val(*para, ord, text)));
                 mirror = Some((*id, Some(text.clone())));
                 ("restore", Some(*id))
             }
@@ -583,7 +605,7 @@ fn doc_ingest(
         // refresh the voice for the edited key only — one HNSW query, when
         // the canon is open (never block on a shelf that's still reshelving)
         let touched: Option<(u32, &str)> = match &op {
-            EditOp::Edit { id, text } | EditOp::Restore { id, text, .. } => Some((*id, text.as_str())),
+            EditOp::Edit { id, text, .. } | EditOp::Restore { id, text, .. } => Some((*id, text.as_str())),
             EditOp::Add { text, .. } => st
                 .rtx(|(sents, _)| sents.iter().map(|(id, _)| id).max())
                 .map(|id| (id, text.as_str())),
@@ -731,6 +753,7 @@ async fn serve_http(state: AppState) {
         .route("/", get(index))
         .route("/ws", get(ws_upgrade))
         .route("/voice", get(voice))
+        .route("/restyle", axum::routing::post(restyle_route))
         .route("/pct", get(pct))
         .route("/gale", get(gale_start))
         .with_state(state);
@@ -753,6 +776,10 @@ async fn pct(State(st): State<AppState>, Query(params): Query<HashMap<String, St
 
 async fn index() -> Html<&'static str> {
     Html(include_str!("ui.html"))
+}
+
+async fn restyle_route(Json(req): Json<crate::restyle::RestyleReq>) -> Json<crate::restyle::RestyleResp> {
+    Json(crate::restyle::run(req).await)
 }
 
 async fn voice(

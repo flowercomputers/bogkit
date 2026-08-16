@@ -1,6 +1,6 @@
 # Soundings
 
-**A live embedding-lens writing instrument.** The AI reads — it never writes.
+**A live embedding-lens writing instrument.** The AI reads while you write — and writes only where you point, with the lenses checking its work.
 Every edit is a fold delta; ese re-embeds the changed sentence in microseconds;
 anny repositions it among the sentences of twenty Gutenberg classics; every
 view on screen is an eagerly-maintained materialization, and the HUD prints
@@ -40,6 +40,15 @@ canon are back before you can alt-tab.
   actually cost — proof the watching is free.
 - **Nearest voices.** Each sentence's closest kin in the canon, by cosine —
   a margin of good company, refreshed only for the sentence you touched.
+- **Precision rewrites.** Put your caret in a sentence and pull: "more
+  concrete," "more abstract," or toward a specific canon voice from its
+  nearest-voices card. A guest LLM drafts; the instrument audits — the
+  proposal comes back with a receipt (`t 0.74 → 0.53 · VERIFIED`, or
+  `cos-dist 0.959 → 0.915 toward Walden`), measured by the same ese axis
+  and anny neighbors that painted the page. A draft that doesn't move the
+  needle gets one retry with its own score as feedback; accepting is an
+  ordinary edit — one fold upsert, every view updates. Optional: set
+  `OPENAI_API_KEY` (the targeting and receipts are local either way).
 - **The gale.** Press play: scripted edits at 60/s. The fold lane keeps every
   update; a naive lane running the *same scoring code* without deltas or an
   index falls seconds behind and drops most of its work. A referee hashes

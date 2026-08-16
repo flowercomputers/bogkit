@@ -12,6 +12,7 @@
 mod gale;
 mod lens;
 mod pct;
+mod restyle;
 mod serve;
 
 fn norm(v: &[f32]) -> f32 {
