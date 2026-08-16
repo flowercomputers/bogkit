@@ -22,8 +22,10 @@
 //! Design spec: `docs/superpowers/specs/2026-08-15-sod-design.md`.
 
 pub mod frame;
+pub mod vector;
 
 pub use frame::{Frame, FrameHash, ReplicaId, ZERO_HASH, decode_record};
+pub use vector::VersionVector;
 
 /// Errors across sod's ports and protocol.
 #[derive(Debug, Clone, PartialEq, Eq)]
