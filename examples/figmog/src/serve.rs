@@ -256,7 +256,18 @@ pub(crate) fn run_serve(
                             });
                         Ok(store::sync(&mut st, &prior, &flattened, now_ms()))
                     })();
-                    let churn = pull_result.map_err(|e| e.to_string())?;
+                    // A failed manual sync still spends the same backoff
+                    // budget as a failed background tick, and — when watch
+                    // is enabled — the next tick must not fire back into a
+                    // rate-limit window this call just learned about.
+                    let churn = match pull_result {
+                        Ok(c) => c,
+                        Err(e) => {
+                            let wait = pull_failure_wait(&e, &mut pull_backoff, interval_dur);
+                            next_deadline = Instant::now() + wait;
+                            return Err(e.to_string());
+                        }
+                    };
                     stored =
                         st.rtx(|(_, _, _, _, _, _, meta)| meta.get(&0).map(|m| m.last_modified));
                     pull_backoff = BACKOFF_START;
