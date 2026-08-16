@@ -18,5 +18,6 @@ pub mod model;
 pub mod query;
 pub mod serve;
 pub mod store;
+pub mod upstream;
 pub mod vars;
 pub mod watch;
