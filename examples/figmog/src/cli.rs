@@ -101,6 +101,33 @@ enum Cmd {
     Vars { id: Option<String> },
     /// Import a variables export (REST or plugin-console shape).
     ImportVariables { path: PathBuf },
+    /// Node counts by type and page, table totals, text-node count, max tree depth.
+    Stats,
+    /// Ancestor chain root→node for one id.
+    Path { id: String },
+    /// Every TEXT node's (id, characters, page_id), optionally scoped to one page.
+    Text {
+        #[arg(long)]
+        page: Option<String>,
+    },
+    /// Nodes whose raw JSON matches an RFC 6901 pointer, optionally by value.
+    Where {
+        /// RFC 6901 pointer into the node's raw JSON, e.g. /layoutMode.
+        #[arg(long)]
+        pointer: String,
+        /// JSON value to match; parsed as JSON, falling back to a bare string.
+        #[arg(long)]
+        equals: Option<String>,
+        #[arg(long)]
+        page: Option<String>,
+    },
+    /// Nodes whose absolute bounds contain a point, sorted by area ascending.
+    At {
+        #[arg(long)]
+        x: f64,
+        #[arg(long)]
+        y: f64,
+    },
 }
 
 /// Parse `argv`, dispatch, and return the process exit code (0 on success,
@@ -191,6 +218,36 @@ fn dispatch(cli: Cli) -> Result<(), String> {
                         cmd_vars(&nodes, &variables, &variable_collections, id, json)
                     },
                 ),
+                Cmd::Stats => st.rtx(
+                    |(
+                        (nodes, _, _, _, _, _, by_type),
+                        components,
+                        component_sets,
+                        styles,
+                        variables,
+                        ..,
+                    )| {
+                        cmd_stats(
+                            &nodes,
+                            &components,
+                            &component_sets,
+                            &styles,
+                            &variables,
+                            &by_type,
+                            json,
+                        )
+                    },
+                ),
+                Cmd::Path { id } => st.rtx(|((nodes, ..), ..)| cmd_path(&nodes, id, json)),
+                Cmd::Text { page } => st.rtx(|((nodes, _, _, _, _, _, by_type), ..)| {
+                    cmd_text(&nodes, &by_type, page, json)
+                }),
+                Cmd::Where {
+                    pointer,
+                    equals,
+                    page,
+                } => st.rtx(|((nodes, ..), ..)| cmd_where(&nodes, pointer, equals, page, json)),
+                Cmd::At { x, y } => st.rtx(|((nodes, ..), ..)| cmd_at(&nodes, x, y, json)),
                 Cmd::Pull { .. } | Cmd::Watch { .. } | Cmd::ImportVariables { .. } => {
                     unreachable!("handled above")
                 }
@@ -767,6 +824,154 @@ fn cmd_vars<R: Readable>(
                 row["variable_id"].as_str().unwrap_or_default(),
                 row["source"].as_str().unwrap_or_default(),
                 row["sites"].as_array().map(Vec::len).unwrap_or(0),
+            );
+        }
+    }
+    Ok(())
+}
+
+// ---- whole-file structural queries ----
+
+/// `--equals <json>`: parse as JSON, falling back to treating the bare word
+/// as a JSON string (so `--equals VERTICAL` works without quoting).
+fn parse_equals(raw: &str) -> Value {
+    serde_json::from_str(raw).unwrap_or_else(|_| Value::String(raw.to_string()))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn cmd_stats<R: Readable>(
+    nodes: &TableReader<'_, R, String, NodeRec>,
+    components: &TableReader<'_, R, String, ComponentRec>,
+    component_sets: &TableReader<'_, R, String, ComponentSetRec>,
+    styles: &TableReader<'_, R, String, StyleRec>,
+    variables: &TableReader<'_, R, String, VariableRec>,
+    by_type: &InvertedIndexReader<'_, R, String, String>,
+    json: bool,
+) -> Result<(), String> {
+    let v = query::stats(
+        nodes,
+        components,
+        component_sets,
+        styles,
+        variables,
+        by_type,
+    )?;
+    if json {
+        println!("{}", serde_json::to_string(&v).map_err(|e| e.to_string())?);
+    } else {
+        println!(
+            "{} nodes, max depth {}, {} text nodes",
+            v["by_type"]
+                .as_object()
+                .map(|m| m.values().filter_map(Value::as_u64).sum::<u64>())
+                .unwrap_or_default(),
+            v["max_depth"].as_u64().unwrap_or_default(),
+            v["text_nodes"].as_u64().unwrap_or_default(),
+        );
+        println!(
+            "totals: components={} component_sets={} styles={} variables={}",
+            v["totals"]["components"].as_u64().unwrap_or_default(),
+            v["totals"]["component_sets"].as_u64().unwrap_or_default(),
+            v["totals"]["styles"].as_u64().unwrap_or_default(),
+            v["totals"]["variables"].as_u64().unwrap_or_default(),
+        );
+        println!("by type:");
+        for (t, n) in v["by_type"].as_object().into_iter().flatten() {
+            println!("  {t}  {n}");
+        }
+        println!("by page:");
+        for (p, n) in v["by_page"].as_object().into_iter().flatten() {
+            println!("  {p}  {n}");
+        }
+    }
+    Ok(())
+}
+
+fn cmd_path<R: Readable>(
+    nodes: &TableReader<'_, R, String, NodeRec>,
+    id: String,
+    json: bool,
+) -> Result<(), String> {
+    let v = query::path(nodes, id)?;
+    if json {
+        println!("{}", serde_json::to_string(&v).map_err(|e| e.to_string())?);
+    } else {
+        for row in v.as_array().into_iter().flatten() {
+            println!(
+                "{}  [{}]  {}",
+                row["id"].as_str().unwrap_or_default(),
+                row["type"].as_str().unwrap_or_default(),
+                row["name"].as_str().unwrap_or_default(),
+            );
+        }
+    }
+    Ok(())
+}
+
+fn cmd_text<R: Readable>(
+    nodes: &TableReader<'_, R, String, NodeRec>,
+    by_type: &InvertedIndexReader<'_, R, String, String>,
+    page: Option<String>,
+    json: bool,
+) -> Result<(), String> {
+    let v = query::text(nodes, by_type, page)?;
+    if json {
+        println!("{}", serde_json::to_string(&v).map_err(|e| e.to_string())?);
+    } else {
+        for row in v.as_array().into_iter().flatten() {
+            println!(
+                "{}  ({})  {}",
+                row["id"].as_str().unwrap_or_default(),
+                row["page_id"].as_str().unwrap_or_default(),
+                row["characters"].as_str().unwrap_or_default(),
+            );
+        }
+    }
+    Ok(())
+}
+
+fn cmd_where<R: Readable>(
+    nodes: &TableReader<'_, R, String, NodeRec>,
+    pointer: String,
+    equals: Option<String>,
+    page: Option<String>,
+    json: bool,
+) -> Result<(), String> {
+    let equals = equals.as_deref().map(parse_equals);
+    let v = query::where_(nodes, &pointer, equals, page)?;
+    if json {
+        println!("{}", serde_json::to_string(&v).map_err(|e| e.to_string())?);
+    } else {
+        for row in v.as_array().into_iter().flatten() {
+            println!(
+                "{}  {}  ({})  {}",
+                row["id"].as_str().unwrap_or_default(),
+                row["name"].as_str().unwrap_or_default(),
+                row["page_id"].as_str().unwrap_or_default(),
+                row["value"],
+            );
+        }
+    }
+    Ok(())
+}
+
+fn cmd_at<R: Readable>(
+    nodes: &TableReader<'_, R, String, NodeRec>,
+    x: f64,
+    y: f64,
+    json: bool,
+) -> Result<(), String> {
+    let v = query::at(nodes, x, y)?;
+    if json {
+        println!("{}", serde_json::to_string(&v).map_err(|e| e.to_string())?);
+    } else {
+        for row in v.as_array().into_iter().flatten() {
+            println!(
+                "{}  {}  [{}]  area={}",
+                row["id"].as_str().unwrap_or_default(),
+                row["name"].as_str().unwrap_or_default(),
+                row["type"].as_str().unwrap_or_default(),
+                row["area"].as_f64().unwrap_or_default(),
             );
         }
     }

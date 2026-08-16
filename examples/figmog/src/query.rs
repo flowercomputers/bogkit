@@ -1,7 +1,7 @@
 //! One source of truth for every read answer — shared by the CLI printers
 //! and the MCP tools.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use serde_json::{Value, json};
 
@@ -462,4 +462,195 @@ pub fn vars<R: Readable>(
         })
         .collect();
     Ok(Value::Array(rows))
+}
+
+// ---- whole-file structural queries ----
+//
+// The local mirror's unfair advantage: full-file scans/joins no
+// rate-limited API surface could offer, all answered from the local store.
+
+/// Depth of `id` counting the root as 0, by walking `parent_id` up to the
+/// root. The file is local, so an O(depth) walk per node is fine.
+fn depth_of<R: Readable>(nodes: &TableReader<'_, R, String, NodeRec>, id: &str) -> usize {
+    let mut depth = 0;
+    let mut current = id.to_string();
+    while let Some(n) = nodes.get(&current) {
+        match n.parent_id {
+            Some(parent) => {
+                depth += 1;
+                current = parent;
+            }
+            None => break,
+        }
+    }
+    depth
+}
+
+/// Node counts by type and by page, table totals, text-node count, max tree
+/// depth.
+#[allow(clippy::too_many_arguments)]
+pub fn stats<R: Readable>(
+    nodes: &TableReader<'_, R, String, NodeRec>,
+    components: &TableReader<'_, R, String, ComponentRec>,
+    component_sets: &TableReader<'_, R, String, ComponentSetRec>,
+    styles: &TableReader<'_, R, String, StyleRec>,
+    variables: &TableReader<'_, R, String, VariableRec>,
+    by_type: &InvertedIndexReader<'_, R, String, String>,
+) -> Result<Value, String> {
+    let all: Vec<NodeRec> = nodes.iter().map(|(_, n)| n).collect();
+
+    let mut by_type_counts: BTreeMap<String, usize> = BTreeMap::new();
+    let mut by_page_counts: BTreeMap<String, usize> = BTreeMap::new();
+    let mut max_depth = 0usize;
+    for n in &all {
+        *by_type_counts.entry(n.node_type.clone()).or_insert(0) += 1;
+        // DOCUMENT/CANVAS nodes are pages/roots, not page contents.
+        if n.node_type != "DOCUMENT" && n.node_type != "CANVAS" {
+            *by_page_counts.entry(n.page_id.clone()).or_insert(0) += 1;
+        }
+        max_depth = max_depth.max(depth_of(nodes, &n.id));
+    }
+
+    let text_nodes = by_type.search(&"TEXT".to_string()).len();
+
+    Ok(json!({
+        "by_type": by_type_counts,
+        "by_page": by_page_counts,
+        "totals": {
+            "components": components.iter().count(),
+            "component_sets": component_sets.iter().count(),
+            "styles": styles.iter().count(),
+            "variables": variables.iter().count(),
+        },
+        "text_nodes": text_nodes,
+        "max_depth": max_depth,
+    }))
+}
+
+/// Ancestor chain root→node, as `[{id, name, type}]`. Unknown id → Err.
+pub fn path<R: Readable>(
+    nodes: &TableReader<'_, R, String, NodeRec>,
+    id: String,
+) -> Result<Value, String> {
+    let id = normalize_node_id(&id);
+    let mut chain: Vec<NodeRec> = Vec::new();
+    let mut current = id.clone();
+    loop {
+        let n = nodes
+            .get(&current)
+            .ok_or_else(|| format!("no node {current} in the mirror"))?;
+        let parent = n.parent_id.clone();
+        chain.push(n);
+        match parent {
+            Some(p) => current = p,
+            None => break,
+        }
+    }
+    chain.reverse();
+
+    let arr: Vec<Value> = chain
+        .iter()
+        .map(|n| json!({"id": n.id, "name": n.name, "type": n.node_type}))
+        .collect();
+    Ok(Value::Array(arr))
+}
+
+/// Every TEXT node's `(id, characters, page_id)`, optionally scoped to one
+/// page, sorted by id.
+pub fn text<R: Readable>(
+    nodes: &TableReader<'_, R, String, NodeRec>,
+    by_type: &InvertedIndexReader<'_, R, String, String>,
+    page: Option<String>,
+) -> Result<Value, String> {
+    let mut ids = by_type.search(&"TEXT".to_string());
+    ids.sort();
+    let page = page.as_deref().map(normalize_node_id);
+
+    let mut rows: Vec<(String, String, String)> = ids
+        .into_iter()
+        .filter_map(|id| nodes.get(&id))
+        .filter(|n| page.as_deref().is_none_or(|p| n.page_id == p))
+        .map(|n| (n.id, n.text.clone().unwrap_or_default(), n.page_id))
+        .collect();
+    rows.sort();
+
+    let arr: Vec<Value> = rows
+        .iter()
+        .map(|(id, characters, page_id)| {
+            json!({"id": id, "characters": characters, "page_id": page_id})
+        })
+        .collect();
+    Ok(Value::Array(arr))
+}
+
+/// Nodes whose `raw` JSON matches an RFC 6901 pointer, optionally by value
+/// and/or scoped to one page. Rows `[{id, name, type, page_id, value}]`,
+/// sorted by id.
+pub fn where_<R: Readable>(
+    nodes: &TableReader<'_, R, String, NodeRec>,
+    pointer: &str,
+    equals: Option<Value>,
+    page: Option<String>,
+) -> Result<Value, String> {
+    if !pointer.starts_with('/') {
+        return Err(format!(
+            "pointer must be an RFC 6901 pointer starting with '/': {pointer}"
+        ));
+    }
+    let page = page.as_deref().map(normalize_node_id);
+
+    let mut rows: Vec<(String, String, String, String, Value)> = Vec::new();
+    for (_, n) in nodes.iter() {
+        if !page.as_deref().is_none_or(|p| n.page_id == p) {
+            continue;
+        }
+        let raw: Value = serde_json::from_str(&n.raw).map_err(|e| e.to_string())?;
+        let Some(v) = raw.pointer(pointer) else {
+            continue;
+        };
+        if equals.as_ref().is_some_and(|want| v != want) {
+            continue;
+        }
+        rows.push((n.id, n.name, n.node_type, n.page_id, v.clone()));
+    }
+    rows.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let arr: Vec<Value> = rows
+        .into_iter()
+        .map(|(id, name, node_type, page_id, value)| {
+            json!({"id": id, "name": name, "type": node_type, "page_id": page_id, "value": value})
+        })
+        .collect();
+    Ok(Value::Array(arr))
+}
+
+/// Nodes whose `abs_bounds` contain `(x, y)`, sorted by area ascending
+/// (deepest/smallest first) then id. Rows `[{id, name, type, page_id, area}]`.
+pub fn at<R: Readable>(
+    nodes: &TableReader<'_, R, String, NodeRec>,
+    x: f64,
+    y: f64,
+) -> Result<Value, String> {
+    let mut rows: Vec<(f64, String, String, String, String)> = Vec::new();
+    for (_, n) in nodes.iter() {
+        let Some([bx, by, w, h]) = n.abs_bounds else {
+            continue;
+        };
+        if bx <= x && x < bx + w && by <= y && y < by + h {
+            rows.push((w * h, n.id, n.name, n.node_type, n.page_id));
+        }
+    }
+    rows.sort_by(|a, b| {
+        a.0.partial_cmp(&b.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.1.cmp(&b.1))
+    });
+
+    let arr: Vec<Value> = rows
+        .into_iter()
+        .map(|(area, id, name, node_type, page_id)| {
+            json!({"id": id, "name": name, "type": node_type, "page_id": page_id, "area": area})
+        })
+        .collect();
+    Ok(Value::Array(arr))
 }

@@ -204,6 +204,73 @@ fn search_instances_components_styles_uses_vars() {
 }
 
 #[test]
+fn stats_path_text_where_at() {
+    let (_dir, db) = fixture_db();
+    let run = |args: &[&str]| {
+        let out = Command::cargo_bin("figmog")
+            .unwrap()
+            .args(args)
+            .args(["--db", &db, "--json"])
+            .assert()
+            .success();
+        serde_json::from_slice::<serde_json::Value>(&out.get_output().stdout).unwrap()
+    };
+
+    let stats = run(&["stats"]);
+    assert_eq!(stats["by_type"]["TEXT"], 1);
+    assert_eq!(stats["by_page"]["0:1"], 4); // 1:1, 1:2, 1:3, 1:9
+    assert_eq!(stats["totals"]["components"], 3);
+    assert_eq!(stats["totals"]["component_sets"], 1);
+    assert_eq!(stats["totals"]["styles"], 2);
+    assert_eq!(stats["max_depth"], 3); // document -> canvas -> frame -> text
+
+    let path = run(&["path", "1-2"]);
+    let ids: Vec<&str> = path
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, vec!["0:0", "0:1", "1:1", "1:2"]);
+
+    let text = run(&["text"]);
+    let rows = text.as_array().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["id"], "1:2");
+    assert_eq!(rows[0]["characters"], "Welcome to the garden");
+
+    let where_layout = run(&["where", "--pointer", "/layoutMode", "--equals", "VERTICAL"]);
+    let ids: Vec<&str> = where_layout
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, vec!["1:1"]);
+
+    let where_font = run(&["where", "--pointer", "/style/fontSize", "--equals", "32.0"]);
+    let ids: Vec<&str> = where_font
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, vec!["1:2"]);
+
+    let at = run(&["at", "--x", "10", "--y", "10"]);
+    let ids: Vec<&str> = at
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["id"].as_str().unwrap())
+        .collect();
+    assert!(ids.contains(&"1:1"), "ids={ids:?}");
+    // nodes without abs_bounds (e.g. the DOCUMENT/CANVAS/TEXT nodes here)
+    // never appear.
+    assert!(!ids.contains(&"1:2"), "ids={ids:?}");
+}
+
+#[test]
 fn import_variables_upgrades_vars_to_authoritative() {
     let (dir, db) = fixture_db();
     let export = dir.path().join("vars.json");

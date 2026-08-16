@@ -42,6 +42,11 @@ store location (default `.figmog/<file-key>/db`).
 | `figmog uses <id>` | styled_by / bound_to + nodes | nodes using a style id or bound to a variable id |
 | `figmog vars [id]` | nodes + variables + variable_collections | variables: authoritative record if imported, else inferred value(s) + binding sites |
 | `figmog import-variables <path>` | — | upsert variable/collection records from a variables export (see "Variables on a free plan") |
+| `figmog stats` | nodes + by_type + components + component_sets + styles + variables | node counts by type and by page, component/set/style/variable totals, text-node count, max tree depth — whole-file structural queries the API can't offer at all |
+| `figmog path <id>` | nodes | ancestor chain root→node: `[{id, name, type}]` |
+| `figmog text [--page <id>]` | by_type + nodes | every TEXT node's `(id, characters, page_id)`, sorted by id |
+| `figmog where --pointer </p> [--equals <json>] [--page <id>]` | nodes | nodes whose raw JSON matches an RFC 6901 `pointer`, optionally filtered by `equals` (parsed as JSON, falling back to a bare string so `--equals VERTICAL` works) |
+| `figmog at --x N --y N` | nodes | nodes whose absolute bounds contain the point, sorted by area ascending (deepest/smallest first) |
 
 Node ids accept both `12:34` and `12-34` forms everywhere. Auth is a
 personal access token from `FIGMA_TOKEN`. Since `pull`/`watch` are the only
