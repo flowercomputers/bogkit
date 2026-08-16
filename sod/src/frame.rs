@@ -5,8 +5,13 @@
 //! each origin's feed is a hash chain: tamper-evident, equivocation-
 //! detectable, and relayable through untrusted peers.
 //!
-//! The record format — used verbatim on disk and on the wire — is
-//! `u32 LE body-length | body | 32-byte blake3(body)`.
+//! The on-disk record format is `u32 LE body-length | 4-byte length-check
+//! (blake3 of the length bytes, truncated) | body | 32-byte blake3(body)`.
+//! The length-check exists so a corrupted length prefix is *detected*
+//! (interior corruption, refused) instead of being misread as a clean torn
+//! tail and silently truncating every valid record after it. (Sync
+//! transports serialize [`Frame`]s directly via postcard; records are a
+//! LogStore concern only.)
 
 use serde::{Deserialize, Serialize};
 
@@ -100,33 +105,56 @@ impl Frame {
         FrameHash(*blake3::hash(&self.encode()).as_bytes())
     }
 
-    /// Append the full record — `len | body | hash` — to `out`.
+    /// Append the full record — `len | len-check | body | hash` — to `out`.
     pub fn encode_record(&self, out: &mut Vec<u8>) {
         let body = self.encode();
-        out.extend_from_slice(&(body.len() as u32).to_le_bytes());
+        let len_bytes = (body.len() as u32).to_le_bytes();
+        out.extend_from_slice(&len_bytes);
+        out.extend_from_slice(&len_check(&len_bytes));
         let hash = blake3::hash(&body);
         out.extend_from_slice(&body);
         out.extend_from_slice(hash.as_bytes());
     }
 }
 
+/// Record header: 4-byte LE length + 4-byte length-check.
+const HEADER: usize = 8;
+
+fn len_check(len_bytes: &[u8; 4]) -> [u8; 4] {
+    blake3::hash(len_bytes).as_bytes()[..4].try_into().unwrap()
+}
+
+/// `decode_record` error when the length prefix fails its check — the
+/// declared length is untrustworthy, so the record cannot even be
+/// delimited. Log recovery treats this as interior corruption, never as a
+/// torn tail (torn appends produce *short* records, not garbled headers).
+pub const CORRUPT_LEN: &str = "record length check failed";
+
 /// Decode and verify one record from the front of `buf`.
 ///
 /// Returns `Ok(Some((frame, hash, consumed)))` on success, `Ok(None)` if
 /// `buf` holds only a clean partial record (more bytes needed — at the end
-/// of a log file this is a torn tail), and `Err(Corrupt)` if the record is
-/// complete but fails hash verification or decoding.
+/// of a log file this is a torn tail), and `Err(Corrupt)` if the record
+/// fails its length check, hash verification, or decoding.
 pub fn decode_record(buf: &[u8]) -> Result<Option<(Frame, FrameHash, usize)>, SodError> {
-    if buf.len() < 4 {
+    if buf.len() < HEADER {
         return Ok(None);
     }
-    let len = u32::from_le_bytes(buf[..4].try_into().unwrap()) as usize;
-    let total = 4 + len + 32;
+    let len_bytes: [u8; 4] = buf[..4].try_into().unwrap();
+    if len_check(&len_bytes) != buf[4..HEADER] {
+        return Err(SodError::Corrupt(CORRUPT_LEN));
+    }
+    let len = u32::from_le_bytes(len_bytes) as usize;
+    // untrusted arithmetic: guard overflow on 32-bit targets (wasm32)
+    let total = match len.checked_add(HEADER + 32) {
+        Some(t) => t,
+        None => return Err(SodError::Corrupt("record length overflows")),
+    };
     if buf.len() < total {
         return Ok(None);
     }
-    let body = &buf[4..4 + len];
-    let stored: [u8; 32] = buf[4 + len..total].try_into().unwrap();
+    let body = &buf[HEADER..HEADER + len];
+    let stored: [u8; 32] = buf[HEADER + len..total].try_into().unwrap();
     let computed = blake3::hash(body);
     if computed.as_bytes() != &stored {
         return Err(SodError::Corrupt("record hash mismatch"));
@@ -173,10 +201,14 @@ mod tests {
 
     #[test]
     fn decode_flipped_byte_is_corrupt() {
+        // Every byte of the record is tamper-evident: the length prefix
+        // via the length-check, the body and hash via BLAKE3. (A flipped
+        // length byte must NOT read as a clean partial record — that is
+        // how mid-file corruption silently truncated logs.)
         let f = test_frame(7, 1, ZERO_HASH);
         let mut rec = Vec::new();
         f.encode_record(&mut rec);
-        for i in 4..rec.len() {
+        for i in 0..rec.len() {
             let mut bad = rec.clone();
             bad[i] ^= 0xff;
             assert!(

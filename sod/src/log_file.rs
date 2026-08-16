@@ -11,9 +11,10 @@
 //!   torn tail: `open` refuses with [`SodError::Corrupt`] rather than
 //!   silently dropping interior data.
 //!
-//! v1 keeps every frame in memory as well as on disk (the replica serves
-//! sync suffixes from memory); log compaction and streaming reads are
-//! future work recorded in the spec.
+//! Scanned frames are handed to the replica once via
+//! [`LogStore::take_frames`] — the log does not retain a second in-memory
+//! copy. Log compaction and streaming reads are future work recorded in
+//! the spec.
 
 use std::fs::{File, OpenOptions};
 use std::io::Write;
@@ -56,21 +57,24 @@ impl FileLog {
                 // Clean partial tail: recoverable iff nothing follows —
                 // and by definition nothing does (it consumed the rest).
                 Ok(None) => break,
+                // The length prefix failed its check: the declared length
+                // is untrustworthy, so the record cannot be delimited and
+                // nothing beyond it can be located. Torn appends produce
+                // short records, not garbled headers — refuse (SOD-5's
+                // recovery must never silently drop interior data).
+                Err(SodError::Corrupt(crate::frame::CORRUPT_LEN)) => {
+                    return Err(SodError::Corrupt(
+                        "interior log corruption (record length check failed)",
+                    ));
+                }
                 Err(_) => {
-                    // A complete-but-bad record. Torn tail only if we can
-                    // prove nothing valid follows it; scanning forward for
-                    // a later valid record is ambiguous (record boundaries
-                    // are length-prefixed), so the rule is: bad record at
-                    // the last position we reached = torn tail, anything
-                    // recoverable beyond it would have decoded. We treat a
-                    // bad final record as torn; decode_record already
-                    // distinguished "short" from "bad", and a bad record
-                    // means its declared length fit within the file. If
-                    // more bytes remain past that declared length, this is
+                    // A complete-but-bad record with a *trusted* length
+                    // (its length-check passed). Torn tail only if nothing
+                    // lies beyond its declared end; bytes past it mean
                     // interior corruption: refuse.
                     let len =
                         u32::from_le_bytes(bytes[pos..pos + 4].try_into().unwrap()) as usize;
-                    let declared_end = pos + 4 + len + 32;
+                    let declared_end = pos + 8 + len + 32;
                     if declared_end < bytes.len() {
                         return Err(SodError::Corrupt(
                             "interior log corruption (bad record followed by data)",
@@ -107,7 +111,6 @@ impl LogStore for FileLog {
         let mut rec = Vec::new();
         frame.encode_record(&mut rec);
         self.file.write_all(&rec).map_err(io_err)?;
-        self.frames.push(frame.clone());
         Ok(())
     }
 
@@ -115,7 +118,7 @@ impl LogStore for FileLog {
         self.file.sync_data().map_err(io_err)
     }
 
-    fn frames(&self) -> &[Frame] {
-        &self.frames
+    fn take_frames(&mut self) -> Vec<Frame> {
+        std::mem::take(&mut self.frames)
     }
 }

@@ -43,8 +43,8 @@ fn roundtrip_reopen() {
         }
         log.sync().unwrap();
     }
-    let log = FileLog::open(&path).unwrap();
-    assert_eq!(log.frames(), &frames[..]);
+    let mut log = FileLog::open(&path).unwrap();
+    assert_eq!(log.take_frames(), frames);
 }
 
 #[test]
@@ -65,7 +65,7 @@ fn torn_tail_truncated() {
         std::fs::write(&path, &full[..full.len() - cut]).unwrap();
 
         let mut log = FileLog::open(&path).unwrap();
-        assert_eq!(log.frames(), &frames[..2], "cut={cut}");
+        assert_eq!(log.take_frames(), frames[..2], "cut={cut}");
         assert_eq!(
             std::fs::metadata(&path).unwrap().len(),
             two.len() as u64,
@@ -76,8 +76,33 @@ fn torn_tail_truncated() {
         log.append(&frames[2]).unwrap();
         log.sync().unwrap();
         drop(log);
-        let log = FileLog::open(&path).unwrap();
-        assert_eq!(log.frames(), &frames[..]);
+        let mut log = FileLog::open(&path).unwrap();
+        assert_eq!(log.take_frames(), frames);
+    }
+}
+
+#[test]
+fn corrupted_length_prefix_refuses_instead_of_truncating() {
+    // A bit flip in a record's length prefix must be detected as interior
+    // corruption — the old format misread it as a clean torn tail and
+    // silently truncated every valid frame after it (regressing the
+    // version vector, which peers then treat as equivocation).
+    let frames = chain(1, 3);
+    let mut bytes = Vec::new();
+    for f in &frames {
+        f.encode_record(&mut bytes);
+    }
+    for i in 0..4 {
+        let path = tmp(&format!("lenflip-{i}"));
+        let mut bad = bytes.clone();
+        bad[i] ^= 0xff; // frame 1's length prefix
+        std::fs::write(&path, &bad).unwrap();
+        match FileLog::open(&path).err() {
+            Some(SodError::Corrupt(_)) => {}
+            other => panic!("expected Corrupt, got {other:?} (flip at {i})"),
+        }
+        // and the file was not touched
+        assert_eq!(std::fs::read(&path).unwrap(), bad);
     }
 }
 

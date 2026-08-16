@@ -101,9 +101,16 @@ pub fn add(note: String) -> Result<()> {
     commit(note, 1)
 }
 
-/// Retract one copy of `note`.
+/// Retract one copy of `note`. Errors if the note is not present — an
+/// unmatched retraction would store a hidden negative multiplicity that
+/// swallows a future add.
 #[napi]
 pub fn remove(note: String) -> Result<()> {
+    let present =
+        with_replica(|r| Ok(r.engine().stream().rtx(|(bag, _count)| bag.contains(&note))))?;
+    if !present {
+        return Err(err(format!("no such note: {note}")));
+    }
     commit(note, -1)
 }
 
@@ -124,9 +131,14 @@ pub fn count() -> Result<i64> {
 }
 
 /// Run one full sync session with a peer (e.g. `ws://127.0.0.1:7171`).
+/// Returns any per-origin refusals recorded while the session continued
+/// (equivocating or poisoned feeds) — surface these to the user.
 #[napi]
-pub fn sync_with_peer(url: String) -> Result<()> {
-    with_replica(|r| sync_with(&url, r, SCHEMA).map_err(err))
+pub fn sync_with_peer(url: String) -> Result<Vec<String>> {
+    with_replica(|r| {
+        let skipped = sync_with(&url, r, SCHEMA).map_err(err)?;
+        Ok(skipped.iter().map(|s| s.to_string()).collect())
+    })
 }
 
 /// Accept exactly one sync session on `addr`, then return.

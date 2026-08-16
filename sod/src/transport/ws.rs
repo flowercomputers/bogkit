@@ -50,13 +50,14 @@ fn recv<S: std::io::Read + std::io::Write>(sock: &mut WebSocket<S>) -> Result<Ms
 }
 
 /// Run one session over an established socket. `initiator` fixes the
-/// half-duplex order; see the module docs.
+/// half-duplex order; see the module docs. Returns the per-origin
+/// refusals recorded while the session continued (SOD-2).
 fn run_session<E: Engine, L: LogStore, S: std::io::Read + std::io::Write>(
     sock: &mut WebSocket<S>,
     r: &mut Replica<E, L>,
     schema: u32,
     initiator: bool,
-) -> Result<(), SodError> {
+) -> Result<Vec<SodError>, SodError> {
     let mut session = Session::new(schema);
 
     if initiator {
@@ -92,15 +93,20 @@ fn run_session<E: Engine, L: LogStore, S: std::io::Read + std::io::Write>(
             send(sock, m)?;
         }
     }
-    Ok(())
+    Ok(session.into_skipped())
 }
 
 /// Dial `url` (e.g. `ws://127.0.0.1:7171`) and run one full sync session.
+///
+/// `Ok` carries the per-origin refusals the session recorded while
+/// continuing (equivocating or poisoned feeds, SOD-2) — empty on a fully
+/// clean sync. Callers should surface a non-empty list to the user:
+/// swallowing it hides that some feed is silently no longer replicating.
 pub fn sync_with<E: Engine, L: LogStore>(
     url: &str,
     r: &mut Replica<E, L>,
     schema: u32,
-) -> Result<(), SodError> {
+) -> Result<Vec<SodError>, SodError> {
     let (mut sock, _resp) = tungstenite::connect(url).map_err(io_err)?;
     let result = run_session(&mut sock, r, schema, true);
     let _ = sock.close(None);
@@ -109,9 +115,11 @@ pub fn sync_with<E: Engine, L: LogStore>(
 
 /// Accept sync sessions on `addr` (e.g. `127.0.0.1:7171`), one at a time.
 ///
-/// With `max_sessions: Some(n)` returns after `n` sessions (tests, one-shot
-/// serving); with `None` loops forever. A failed session is logged to
-/// stderr and does not stop the loop — the peer simply retries.
+/// With `max_sessions: Some(n)` returns after `n` **completed** sessions
+/// (tests, one-shot serving); with `None` loops forever. Failed handshakes
+/// and failed sessions are logged to stderr and do not count — a stray TCP
+/// probe must not use up a one-shot serve. Per-origin refusals recorded by
+/// completed sessions are logged to stderr.
 pub fn serve<E: Engine, L: LogStore>(
     addr: &str,
     r: &mut Replica<E, L>,
@@ -124,14 +132,19 @@ pub fn serve<E: Engine, L: LogStore>(
         let stream: TcpStream = stream.map_err(io_err)?;
         match tungstenite::accept(stream) {
             Ok(mut sock) => {
-                if let Err(e) = run_session(&mut sock, r, schema, false) {
-                    eprintln!("sod: sync session failed: {e}");
+                match run_session(&mut sock, r, schema, false) {
+                    Ok(skipped) => {
+                        for s in &skipped {
+                            eprintln!("sod: refused during sync: {s}");
+                        }
+                        done += 1;
+                    }
+                    Err(e) => eprintln!("sod: sync session failed: {e}"),
                 }
                 let _ = sock.close(None);
             }
             Err(e) => eprintln!("sod: websocket handshake failed: {e}"),
         }
-        done += 1;
         if Some(done) == max_sessions {
             break;
         }

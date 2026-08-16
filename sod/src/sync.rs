@@ -94,17 +94,17 @@ impl Session {
                     });
                 }
                 let poisoned: Vec<_> = r.poisoned().copied().collect();
-                let mut frames = Vec::new();
+                let mut out: Vec<Msg> = Vec::new();
                 for (origin, theirs, _have) in r.vector().ahead_of(&vector) {
                     if poisoned.contains(&origin) {
                         continue;
                     }
-                    frames.extend_from_slice(r.frames_after(&origin, theirs));
+                    // chunk each origin's suffix directly: one clone per
+                    // frame, and every batch stays per-origin contiguous
+                    for chunk in r.frames_after(&origin, theirs).chunks(BATCH) {
+                        out.push(Msg::Frames(chunk.to_vec()));
+                    }
                 }
-                let mut out: Vec<Msg> = frames
-                    .chunks(BATCH)
-                    .map(|c| Msg::Frames(c.to_vec()))
-                    .collect();
                 out.push(Msg::Done);
                 self.sent_done = true;
                 Ok(out)
@@ -138,27 +138,39 @@ impl Session {
     pub fn skipped(&self) -> &[SodError] {
         &self.skipped
     }
+
+    /// Consume the session, yielding its recorded refusals.
+    pub fn into_skipped(self) -> Vec<SodError> {
+        self.skipped
+    }
 }
 
-/// Drive a complete session between two in-process replicas.
+/// Drive a complete session between two in-process replicas. Returns the
+/// per-origin refusals both sides recorded while continuing (SOD-2) —
+/// empty on a fully clean sync.
 pub fn sync_pair<E1: Engine, L1: LogStore, E2: Engine, L2: LogStore>(
     a: &mut Replica<E1, L1>,
     b: &mut Replica<E2, L2>,
     schema: u32,
-) -> Result<(), SodError> {
+) -> Result<Vec<SodError>, SodError> {
+    use std::collections::VecDeque;
     let mut sa = Session::new(schema);
     let mut sb = Session::new(schema);
-    let mut to_b = vec![sa.hello(a)];
-    let mut to_a = vec![sb.hello(b)];
+    // FIFO delivery: batches beyond the first must arrive in send order,
+    // or contiguous-suffix ingestion fails with a gap
+    let mut to_b: VecDeque<Msg> = VecDeque::from([sa.hello(a)]);
+    let mut to_a: VecDeque<Msg> = VecDeque::from([sb.hello(b)]);
     while !(sa.finished() && sb.finished() && to_a.is_empty() && to_b.is_empty()) {
-        if let Some(m) = to_b.pop() {
+        if let Some(m) = to_b.pop_front() {
             to_a.extend(sb.on_msg(b, m)?);
         }
-        if let Some(m) = to_a.pop() {
+        if let Some(m) = to_a.pop_front() {
             to_b.extend(sa.on_msg(a, m)?);
         }
     }
-    Ok(())
+    let mut skipped = sa.skipped;
+    skipped.extend(sb.skipped);
+    Ok(skipped)
 }
 
 #[cfg(test)]
@@ -185,6 +197,24 @@ mod tests {
         assert_eq!(a.vector(), b.vector());
         assert_eq!(a.engine().view_bytes(), b.engine().view_bytes());
         assert_eq!(a.watermark(), b.watermark());
+    }
+
+    #[test]
+    fn large_diff_crosses_batch_boundary() {
+        // >BATCH frames force multiple Frames messages; delivery must be
+        // FIFO or the second batch arrives before the first and gaps out.
+        let mut a = replica(1);
+        let mut b = replica(2);
+        for i in 0..300u64 {
+            a.commit(vec![(i.to_be_bytes().to_vec(), 1)], i).unwrap();
+        }
+        b.commit(vec![(b"from b".to_vec(), 1)], 7).unwrap();
+
+        sync_pair(&mut a, &mut b, 1).unwrap();
+
+        assert_eq!(a.vector(), b.vector());
+        assert_eq!(a.engine().view_bytes(), b.engine().view_bytes());
+        assert_eq!(b.vector().get(&ReplicaId([1; 16])), 300);
     }
 
     #[test]

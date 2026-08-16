@@ -9,7 +9,7 @@ use sod::engine_fold::FoldEngine;
 use sod::log_file::FileLog;
 use sod::store::LogStore;
 use sod::time::Watermark;
-use sod::{Frame, Replica, ReplicaId};
+use sod::{Frame, Replica, ReplicaId, SodError, ZERO_HASH};
 
 type Pipeline = (Bag<String>, Count);
 type DemoEngine = FoldEngine<String, Pipeline>;
@@ -96,6 +96,43 @@ fn crash_between_log_and_apply_heals() {
     assert_eq!(
         notes,
         vec![("orphan".to_string(), 3), ("durable".to_string(), 1)]
+    );
+}
+
+#[test]
+fn undecodable_frame_is_refused_before_logging() {
+    // FoldEngine::validate runs before the log append: a frame whose
+    // payload doesn't decode as the pipeline type must never be persisted,
+    // or it would fail replay on every subsequent open (bricked replica).
+    let dir = tmp("validate");
+    let me = ReplicaId([4; 16]);
+    let mut r = open_replica(&dir, me);
+    r.commit(vec![(datum("good"), 1)], 10).unwrap();
+
+    let peer = ReplicaId([9; 16]);
+    let bad = Frame {
+        prev_hash: ZERO_HASH,
+        origin: peer,
+        seq: 1,
+        event_time: 20,
+        // an unterminated varint: not a postcard String
+        payload: vec![(vec![0xFF, 0xFF, 0xFF], 1)],
+    };
+    match r.ingest(bad) {
+        Err(SodError::Corrupt(_)) => {}
+        other => panic!("expected corrupt, got {other:?}"),
+    }
+
+    // the bad frame reached neither the vector nor the log
+    assert_eq!(r.vector().get(&peer), 0);
+    r.commit(vec![(datum("after"), 1)], 30).unwrap();
+    drop(r);
+    let r = open_replica(&dir, me);
+    assert_eq!(r.vector().get(&me), 2);
+    assert_eq!(r.vector().get(&peer), 0);
+    assert_eq!(
+        bag_contents(&r),
+        vec![("good".to_string(), 1), ("after".to_string(), 1)]
     );
 }
 

@@ -33,7 +33,10 @@ fn two_processes_converge() {
     let mut attempts = 0;
     loop {
         match sync_with(&format!("ws://{ADDR}"), &mut client, SCHEMA) {
-            Ok(()) => break,
+            Ok(skipped) => {
+                assert!(skipped.is_empty(), "clean sync must skip nothing");
+                break;
+            }
             Err(e) => {
                 attempts += 1;
                 assert!(attempts < 50, "could not sync: {e}");
@@ -48,4 +51,53 @@ fn two_processes_converge() {
     assert_eq!(client.watermark(), 30);
     assert_eq!(client.engine().count(b"served"), 2);
     assert_eq!(server.engine().count(b"dialed"), -1);
+}
+
+const ADDR2: &str = "127.0.0.1:47164";
+
+#[test]
+fn stray_connection_does_not_consume_one_shot_serve() {
+    // A TCP probe that never completes the websocket handshake must not
+    // count toward max_sessions — only completed sessions do.
+    let mut server = replica(3);
+    server.commit(vec![(b"payload".to_vec(), 1)], 5).unwrap();
+    let handle = std::thread::spawn(move || {
+        serve(ADDR2, &mut server, SCHEMA, Some(1)).unwrap();
+        server
+    });
+
+    // stray probe: raw TCP, garbage bytes, hang up
+    let mut attempts = 0;
+    loop {
+        match std::net::TcpStream::connect(ADDR2) {
+            Ok(mut junk) => {
+                use std::io::Write;
+                let _ = junk.write_all(b"not a websocket handshake\r\n\r\n");
+                drop(junk);
+                break;
+            }
+            Err(_) => {
+                attempts += 1;
+                assert!(attempts < 50, "server never came up");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+    }
+
+    // the real session must still be served
+    let mut client = replica(4);
+    let mut attempts = 0;
+    loop {
+        match sync_with(&format!("ws://{ADDR2}"), &mut client, SCHEMA) {
+            Ok(_) => break,
+            Err(e) => {
+                attempts += 1;
+                assert!(attempts < 50, "could not sync after stray probe: {e}");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+    }
+    let server = handle.join().unwrap();
+    assert_eq!(client.vector(), server.vector());
+    assert_eq!(client.engine().count(b"payload"), 1);
 }

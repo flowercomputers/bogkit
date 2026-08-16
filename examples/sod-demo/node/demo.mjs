@@ -26,7 +26,8 @@ sod.add("only node has this");
 console.log("local:", sod.list(), `total=${sod.count()}`);
 
 if (peer) {
-  sod.syncWithPeer(peer);
+  const refused = sod.syncWithPeer(peer);
+  for (const r of refused) console.warn("refused during sync:", r);
   console.log("after sync:", sod.list(), `total=${sod.count()}`);
 }
 sod.close();

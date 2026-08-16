@@ -102,6 +102,18 @@ fn main() {
     match cmd {
         "add" | "remove" if !rest.is_empty() => {
             let note = rest.join(" ");
+            if cmd == "remove" {
+                // Guard retractions: an unmatched -1 would be stored as a
+                // hidden negative multiplicity that swallows a future add.
+                let present = replica
+                    .engine()
+                    .stream()
+                    .rtx(|(bag, _count)| bag.contains(&note));
+                if !present {
+                    eprintln!("no such note: {note}");
+                    std::process::exit(1);
+                }
+            }
             let mult = if cmd == "add" { 1 } else { -1 };
             replica
                 .commit(vec![(encode(&note), mult)], now_ms())
@@ -126,8 +138,11 @@ fn main() {
         }
         "sync" => {
             let url = rest.first().map(String::as_str).unwrap_or_else(|| usage());
-            sync_with(url, &mut replica, SCHEMA)
+            let skipped = sync_with(url, &mut replica, SCHEMA)
                 .unwrap_or_else(|e| panic!("sync failed: {e}"));
+            for s in &skipped {
+                eprintln!("warning: refused during sync: {s}");
+            }
             println!("synced with {url}");
         }
         _ => usage(),

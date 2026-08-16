@@ -81,6 +81,12 @@ Each invariant is enforced by a named test.
   a second distinct frame claiming an already-seen `(origin, seq)`, marks that
   origin's feed as poisoned: sod stops accepting frames for that origin and
   surfaces the error. Already-applied frames are not rolled back.
+  **Exception: a replica never poisons its own feed** — it is the feed's
+  authority, a conflicting claim about it is the peer's forgery (or a reused
+  id), and self-poisoning would let one hostile message halt local commits.
+  Refusals recorded mid-session are returned to sync callers, never
+  swallowed — a silently-poisoned feed is a feed that silently stopped
+  replicating.
 - **SOD-3 (fresh replica id).** `replica_id` is 128 random bits generated when
   the local log is created, and never outlives the log: deleting or resetting
   the log requires generating a new id. Ids are never reused, configured, or
@@ -145,6 +151,11 @@ An engine is whatever materializes deltas into readable state:
 
 ```rust
 pub trait Engine {
+    /// Deterministic applicability check (e.g. datums decode as the
+    /// pipeline type), run by the replica BEFORE a frame is logged: a
+    /// logged frame that deterministically fails apply would fail replay
+    /// on every open — a bricked replica.
+    fn validate(&self, frame: &Frame) -> Result<...>;
     /// Apply one frame's deltas plus the new watermark, atomically,
     /// together with the applied-cursor update for `(origin, seq)`.
     fn apply(&mut self, frame: &Frame, watermark: u64) -> Result<...>;
@@ -187,7 +198,12 @@ a per-origin property (the hash chain and contiguous seqs), not a property of
 the file. On-disk record:
 
 ```
-u32 len | frame_bytes | [u8; 32] blake3(frame_bytes)
+u32 LE len | [u8; 4] len-check | frame_bytes | [u8; 32] blake3(frame_bytes)
+
+len-check = first 4 bytes of blake3(len bytes) — makes the length prefix
+tamper-evident, so corruption there is detected as interior corruption
+instead of being misread as a clean torn tail (which would silently
+truncate every valid record after it)
 
 frame (postcard) = {
   prev_hash:  [u8; 32],      // hash of this origin's previous frame; zero at seq 1
@@ -201,9 +217,15 @@ frame (postcard) = {
 - **Durability.** `fsync` policy is configurable; the default fsyncs on every
   local commit before fold apply (matching Pouch's durable default). Received
   frames during sync may batch fsyncs.
-- **Recovery scan.** On open, the log is scanned; the first record whose
-  length is short or whose hash fails verification marks the torn tail, which
-  is truncated. Everything before it is trusted (SOD-5).
+- **Recovery scan.** On open, the log is scanned. A *short* record at the
+  end (including a short header) is a torn tail and is truncated; a record
+  whose length-check fails, or a hash-invalid record with bytes beyond its
+  declared end, is interior corruption and open **refuses** — recovery must
+  never silently drop interior data (a regressed vector would make the
+  replica re-issue already-distributed seqs and be poisoned by every peer
+  as an equivocator). Everything before a truncated tail is trusted
+  (SOD-5). Crash model: appends are sequential and recovery only ever
+  truncates, so torn writes produce short records, not garbled ones.
 - **Ordering rule.** Log append (and its fsync, per policy) strictly precedes
   fold apply. The reverse is impossible by construction.
 
@@ -349,6 +371,15 @@ and sync catches up when a peer is reachable.
   retention is acceptable, but v1 does not compact.
 - **Blob store.** Large payload values (embedding vectors, media) should be
   content-addressed and deduplicated out of frames, IPFS-style.
+- **Batched replay and streaming sync.** `FoldEngine::apply` currently runs
+  one fold transaction per frame (replay of N frames = N storage commits;
+  batching must preserve the per-frame cursor contract of SOD-5), and a
+  sync session materializes each origin-suffix batch eagerly rather than
+  streaming it. Correct today, worth optimizing when logs grow.
+- **Async transports/engines.** The Node addon's `serveOnce`/`syncWithPeer`
+  are synchronous (they block the JS event loop for the session's
+  duration) — fine for the demo, but a production Node binding wants
+  napi async tasks around the same sans-io session.
 - **Signatures.** Per-origin signing keys (SSB-style) upgrade hash chains
   from tamper-evidence to authorship proof, enabling sync among mutually
   untrusting peers. The chain format is already compatible.

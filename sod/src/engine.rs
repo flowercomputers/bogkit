@@ -19,6 +19,18 @@ use crate::{Frame, SodError};
 
 /// The bog machinery port.
 pub trait Engine {
+    /// Deterministically check that a frame is applicable — e.g. that its
+    /// datums decode as the pipeline type — WITHOUT mutating anything.
+    ///
+    /// The replica calls this **before** appending a frame to the log:
+    /// once a frame is logged it will be replayed on every open, so a
+    /// frame that deterministically fails `apply` would brick the replica.
+    /// `validate`-then-`apply` must agree: any frame that passes validate
+    /// must not fail apply for a deterministic reason.
+    fn validate(&self, _frame: &Frame) -> Result<(), SodError> {
+        Ok(())
+    }
+
     /// Apply one frame's deltas plus the new watermark. The deltas and the
     /// applied-cursor advance to `(frame.origin, frame.seq)` must commit
     /// atomically.

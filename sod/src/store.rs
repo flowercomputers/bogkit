@@ -22,8 +22,11 @@ pub trait LogStore {
     /// Harden all appended frames against crashes (fsync or equivalent).
     fn sync(&mut self) -> Result<(), SodError>;
 
-    /// Every stored frame, in append order.
-    fn frames(&self) -> &[Frame];
+    /// Hand over every stored frame, in append order. Called exactly once,
+    /// at [`Replica::open`](crate::Replica::open) — the replica owns the
+    /// in-memory copy from then on, so implementations must not retain
+    /// frames after this (that would hold every frame in memory twice).
+    fn take_frames(&mut self) -> Vec<Frame>;
 }
 
 /// In-memory log: for tests, oracles, and replicas whose durability is
@@ -49,7 +52,7 @@ impl LogStore for MemLog {
         Ok(())
     }
 
-    fn frames(&self) -> &[Frame] {
-        &self.frames
+    fn take_frames(&mut self) -> Vec<Frame> {
+        std::mem::take(&mut self.frames)
     }
 }

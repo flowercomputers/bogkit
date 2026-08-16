@@ -141,20 +141,32 @@ impl<D: Clone, P: Push<D>> FoldEngine<D, P> {
     }
 }
 
+fn decode_payload<D: DeserializeOwned>(frame: &Frame) -> Result<Vec<(D, i64)>, SodError> {
+    let mut deltas = Vec::with_capacity(frame.payload.len());
+    for (bytes, mult) in &frame.payload {
+        let d: D = postcard::from_bytes(bytes)
+            .map_err(|_| SodError::Corrupt("frame datum does not decode as pipeline type"))?;
+        deltas.push((d, *mult));
+    }
+    Ok(deltas)
+}
+
 impl<D, P> Engine for FoldEngine<D, P>
 where
     D: Clone + DeserializeOwned,
     P: Push<D>,
 {
+    /// A frame is applicable iff every datum decodes as the pipeline type.
+    /// Checked by the replica before the frame is logged (a logged frame
+    /// that cannot apply would fail replay on every open).
+    fn validate(&self, frame: &Frame) -> Result<(), SodError> {
+        decode_payload::<D>(frame).map(|_| ())
+    }
+
     fn apply(&mut self, frame: &Frame, watermark: u64) -> Result<(), SodError> {
         // Decode every datum before touching the store, so a bad frame
         // fails cleanly without a partial transaction.
-        let mut deltas = Vec::with_capacity(frame.payload.len());
-        for (bytes, mult) in &frame.payload {
-            let d: D = postcard::from_bytes(bytes)
-                .map_err(|_| SodError::Corrupt("frame datum does not decode as pipeline type"))?;
-            deltas.push((d, *mult));
-        }
+        let deltas = decode_payload::<D>(frame)?;
         self.watermark.advance(watermark);
         self.shared.lock().unwrap().pending = Some((frame.origin.0, frame.seq));
         self.stream.wtx(|tx| {

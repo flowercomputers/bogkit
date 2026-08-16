@@ -43,13 +43,13 @@ impl<E: Engine, L: LogStore> Replica<E, L> {
     /// Rebuild feeds, vector, and watermark from the log, verifying every
     /// chain, then replay into the engine each frame beyond its applied
     /// cursor (SOD-1, SOD-5).
-    pub fn open(id: ReplicaId, log: L, mut engine: E) -> Result<Self, SodError> {
+    pub fn open(id: ReplicaId, mut log: L, mut engine: E) -> Result<Self, SodError> {
         let mut feeds: BTreeMap<ReplicaId, Feed> = BTreeMap::new();
         let mut vector = VersionVector::new();
         let engine_cursor = engine.applied();
         let mut watermark = 0u64;
 
-        for frame in log.frames() {
+        for frame in log.take_frames() {
             let feed = feeds.entry(frame.origin).or_default();
             let have = feed.frames.len() as u64;
             if frame.seq != have + 1 {
@@ -60,13 +60,13 @@ impl<E: Engine, L: LogStore> Replica<E, L> {
             }
             watermark = watermark.max(frame.event_time);
             if frame.seq > engine_cursor.get(&frame.origin) {
-                engine.apply(frame, watermark)?;
+                engine.apply(&frame, watermark)?;
             } else {
                 engine.seed_watermark(watermark);
             }
             feed.hashes.push(frame.hash());
-            feed.frames.push(frame.clone());
             vector.advance(frame.origin, frame.seq);
+            feed.frames.push(frame);
         }
 
         let engine_cursor = engine.applied();
@@ -90,17 +90,17 @@ impl<E: Engine, L: LogStore> Replica<E, L> {
         payload: Vec<(Vec<u8>, i64)>,
         event_time: u64,
     ) -> Result<FrameHash, SodError> {
-        if self.poisoned.contains(&self.id) {
-            return Err(SodError::Poisoned(self.id));
-        }
-        let feed = self.feeds.entry(self.id).or_default();
+        let head = self.feeds.get(&self.id).map(Feed::head_hash).unwrap_or(ZERO_HASH);
         let frame = Frame {
-            prev_hash: feed.head_hash(),
+            prev_hash: head,
             origin: self.id,
-            seq: feed.frames.len() as u64 + 1,
+            seq: self.vector.get(&self.id) + 1,
             event_time,
             payload,
         };
+        // A frame the engine can never apply must not reach the log — it
+        // would fail replay on every subsequent open (SOD-1/SOD-5).
+        self.engine.validate(&frame)?;
         self.log.append(&frame)?;
         self.log.sync()?;
         let hash = frame.hash();
@@ -120,6 +120,10 @@ impl<E: Engine, L: LogStore> Replica<E, L> {
     ///   [`sync_log`](Replica::sync_log) at session boundaries.
     pub fn ingest(&mut self, frame: Frame) -> Result<bool, SodError> {
         let origin = frame.origin;
+        if frame.seq == 0 {
+            // seqs are 1-based; nothing on the wire guarantees that
+            return Err(SodError::Corrupt("frame seq must be >= 1"));
+        }
         if self.poisoned.contains(&origin) {
             return Err(SodError::Poisoned(origin));
         }
@@ -130,8 +134,7 @@ impl<E: Engine, L: LogStore> Replica<E, L> {
             if known == hash {
                 return Ok(false);
             }
-            self.poisoned.insert(origin);
-            return Err(SodError::Equivocation { origin, seq: frame.seq });
+            return Err(self.fork_detected(origin, frame.seq));
         }
         if frame.seq > have + 1 {
             return Err(SodError::Gap { origin, have, got: frame.seq });
@@ -143,12 +146,26 @@ impl<E: Engine, L: LogStore> Replica<E, L> {
             .unwrap_or(ZERO_HASH);
         if frame.prev_hash != expected_prev {
             // same (origin, seq) position as a chain we don't hold: a fork
-            self.poisoned.insert(origin);
-            return Err(SodError::Equivocation { origin, seq: frame.seq });
+            return Err(self.fork_detected(origin, frame.seq));
         }
+        // A frame the engine can never apply must not reach the log — it
+        // would fail replay on every subsequent open (SOD-1/SOD-5).
+        self.engine.validate(&frame)?;
         self.log.append(&frame)?;
         self.accept(frame, hash)?;
         Ok(true)
+    }
+
+    /// A frame conflicting with our copy of `origin`'s feed. Foreign feeds
+    /// are poisoned (SOD-2); our **own** feed never is — we are its
+    /// authority, so a conflicting claim about us is the *peer's* forgery
+    /// (or a reused replica id), and self-poisoning would let one hostile
+    /// message halt local commits.
+    fn fork_detected(&mut self, origin: ReplicaId, seq: u64) -> SodError {
+        if origin != self.id {
+            self.poisoned.insert(origin);
+        }
+        SodError::Equivocation { origin, seq }
     }
 
     /// Log-accepted frame: update feeds/vector/watermark and guard-apply.
@@ -245,13 +262,14 @@ mod tests {
         r.commit(vec![(datum("a"), 1)], 10).unwrap();
         r.commit(vec![(datum("b"), 1)], 20).unwrap();
         r.commit(vec![(datum("c"), 1)], 30).unwrap();
+        let frames: Vec<_> = r.frames_after(&id(1), 0).to_vec();
         let mut log = MemLog::new();
-        for f in r.frames_after(&id(1), 0) {
+        for f in &frames {
             log.append(f).unwrap();
         }
 
         let mut pre = MemEngine::new();
-        pre.apply(&log.frames()[0], 10).unwrap();
+        pre.apply(&frames[0], 10).unwrap();
         let r2 = Replica::open(id(1), log, pre).unwrap();
         assert_eq!(r2.engine().count(b"a"), 1, "not double-applied");
         assert_eq!(r2.engine().count(b"b"), 1);
@@ -312,6 +330,47 @@ mod tests {
         c.commit(vec![(datum("fine"), 1)], 5).unwrap();
         let fine = c.frames_after(&id(3), 0)[0].clone();
         assert!(b.ingest(fine).unwrap());
+    }
+
+    #[test]
+    fn ingest_seq_zero_is_corrupt_not_panic() {
+        let mut b = replica(2);
+        let bad = Frame {
+            prev_hash: ZERO_HASH,
+            origin: id(1), // unknown origin — the old code indexed feeds and panicked
+            seq: 0,
+            event_time: 1,
+            payload: vec![(datum("x"), 1)],
+        };
+        match b.ingest(bad) {
+            Err(SodError::Corrupt(_)) => {}
+            other => panic!("expected corrupt, got {other:?}"),
+        }
+        // known origin, seq 0: same refusal (old code underflowed seq - 1)
+        let mut a = replica(1);
+        a.commit(vec![(datum("a"), 1)], 1).unwrap();
+        b.ingest(a.frames_after(&id(1), 0)[0].clone()).unwrap();
+        let mut bad = a.frames_after(&id(1), 0)[0].clone();
+        bad.seq = 0;
+        assert!(matches!(b.ingest(bad), Err(SodError::Corrupt(_))));
+    }
+
+    #[test]
+    fn forged_own_feed_frame_does_not_self_poison() {
+        let mut a = replica(1);
+        a.commit(vec![(datum("mine"), 1)], 10).unwrap();
+
+        // a hostile peer fabricates a conflicting frame claiming a's origin
+        let mut forged = a.frames_after(&id(1), 0)[0].clone();
+        forged.payload = vec![(datum("forged"), 1)];
+        match a.ingest(forged) {
+            Err(SodError::Equivocation { seq: 1, .. }) => {}
+            other => panic!("expected equivocation, got {other:?}"),
+        }
+        // our own feed is never poisoned: local commits keep working
+        assert_eq!(a.poisoned().count(), 0);
+        a.commit(vec![(datum("still fine"), 1)], 20).unwrap();
+        assert_eq!(a.vector().get(&id(1)), 2);
     }
 
     #[test]
