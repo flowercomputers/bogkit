@@ -297,6 +297,46 @@ pub struct VoiceHit {
 pub enum LibReq {
     Voice(String, oneshot::Sender<Vec<VoiceHit>>),
     Switch(String),
+    /// project ~1,500 library sentences onto the seeded axis (x) and an
+    /// optional caller-anchored axis (y) — the constellation's grey cloud
+    Cloud {
+        anchors: Option<(String, String)>,
+        reply: oneshot::Sender<Vec<(f32, f32, u32)>>,
+    },
+}
+
+/// gist-cache keyspace ops (reader view): the LLM's reading of a paragraph
+/// is an expensive derived view, so it is materialized in a fold Table
+/// keyed by content hash — unchanged paragraphs are never re-read.
+pub enum CacheReq {
+    Get(u64, oneshot::Sender<Option<String>>),
+    Put(u64, String),
+}
+
+pub fn fnv64(text: &str) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in text.as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
+}
+
+fn reader_cache(rx: mpsc::Receiver<CacheReq>) {
+    let mut st = KeyedStream::new(
+        std::path::Path::new("data/reader.db"),
+        terminal::Table::<u64, String>::new("gists"),
+    );
+    for req in rx {
+        match req {
+            CacheReq::Get(h, reply) => {
+                let _ = reply.send(st.rtx(|g| g.get(&h)));
+            }
+            CacheReq::Put(h, gist) => {
+                st.wtx(|tx| tx.upsert(&h, &gist));
+            }
+        }
+    }
 }
 
 /// A reference library: the corpus the voices, percentiles, and restyle
@@ -332,6 +372,7 @@ struct AppState {
     gale_running: Arc<Mutex<bool>>,
     len_rx: watch::Receiver<Option<Arc<crate::pct::LenCdf>>>,
     lib_rx: watch::Receiver<(String, String)>,
+    reader_tx: mpsc::Sender<CacheReq>,
 }
 
 /// Load `./.env` and `examples/soundings/.env` (KEY=VALUE, quotes stripped,
@@ -362,6 +403,8 @@ pub fn run() {
     let (status_tx, status_rx) = watch::channel("opening the library…".to_string());
     let (voice_tx, voice_rx) = mpsc::channel::<LibReq>();
     let (lib_tx, lib_rx) = watch::channel(("canon".to_string(), "novel".to_string()));
+    let (reader_tx, reader_rx) = mpsc::channel::<CacheReq>();
+    std::thread::spawn(move || reader_cache(reader_rx));
     let (naive_tx, naive_rx_ch) = mpsc::channel::<NaiveMsg>();
     let (naive_state_tx, naive_rx) = watch::channel(NaiveState::default());
     let (gale_tx, gale_rx) = watch::channel(GaleState { phase: "idle".into(), ..Default::default() });
@@ -392,6 +435,7 @@ pub fn run() {
         gale_running: Arc::new(Mutex::new(false)),
         len_rx,
         lib_rx,
+        reader_tx,
     });
 }
 
@@ -753,6 +797,9 @@ fn library_ingest(
                             continue 'lib;
                         }
                     }
+                    LibReq::Cloud { reply, .. } => {
+                        let _ = reply.send(vec![]);
+                    }
                 }
             }
             return;
@@ -838,6 +885,25 @@ fn library_ingest(
                         continue 'lib;
                     }
                 }
+                LibReq::Cloud { anchors, reply } => {
+                    let axis = Axis::concrete_abstract();
+                    let user = anchors.map(|(a, b)| Axis::from_anchors(&[a.as_str()], &[b.as_str()]));
+                    let pts = st.rtx(|(_, docs)| {
+                        let n = docs.iter().count().max(1);
+                        let step = (n / 1500).max(1);
+                        docs.iter()
+                            .enumerate()
+                            .filter(|(i, _)| i % step == 0)
+                            .map(|(_, (_id, (_title, text)))| {
+                                let v = crate::embed(&text);
+                                let x = axis.score_vec(&text, &v).t;
+                                let y = user.as_ref().map(|u| u.score_vec(&text, &v).t).unwrap_or(-1.0);
+                                (x, y, text.split_whitespace().count() as u32)
+                            })
+                            .collect::<Vec<_>>()
+                    });
+                    let _ = reply.send(pts);
+                }
             }
         }
         return;
@@ -871,6 +937,8 @@ async fn serve_http(state: AppState) {
         .route("/restyle", axum::routing::post(restyle_route))
         .route("/pct", get(pct))
         .route("/library", get(library))
+        .route("/cloud", get(cloud))
+        .route("/reader", axum::routing::post(reader))
         .route("/gale", get(gale_start))
         .with_state(state);
 
@@ -916,6 +984,99 @@ async fn library(
         })
         .collect();
     Json(serde_json::json!({ "active": { "id": id, "label": label }, "libs": libs }))
+}
+
+/// `/cloud?a=…&b=…` — the constellation's grey backdrop: the active
+/// library projected on the seeded axis (x) and, if anchors are given, the
+/// caller's authored axis (y). ~1,500 points, computed on demand (µs each).
+async fn cloud(State(app): State<AppState>, Query(params): Query<HashMap<String, String>>) -> Json<serde_json::Value> {
+    if !app.status_rx.borrow().contains("ready ·") {
+        return Json(serde_json::json!({ "status": "loading", "pts": [] }));
+    }
+    let anchors = match (params.get("a"), params.get("b")) {
+        (Some(a), Some(b)) if !a.is_empty() && !b.is_empty() => Some((a.clone(), b.clone())),
+        _ => None,
+    };
+    let (otx, orx) = oneshot::channel();
+    if app.voice_tx.send(LibReq::Cloud { anchors, reply: otx }).is_err() {
+        return Json(serde_json::json!({ "status": "gone", "pts": [] }));
+    }
+    match orx.await {
+        Ok(pts) => Json(serde_json::json!({ "status": "ok", "pts": pts })),
+        Err(_) => Json(serde_json::json!({ "status": "gone", "pts": [] })),
+    }
+}
+
+#[derive(Deserialize)]
+struct ReaderIn {
+    paras: Vec<String>,
+}
+
+const READER_SYS: &str = "You are a reader, not an editor. In ONE sentence, plainly say what you took from the paragraph — only what is on the page. No advice, no praise, no commentary about writing quality.";
+
+/// `/reader` — the AI performs readership: one gist per paragraph, cached
+/// by content hash in a fold Table (unchanged paragraphs are never
+/// re-read). Fidelity = cosine(gist, paragraph) via ese; seams = cosine
+/// between consecutive gists.
+async fn reader(State(app): State<AppState>, Json(inp): Json<ReaderIn>) -> Json<serde_json::Value> {
+    let key = crate::restyle::api_key();
+    let model = crate::restyle::model_name();
+    let mut gists: Vec<Option<String>> = Vec::new();
+    let mut cached_flags: Vec<bool> = Vec::new();
+    for text in inp.paras.iter().take(16) {
+        let h = fnv64(text);
+        let (otx, orx) = oneshot::channel();
+        let _ = app.reader_tx.send(CacheReq::Get(h, otx));
+        if let Ok(Some(g)) = orx.await {
+            gists.push(Some(g));
+            cached_flags.push(true);
+            continue;
+        }
+        cached_flags.push(false);
+        let Some(k) = key.as_deref() else {
+            gists.push(None);
+            continue;
+        };
+        match crate::restyle::draft(k, &model, READER_SYS, &format!("Paragraph:\n{text}")).await {
+            Ok(g) => {
+                let _ = app.reader_tx.send(CacheReq::Put(h, g.clone()));
+                gists.push(Some(g));
+            }
+            Err(_) => gists.push(None),
+        }
+    }
+    let cos = |a: &[f32], b: &[f32]| crate::dot(a, b) / (crate::norm(a) * crate::norm(b)).max(1e-9);
+    let gvecs: Vec<Option<Vec<f32>>> = gists.iter().map(|g| g.as_ref().map(|g| crate::embed(g))).collect();
+    let paras_out: Vec<serde_json::Value> = inp
+        .paras
+        .iter()
+        .take(16)
+        .zip(gists.iter())
+        .zip(gvecs.iter())
+        .zip(cached_flags.iter())
+        .map(|(((text, gist), gv), cached)| match (gist, gv) {
+            (Some(g), Some(v)) => {
+                let fid = cos(v, &crate::embed(text));
+                serde_json::json!({ "gist": g, "fidelity": fid, "cached": cached })
+            }
+            _ => serde_json::json!({ "gist": null, "cached": cached }),
+        })
+        .collect();
+    let seams: Vec<serde_json::Value> = gvecs
+        .windows(2)
+        .map(|w| match (&w[0], &w[1]) {
+            (Some(a), Some(b)) => serde_json::json!(cos(a, b)),
+            _ => serde_json::json!(null),
+        })
+        .collect();
+    let hit = cached_flags.iter().filter(|c| **c).count();
+    Json(serde_json::json!({
+        "status": if key.is_some() { "ok" } else { "no-provider" },
+        "paras": paras_out,
+        "seams": seams,
+        "cached": hit,
+        "reread": cached_flags.len() - hit,
+    }))
 }
 
 async fn index() -> Html<&'static str> {

@@ -92,7 +92,7 @@ fn client() -> &'static reqwest::Client {
     })
 }
 
-async fn draft(key: &str, model: &str, sys: &str, user: &str) -> Result<String, String> {
+pub async fn draft(key: &str, model: &str, sys: &str, user: &str) -> Result<String, String> {
     let body = serde_json::json!({
         "model": model,
         "max_completion_tokens": 2000,

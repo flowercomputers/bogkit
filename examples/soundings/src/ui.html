@@ -49,6 +49,17 @@
   .sm .mi .hue { display: inline-block; width: 14px; height: 8px; border-radius: 2px; }
   .sm .mi .x2 { color: var(--faint); padding: 0 4px; }
   .sm .mi .x2:hover { color: #8c3b2e; }
+  #constel { position: relative; margin: 4px 0 14px; }
+  #ccanvas { width: 100%; height: 280px; display: block; background: #fbf7ee; border: 1px solid #d8cfbd; border-radius: 5px; cursor: crosshair; }
+  #ctip { position: absolute; z-index: 25; background: var(--card); border: 1px solid var(--line); border-radius: 4px;
+    padding: 7px 10px; font-size: 12px; line-height: 1.45; max-width: 250px; pointer-events: none;
+    box-shadow: 0 8px 22px rgba(40,30,10,.12); }
+  #ctip .m { font-family: ui-monospace, Menlo, monospace; font-size: 9.5px; color: var(--faint); margin-top: 3px; }
+  .page.galing #constel, .page.galing #constelchip, .page.galing #readerchip { display: none; }
+  #voice .seam { font-family: ui-monospace, Menlo, monospace; font-size: 9.5px; color: #8c3b2e;
+    border-top: 1px dashed #8c3b2e; margin: 2px 0 8px; padding-top: 3px; }
+  #voice .rfoot { font-family: ui-monospace, Menlo, monospace; font-size: 9.5px; color: var(--faint); margin-top: 8px; }
+  #voice .gist { font-style: italic; }
   .lenskey { font-family: ui-monospace, Menlo, monospace; font-size: 10.5px; color: var(--faint); min-height: 16px; margin-bottom: 26px; }
   #doc { font-size: 18.5px; line-height: 1.85; }
   #doc .para { margin: 0 0 15px; }
@@ -278,7 +289,14 @@
       </div>
     </div>
     <div class="chips">
+      <button id="constelchip" class="chip" title="your sentences as points in lens-space, over the active library's cloud">✦ constellation</button>
+      <button id="readerchip" class="chip" title="one stranger reads each paragraph back to you — gists cached in a fold Table">👓 reader</button>
       <button id="galechip" title="replay scripted edits at 60/s for 10s against a naive full-rescan arm">▶ gale</button>
+    </div>
+    <div id="constel" hidden>
+      <canvas id="ccanvas"></canvas>
+      <div id="ctip" hidden></div>
+      <div id="ckey" class="lenskey"></div>
     </div>
     <div class="lenskey" id="lenskey"></div>
     <div id="doc" contenteditable="plaintext-only" spellcheck="false"></div>
@@ -407,6 +425,7 @@ function render() {
   retireGhosts();
   renderChips($("doc"));
   renderHud();
+  if (constelOn) { fetchCloud().then(drawConstel); }
 }
 
 // the ledger: last few ops, newest first — kept client-side from each hud
@@ -659,6 +678,8 @@ function penFollow() {
   const cs = caretSentence();
   if (!cs || cs.text.split(/\s+/).length < 3) return;
   lastCaret = cs;
+  if (constelOn) drawConstel();
+  if (readerMode) { renderPullRow(); return; }
   const row = state.rows.find((r) => r.para === cs.para && r.text === cs.text);
   $("voicehead").textContent = row
     ? `Nearest voices — at your caret · t ${row.t.toFixed(2)} · ${row.words}w` + (row.pct != null ? ` · ${ordinal(row.pct)} pct` : "")
@@ -1106,6 +1127,164 @@ function renderMast() {
 }
 refreshLibs();
 
+// ---------- the constellation: the essay as a walk through lens-space ----
+let constelOn = false, cloudPts = [], cloudFor = "";
+$("constelchip").onclick = async () => {
+  constelOn = !constelOn;
+  $("constel").hidden = !constelOn;
+  $("constelchip").classList.toggle("on", constelOn);
+  if (constelOn) { await fetchCloud(); drawConstel(); }
+};
+function cloudAnchors() {
+  if (!lens.startsWith("user:")) return null;
+  const d = (state.lenses || []).find((x) => "user:" + x.id === lens);
+  return d ? { a: d.a, b: d.b, name: d.name } : null;
+}
+async function fetchCloud() {
+  const anch = cloudAnchors();
+  const key = lib.id + "|" + (anch ? anch.name : "len");
+  if (cloudFor === key && cloudPts.length) return;
+  const q = anch ? `?a=${encodeURIComponent(anch.a)}&b=${encodeURIComponent(anch.b)}` : "";
+  try {
+    const d = await (await fetch("/cloud" + q)).json();
+    if (d.status === "ok") { cloudPts = d.pts; cloudFor = key; }
+  } catch { /* offline */ }
+}
+function constelData() {
+  const anch = cloudAnchors();
+  const li = anch ? userLensIndex(+lens.slice(5)) : -1;
+  const ys = (r) => anch ? ((r.lens_t || [])[li] ?? 0.5) : r.words;
+  const cy = (p) => anch ? p[1] : p[2];
+  const ink = state.rows.map((r) => ({ x: r.t, y: ys(r), r }));
+  const grey = cloudPts.map((p) => ({ x: p[0], y: cy(p), w: p[2] }));
+  const xs = [...ink.map((p) => p.x), ...grey.map((p) => p.x)];
+  const yv = [...ink.map((p) => p.y), ...grey.map((p) => p.y)].filter((v) => v >= 0);
+  const pad = (lo, hi) => { const m = (hi - lo || 1) * 0.08; return [lo - m, hi + m]; };
+  const [x0, x1] = pad(Math.min(...xs, 0.3), Math.max(...xs, 0.7));
+  const [y0, y1] = pad(Math.min(...yv, 0), Math.max(...yv, 1));
+  return { ink, grey, x0, x1, y0, y1, anch };
+}
+let constelHit = [];
+function drawConstel() {
+  if (!constelOn) return;
+  const cv = $("ccanvas");
+  const dpr = window.devicePixelRatio || 1;
+  const W = cv.clientWidth, H = cv.clientHeight;
+  cv.width = W * dpr; cv.height = H * dpr;
+  const g = cv.getContext("2d");
+  g.scale(dpr, dpr);
+  g.clearRect(0, 0, W, H);
+  const { ink, grey, x0, x1, y0, y1, anch } = constelData();
+  const sx = (x) => 14 + ((x - x0) / (x1 - x0)) * (W - 28);
+  const sy = (y) => H - 20 - ((y - y0) / (y1 - y0)) * (H - 40);
+  g.fillStyle = "#c9bfae";
+  for (const p of grey) { if (p.y < 0) continue; g.beginPath(); g.arc(sx(p.x), sy(p.y), 1.6, 0, 7); g.fill(); }
+  g.strokeStyle = "rgba(42,37,29,.45)"; g.setLineDash([3, 3]); g.lineWidth = 1;
+  g.beginPath();
+  ink.forEach((p, i) => { const X = sx(p.x), Y = sy(p.y); if (i) g.lineTo(X, Y); else g.moveTo(X, Y); });
+  g.stroke(); g.setLineDash([]);
+  constelHit = [];
+  const caretRow = lastCaret ? state.rows.find((r) => r.para === lastCaret.para && r.text === lastCaret.text) : null;
+  for (const p of ink) {
+    const X = sx(p.x), Y = sy(p.y);
+    constelHit.push({ X, Y, r: p.r });
+    g.fillStyle = "#2a251d";
+    g.beginPath(); g.arc(X, Y, 3.4, 0, 7); g.fill();
+    if (caretRow && p.r.id === caretRow.id) {
+      g.strokeStyle = "#A2231F"; g.lineWidth = 1.6;
+      g.beginPath(); g.arc(X, Y, 6, 0, 7); g.stroke();
+    }
+  }
+  g.fillStyle = "#8a7f6d"; g.font = "9.5px ui-monospace, Menlo, monospace";
+  g.fillText("concrete ⟵", 14, H - 6);
+  g.textAlign = "right"; g.fillText("⟶ abstract", W - 14, H - 6); g.textAlign = "left";
+  const yl = anch ? anch.name : "length (words)";
+  g.save(); g.translate(10, H / 2); g.rotate(-Math.PI / 2); g.textAlign = "center"; g.fillText(yl, 0, 0); g.restore();
+  $("ckey").textContent = `${state.rows.length} of yours (ink, in reading order) over ${grey.length.toLocaleString()} from ${libNoun()} (grey) · every point is a maintained score — the plot is a free read`;
+}
+$("ccanvas").addEventListener("mousemove", (e) => {
+  const rect = $("ccanvas").getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  let best = null, bd = 144;
+  for (const h of constelHit) { const d = (h.X - mx) ** 2 + (h.Y - my) ** 2; if (d < bd) { bd = d; best = h; } }
+  const tip = $("ctip");
+  if (!best) { tip.hidden = true; return; }
+  tip.hidden = false;
+  tip.style.left = Math.min(best.X + 12, rect.width - 260) + "px";
+  tip.style.top = Math.max(best.Y - 10, 4) + "px";
+  tip.innerHTML = `<div></div><div class="m"></div>`;
+  tip.children[0].textContent = best.r.text.length > 90 ? best.r.text.slice(0, 90) + "…" : best.r.text;
+  tip.children[1].textContent = `t ${best.r.t.toFixed(2)} · ${best.r.words}w · click to jump`;
+});
+$("ccanvas").addEventListener("mouseleave", () => { $("ctip").hidden = true; });
+$("ccanvas").addEventListener("click", (e) => {
+  const rect = $("ccanvas").getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  let best = null, bd = 196;
+  for (const h of constelHit) { const d = (h.X - mx) ** 2 + (h.Y - my) ** 2; if (d < bd) { bd = d; best = h; } }
+  if (!best) return;
+  const block = blocks()[best.r.para];
+  if (!block) return;
+  const raw = blockRaw(block), idx = raw.indexOf(best.r.text);
+  const rng = idx >= 0 ? rangeIn(block, idx, idx + 1) : null;
+  if (rng) {
+    const sel = getSelection(); sel.removeAllRanges(); rng.collapse(true); sel.addRange(rng);
+    $("doc").focus(); block.scrollIntoView({ block: "center", behavior: "smooth" });
+    penFollow();
+  }
+});
+
+// ---------- the reader: one stranger, per paragraph ----------
+let readerMode = false;
+$("readerchip").onclick = () => {
+  readerMode = !readerMode;
+  $("readerchip").classList.toggle("on", readerMode);
+  if (readerMode) refreshReader();
+  else { $("voicehead").textContent = "Nearest voices"; $("voice").innerHTML = '<div class="empty">Put your caret in a sentence to hear which of 20 books it stands closest to.</div>'; }
+};
+async function refreshReader() {
+  const paras = blocks().map(readBlock).filter((t) => t.length);
+  const v = $("voice");
+  $("voicehead").textContent = "The reader's mind — one stranger, per paragraph";
+  if (!paras.length) { v.innerHTML = '<div class="empty">write a paragraph first.</div>'; return; }
+  v.innerHTML = '<div class="empty">a stranger is reading…</div>';
+  let d;
+  try { d = await (await fetch("/reader", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ paras }) })).json(); }
+  catch { v.innerHTML = '<div class="empty">the reader stepped out.</div>'; return; }
+  if (d.status === "no-provider") { v.innerHTML = '<div class="empty">the reader needs a model — set OPENAI_API_KEY (targeting and receipts stay local).</div>'; return; }
+  const frag = document.createDocumentFragment();
+  d.paras.forEach((p, i) => {
+    const card = document.createElement("div");
+    card.className = "card2 hit";
+    if (p.gist) {
+      const warn = p.fidelity < 0.6;
+      card.innerHTML = `<div class="t gist"></div><div class="m"></div>`;
+      card.querySelector(".t").textContent = p.gist;
+      card.querySelector(".m").textContent = `¶${i + 1} · fidelity ${p.fidelity.toFixed(2)}${warn ? " ⚠ the reader may have missed this one" : " ✓"} · ${p.cached ? "cached" : "re-read"}`;
+    } else {
+      card.innerHTML = `<div class="m">¶${i + 1} · the reader had nothing (model error)</div>`;
+    }
+    frag.appendChild(card);
+    const seam = (d.seams || [])[i];
+    if (seam != null && seam < 0.45) {
+      const sEl = document.createElement("div");
+      sEl.className = "seam";
+      sEl.textContent = `seam ${seam.toFixed(2)} — a reader feels a jump here`;
+      frag.appendChild(sEl);
+    }
+  });
+  const foot = document.createElement("div");
+  foot.className = "rfoot";
+  foot.textContent = `${d.paras.length} gists · ${d.cached} cached · ${d.reread} re-read — the cache is a fold Table keyed by content hash`;
+  frag.appendChild(foot);
+  const btn = document.createElement("button");
+  btn.className = "pull";
+  btn.textContent = "↻ read again";
+  btn.onclick = refreshReader;
+  frag.appendChild(btn);
+  v.replaceChildren(frag);
+}
+
 // ---------- paint: quantized highlight buckets, generated from the same
 // ramps the span era used. Highlights never touch the editable DOM.
 (function buildHighlightCss() {
@@ -1183,6 +1362,7 @@ function paintHighlights() {
 
 let voiceSeq = 0;
 async function fetchVoice(text, forId) {
+  if (readerMode) return;
   const seq = ++voiceSeq;
   voiceForId = forId == null ? null : forId;
   const v = $("voice");
