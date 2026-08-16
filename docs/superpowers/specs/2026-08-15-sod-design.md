@@ -79,8 +79,10 @@ Each invariant is enforced by a named test.
   the log requires generating a new id. Ids are never reused, configured, or
   derived from hardware.
 - **SOD-4 (convergence).** Two replicas running the same schema version, the
-  same engine, and the same pipeline, whose version vectors are equal, have
-  byte-identical exact views. Approximate
+  same engine, and the same pipeline, whose version vectors are equal,
+  observe byte-identical exact views **through sink readers**. (Internal
+  operator state may differ in tie-break bytes — e.g. arrival sequence
+  numbers — as long as no reader can observe the difference.) Approximate
   indexes (HNSW) converge on the vector *set*; their query results are
   order-sensitive and may differ until rebuilt from the store (see Known
   deviations).
@@ -243,15 +245,33 @@ other origins.
 
 ## Time
 
-`sod::time::Watermark` implements the clock fold's `Retain` accepts via
-`with_clock`. It returns the max `event_time` over all frames applied so far.
-Max is commutative and associative over the replicated frame set, so the
-watermark converges exactly as the data does — replicas with equal vectors
-retain identically (SOD-7, SOD-4). Consequences accepted: a frame from a
-long-offline peer may be aged out immediately upon arrival (deterministic on
-every replica), and retention advances only when writes arrive. Pipelines that
-read any other clock are not sod-compatible; the example demonstrates the
-correct wiring.
+`sod::time::Watermark` is the only "now" a sod replica has: the max
+`event_time` over all frames applied so far. Max is commutative and
+associative over the replicated frame set, so the watermark converges exactly
+as the data does (SOD-7). It is exposed for application reads and advances
+only when writes arrive.
+
+**Time-windowed operators are excluded from v1 sod compatibility.** The
+skeptical finding, recorded so nobody re-attempts the shortcut: fold's
+`Retain` is a processing-time window that stamps each record with the clock
+value at the transaction that *inserts* it. Under replication, insertion
+order differs per replica, so the stamps differ — no injected clock fixes
+this:
+
+- clock = watermark (max event-time so far): a record's stamp is the
+  watermark *at its arrival*, which is arrival-order-dependent → replicas
+  expire it at different horizons → divergence.
+- clock = current frame's event-time: a record stamped `t=10` applied
+  *after* a frame at `t=15` was already applied never sees a cutoff pass
+  above `10` on this replica until the next write, while a replica that
+  applied them in the other order already expired it → divergence.
+
+Convergent windowing needs an **event-time retain** in fold: stamp records
+with their frame's event time and expire against the watermark — two
+different time reads per commit, which `Retain`'s single-clock design cannot
+express. That operator is future work in fold (in-tree); until it exists,
+sod-compatible pipelines must not use `Retain` or any other wall-clock- or
+arrival-order-dependent operator.
 
 ## Node.js packaging
 
@@ -301,6 +321,11 @@ and sync catches up when a peer is reachable.
 - **Negative multiplicities are visible.** A retraction arriving before its
   insert leaves a transient negative count. This is correct Z-set behavior;
   apps that surface raw counts should expect it.
+- **Fold sinks must not clamp.** The differential oracle already caught one
+  such bug: fold's `Bag` dropped negative running sums, making its state
+  arrival-order-dependent (fixed in-tree — sums persist, readers surface
+  positives). Every fold sink used in a sod pipeline must be a pure
+  function of the net multiset; the differential test is the enforcement.
 
 ## Future work (recorded now, built later)
 
