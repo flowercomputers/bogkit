@@ -1,22 +1,30 @@
 //! Command-line surface. Read commands never touch the network: they open
 //! the local store and read one snapshot.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use clap::{Parser, Subcommand};
 use serde_json::{Value, json};
 
+use fold::pipeline::terminal::search::Bm25Reader;
 use fold::pipeline::terminal::{InvertedIndexReader, MultimapReader, TableReader};
 use fold::stream::Readable;
 
 use crate::api::{FigmaApi, UreqApi};
 use crate::flatten::flatten_file;
 use crate::ident::{normalize_node_id, parse_file_ref};
-use crate::model::{FileMeta, Id, NodeRec};
+use crate::model::{
+    ComponentRec, ComponentSetRec, FileMeta, Id, NodeRec, StyleRec, VariableCollectionRec,
+    VariableRec,
+};
 use crate::store::{Churn, collect_sweepable, sync};
 use crate::watch::{Tick, Watcher};
+
+/// Read handle for the pipeline's `text` BM25 sink (its tokenizer type
+/// param makes the full type unwieldy at every call site).
+type TextReader<'tx, R> = Bm25Reader<'tx, R, String, fn(&str, &mut Vec<u8>)>;
 
 #[derive(Parser)]
 #[command(name = "figmog", about = "fold-backed local mirror of a Figma file")]
@@ -93,6 +101,7 @@ fn dispatch(cli: Cli) -> Result<(), String> {
     match cli.cmd {
         Cmd::Pull { file, from_file, fresh } => cmd_pull(&db, file, from_file, fresh, cli.json),
         Cmd::Watch { file, interval } => cmd_watch(&db, file, interval, cli.json),
+        Cmd::ImportVariables { path } => cmd_import_variables(&db, path, cli.json),
         other => {
             // `open_store!`'s pipeline type contains fn items and can't be
             // named, so the store-reading dispatch below must live at this
@@ -118,14 +127,31 @@ fn dispatch(cli: Cli) -> Result<(), String> {
                 Cmd::Find { node_type, page } => st.rtx(|((nodes, _, _, _, _, _, by_type), ..)| {
                     cmd_find(&nodes, &by_type, node_type, page, json)
                 }),
-                Cmd::ImportVariables { .. } => Err("not yet implemented: import-variables".into()),
-                Cmd::Search { .. } => Err("not yet implemented: search".into()),
-                Cmd::Instances { .. } => Err("not yet implemented: instances".into()),
-                Cmd::Components => Err("not yet implemented: components".into()),
-                Cmd::Styles { .. } => Err("not yet implemented: styles".into()),
-                Cmd::Uses { .. } => Err("not yet implemented: uses".into()),
-                Cmd::Vars { .. } => Err("not yet implemented: vars".into()),
-                Cmd::Pull { .. } | Cmd::Watch { .. } => unreachable!("handled above"),
+                Cmd::Search { query, limit } => {
+                    st.rtx(|((nodes, _, text, ..), ..)| cmd_search(&nodes, &text, query, limit, json))
+                }
+                Cmd::Instances { target } => {
+                    st.rtx(|((nodes, _, _, instances_of, ..), components, component_sets, ..)| {
+                        cmd_instances(&nodes, &instances_of, &components, &component_sets, target, json)
+                    })
+                }
+                Cmd::Components => st.rtx(|((nodes, ..), components, component_sets, ..)| {
+                    cmd_components(&component_sets, &components, &nodes, json)
+                }),
+                Cmd::Styles { style_type, values } => {
+                    st.rtx(|((nodes, _, _, _, styled_by, ..), _, _, styles, ..)| {
+                        cmd_styles(&styles, &styled_by, &nodes, style_type, values, json)
+                    })
+                }
+                Cmd::Uses { id } => st.rtx(|((nodes, _, _, _, styled_by, bound_to, _), ..)| {
+                    cmd_uses(&nodes, &styled_by, &bound_to, id, json)
+                }),
+                Cmd::Vars { id } => st.rtx(|((nodes, ..), _, _, _, variables, variable_collections, _)| {
+                    cmd_vars(&nodes, &variables, &variable_collections, id, json)
+                }),
+                Cmd::Pull { .. } | Cmd::Watch { .. } | Cmd::ImportVariables { .. } => {
+                    unreachable!("handled above")
+                }
             }
         }
     }
@@ -185,6 +211,18 @@ fn cmd_pull(
     fresh: bool,
     json: bool,
 ) -> Result<(), String> {
+    let (churn, name, version) = do_pull(db, file, from_file, fresh)?;
+    print_churn(&churn, &name, &version, json)
+}
+
+/// The pull mechanics without any printing, so `cmd_watch` can format its
+/// own per-tick event lines around the same churn.
+fn do_pull(
+    db: &Db,
+    file: Option<String>,
+    from_file: Option<PathBuf>,
+    fresh: bool,
+) -> Result<(Churn, String, String), String> {
     let resp: Value = match from_file {
         Some(path) => {
             let content = std::fs::read_to_string(&path)
@@ -215,7 +253,7 @@ fn cmd_pull(
     });
     let churn = sync(&mut st, &prior, &flattened, now_ms());
 
-    print_churn(&churn, &flattened.file.name, &flattened.file.version, json)
+    Ok((churn, flattened.file.name.clone(), flattened.file.version.clone()))
 }
 
 fn print_churn(churn: &Churn, name: &str, version: &str, json: bool) -> Result<(), String> {
@@ -251,10 +289,39 @@ fn cmd_watch(db: &Db, file: Option<String>, interval: u64, json: bool) -> Result
     loop {
         match watcher.tick(&api, &key) {
             Tick::Unchanged => std::thread::sleep(interval),
-            Tick::Wait { after } => std::thread::sleep(after),
+            Tick::Wait { after } => {
+                if json {
+                    println!(
+                        "{}",
+                        json!({"event": "waiting", "seconds": after.as_secs()})
+                    );
+                } else {
+                    println!("rate limited, waiting {}s", after.as_secs());
+                }
+                std::thread::sleep(after);
+            }
             Tick::Changed { .. } => {
-                match cmd_pull(db, Some(key.clone()), None, false, json) {
-                    Ok(()) => stored = read_watermark(db),
+                if json {
+                    println!("{}", json!({"event": "changed"}));
+                } else {
+                    println!("changed → pulling…");
+                }
+                match do_pull(db, Some(key.clone()), None, false) {
+                    Ok((churn, name, version)) => {
+                        stored = read_watermark(db);
+                        if json {
+                            let mut v = serde_json::to_value(&churn).unwrap_or_default();
+                            if let Some(obj) = v.as_object_mut() {
+                                obj.insert("event".to_string(), json!("pulled"));
+                            }
+                            println!("{v}");
+                        } else {
+                            println!(
+                                "synced {name} v{version}: +{} ~{} -{} (={} unchanged)",
+                                churn.added, churn.changed, churn.removed, churn.unchanged
+                            );
+                        }
+                    }
                     Err(e) => {
                         eprintln!("figmog: pull failed: {e}");
                         // Watcher already advanced its watermark; reset it to
@@ -267,6 +334,29 @@ fn cmd_watch(db: &Db, file: Option<String>, interval: u64, json: bool) -> Result
             }
         }
     }
+}
+
+fn cmd_import_variables(db: &Db, path: PathBuf, json: bool) -> Result<(), String> {
+    let content = std::fs::read_to_string(&path)
+        .map_err(|e| format!("reading {}: {e}", path.display()))?;
+    let v: Value = serde_json::from_str(&content)
+        .map_err(|e| format!("parsing {}: {e}", path.display()))?;
+    let recs = crate::vars::parse_variables_export(&v).map_err(|e| e.to_string())?;
+
+    let mut st = crate::open_store!(&db.path);
+    st.wtx(|tx| {
+        for (id, rec) in &recs {
+            tx.upsert(id, rec);
+        }
+    });
+
+    let imported = recs.iter().filter(|(id, _)| matches!(id, Id::Variable(_))).count();
+    if json {
+        println!("{}", serde_json::to_string(&json!({"imported": imported})).map_err(|e| e.to_string())?);
+    } else {
+        println!("imported {imported} variables");
+    }
+    Ok(())
 }
 
 fn read_watermark(db: &Db) -> Option<String> {
@@ -454,6 +544,346 @@ fn cmd_find<R: Readable>(
     } else {
         for (id, name, page_id) in &rows {
             println!("{id}  {name}  ({page_id})");
+        }
+    }
+    Ok(())
+}
+
+// ---- design-system reads ----
+
+fn cmd_search<R: Readable>(
+    nodes: &TableReader<'_, R, String, NodeRec>,
+    text: &TextReader<'_, R>,
+    query: String,
+    limit: usize,
+    json: bool,
+) -> Result<(), String> {
+    // BM25's own ranking order is deterministic; keep it (do not re-sort).
+    let hits = text.search(&query, limit);
+    let rows: Vec<Value> = hits
+        .iter()
+        .filter_map(|hit| {
+            let node = nodes.get(&hit.val)?;
+            let snippet = node.text.as_ref().map(|t| t.chars().take(80).collect::<String>());
+            Some(json!({
+                "id": node.id,
+                "score": hit.score,
+                "type": node.node_type,
+                "name": node.name,
+                "page_id": node.page_id,
+                "snippet": snippet,
+            }))
+        })
+        .collect();
+
+    if json {
+        println!("{}", serde_json::to_string(&rows).map_err(|e| e.to_string())?);
+    } else {
+        for row in &rows {
+            println!(
+                "{}  {:.3}  [{}]  {}",
+                row["id"].as_str().unwrap_or_default(),
+                row["score"].as_f64().unwrap_or_default(),
+                row["type"].as_str().unwrap_or_default(),
+                row["name"].as_str().unwrap_or_default(),
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Resolve a target (node id, component key, or component/set name) to the
+/// component node ids it names, in priority order: exact node id, then key,
+/// then set name (all variants), then component name (all matches).
+fn resolve_component_ids<R: Readable>(
+    components: &TableReader<'_, R, String, ComponentRec>,
+    component_sets: &TableReader<'_, R, String, ComponentSetRec>,
+    target: &str,
+) -> Vec<String> {
+    if components.contains(&target.to_string()) {
+        return vec![target.to_string()];
+    }
+
+    let mut ids: Vec<String> = components
+        .iter()
+        .filter(|(_, c)| c.key == target)
+        .map(|(id, _)| id)
+        .collect();
+    if !ids.is_empty() {
+        return ids;
+    }
+
+    let set_ids: Vec<String> = component_sets
+        .iter()
+        .filter(|(_, s)| s.name == target)
+        .map(|(id, _)| id)
+        .collect();
+    if !set_ids.is_empty() {
+        ids = components
+            .iter()
+            .filter(|(_, c)| c.component_set_id.as_deref().is_some_and(|s| set_ids.iter().any(|sid| sid == s)))
+            .map(|(id, _)| id)
+            .collect();
+        return ids;
+    }
+
+    components.iter().filter(|(_, c)| c.name == target).map(|(id, _)| id).collect()
+}
+
+fn cmd_instances<R: Readable>(
+    nodes: &TableReader<'_, R, String, NodeRec>,
+    instances_of: &InvertedIndexReader<'_, R, String, String>,
+    components: &TableReader<'_, R, String, ComponentRec>,
+    component_sets: &TableReader<'_, R, String, ComponentSetRec>,
+    target: String,
+    json: bool,
+) -> Result<(), String> {
+    let target = normalize_node_id(&target);
+    let component_ids = resolve_component_ids(components, component_sets, &target);
+
+    let mut instance_ids: BTreeSet<String> = BTreeSet::new();
+    for cid in &component_ids {
+        instance_ids.extend(instances_of.search(cid));
+    }
+
+    let rows: Vec<Value> = instance_ids
+        .iter()
+        .filter_map(|id| nodes.get(id))
+        .map(|n| json!({"id": n.id, "name": n.name, "page_id": n.page_id, "component_id": n.component_id}))
+        .collect();
+
+    if json {
+        println!("{}", serde_json::to_string(&rows).map_err(|e| e.to_string())?);
+    } else {
+        for row in &rows {
+            println!(
+                "{}  {}  ({})",
+                row["id"].as_str().unwrap_or_default(),
+                row["name"].as_str().unwrap_or_default(),
+                row["page_id"].as_str().unwrap_or_default(),
+            );
+        }
+    }
+    Ok(())
+}
+
+fn cmd_components<R: Readable>(
+    component_sets: &TableReader<'_, R, String, ComponentSetRec>,
+    components: &TableReader<'_, R, String, ComponentRec>,
+    nodes: &TableReader<'_, R, String, NodeRec>,
+    json: bool,
+) -> Result<(), String> {
+    let mut sets: Vec<(String, ComponentSetRec)> = component_sets.iter().collect();
+    sets.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut all_components: Vec<(String, ComponentRec)> = components.iter().collect();
+    all_components.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let sets_json: Vec<Value> = sets
+        .iter()
+        .map(|(set_id, set)| {
+            let variants: Vec<Value> = all_components
+                .iter()
+                .filter(|(_, c)| c.component_set_id.as_deref() == Some(set_id.as_str()))
+                .map(|(cid, c)| json!({"node_id": cid, "name": c.name, "key": c.key}))
+                .collect();
+            let property_definitions: Value = nodes
+                .get(set_id)
+                .and_then(|n| n.property_definitions.clone())
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or(Value::Null);
+            json!({
+                "node_id": set_id,
+                "name": set.name,
+                "key": set.key,
+                "variants": variants,
+                "property_definitions": property_definitions,
+            })
+        })
+        .collect();
+
+    let standalone: Vec<Value> = all_components
+        .iter()
+        .filter(|(_, c)| c.component_set_id.is_none())
+        .map(|(cid, c)| json!({"node_id": cid, "name": c.name, "key": c.key}))
+        .collect();
+
+    let out = json!({"sets": sets_json, "components": standalone});
+
+    if json {
+        println!("{}", serde_json::to_string(&out).map_err(|e| e.to_string())?);
+    } else {
+        for s in &sets_json {
+            println!(
+                "{}  {} variants",
+                s["name"].as_str().unwrap_or_default(),
+                s["variants"].as_array().map(Vec::len).unwrap_or(0),
+            );
+        }
+        for c in &standalone {
+            println!("{}  {}", c["node_id"].as_str().unwrap_or_default(), c["name"].as_str().unwrap_or_default());
+        }
+    }
+    Ok(())
+}
+
+fn cmd_styles<R: Readable>(
+    styles: &TableReader<'_, R, String, StyleRec>,
+    styled_by: &InvertedIndexReader<'_, R, String, String>,
+    nodes: &TableReader<'_, R, String, NodeRec>,
+    style_type: Option<String>,
+    values: bool,
+    json: bool,
+) -> Result<(), String> {
+    let mut rows: Vec<(String, StyleRec)> = styles.iter().collect();
+    rows.sort_by(|a, b| a.0.cmp(&b.0));
+    if let Some(t) = &style_type {
+        rows.retain(|(_, s)| s.style_type.eq_ignore_ascii_case(t));
+    }
+
+    let out: Vec<Value> = rows
+        .iter()
+        .map(|(style_id, s)| {
+            let mut consumers = styled_by.search(style_id);
+            consumers.sort();
+            let mut obj = json!({
+                "style_id": style_id,
+                "name": s.name,
+                "key": s.key,
+                "type": s.style_type,
+                "uses": consumers.len(),
+            });
+            if values {
+                let value = consumers
+                    .first()
+                    .and_then(|nid| nodes.get(nid))
+                    .and_then(|n| crate::vars::style_value_from_consumer(&s.style_type, &n.raw))
+                    .unwrap_or(Value::Null);
+                obj["value"] = value;
+            }
+            obj
+        })
+        .collect();
+
+    if json {
+        println!("{}", serde_json::to_string(&out).map_err(|e| e.to_string())?);
+    } else {
+        for row in &out {
+            println!(
+                "{}  {}  [{}]  uses={}",
+                row["style_id"].as_str().unwrap_or_default(),
+                row["name"].as_str().unwrap_or_default(),
+                row["type"].as_str().unwrap_or_default(),
+                row["uses"].as_u64().unwrap_or_default(),
+            );
+        }
+    }
+    Ok(())
+}
+
+fn cmd_uses<R: Readable>(
+    nodes: &TableReader<'_, R, String, NodeRec>,
+    styled_by: &InvertedIndexReader<'_, R, String, String>,
+    bound_to: &InvertedIndexReader<'_, R, String, String>,
+    id: String,
+    json: bool,
+) -> Result<(), String> {
+    let mut ids = styled_by.search(&id);
+    if ids.is_empty() {
+        ids = bound_to.search(&id);
+    }
+    ids.sort();
+
+    let rows: Vec<Value> = ids
+        .iter()
+        .filter_map(|nid| nodes.get(nid))
+        .map(|n| json!({"id": n.id, "name": n.name, "page_id": n.page_id}))
+        .collect();
+
+    if json {
+        println!("{}", serde_json::to_string(&rows).map_err(|e| e.to_string())?);
+    } else {
+        for row in &rows {
+            println!(
+                "{}  {}  ({})",
+                row["id"].as_str().unwrap_or_default(),
+                row["name"].as_str().unwrap_or_default(),
+                row["page_id"].as_str().unwrap_or_default(),
+            );
+        }
+    }
+    Ok(())
+}
+
+fn cmd_vars<R: Readable>(
+    nodes: &TableReader<'_, R, String, NodeRec>,
+    variables: &TableReader<'_, R, String, VariableRec>,
+    variable_collections: &TableReader<'_, R, String, VariableCollectionRec>,
+    id: Option<String>,
+    json: bool,
+) -> Result<(), String> {
+    let owned_nodes: Vec<NodeRec> = nodes.iter().map(|(_, n)| n).collect();
+    let inferred = crate::vars::infer_from_nodes(owned_nodes.iter());
+    let mut inferred_by_id: HashMap<String, crate::vars::VarUsage> =
+        inferred.into_iter().map(|u| (u.variable_id.clone(), u)).collect();
+
+    let mut all_ids: BTreeSet<String> = inferred_by_id.keys().cloned().collect();
+    all_ids.extend(variables.iter().map(|(k, _)| k));
+    if let Some(target) = &id {
+        all_ids.retain(|v| v == target);
+    }
+
+    let rows: Vec<Value> = all_ids
+        .iter()
+        .map(|vid| {
+            let usage = inferred_by_id.remove(vid);
+            let (sites, observed) = usage
+                .map(|u| (u.sites, u.observed))
+                .unwrap_or_default();
+
+            if let Some(var) = variables.get(vid) {
+                let collection = variable_collections.get(&var.collection_id);
+                let mut values_by_mode = serde_json::Map::new();
+                for (mode_id, val_str) in &var.values_by_mode {
+                    let mode_name = collection
+                        .as_ref()
+                        .and_then(|c| c.modes.iter().find(|(mid, _)| mid == mode_id))
+                        .map(|(_, name)| name.clone())
+                        .unwrap_or_else(|| mode_id.clone());
+                    let val: Value = serde_json::from_str(val_str).unwrap_or(Value::Null);
+                    values_by_mode.insert(mode_name, val);
+                }
+                json!({
+                    "variable_id": vid,
+                    "source": "imported",
+                    "name": var.name,
+                    "resolved_type": var.resolved_type,
+                    "collection": collection.map(|c| c.name),
+                    "values_by_mode": Value::Object(values_by_mode),
+                    "sites": sites,
+                    "observed": observed,
+                })
+            } else {
+                json!({
+                    "variable_id": vid,
+                    "source": "inferred",
+                    "sites": sites,
+                    "observed": observed,
+                })
+            }
+        })
+        .collect();
+
+    if json {
+        println!("{}", serde_json::to_string(&rows).map_err(|e| e.to_string())?);
+    } else {
+        for row in &rows {
+            println!(
+                "{}  [{}]  sites={}",
+                row["variable_id"].as_str().unwrap_or_default(),
+                row["source"].as_str().unwrap_or_default(),
+                row["sites"].as_array().map(Vec::len).unwrap_or(0),
+            );
         }
     }
     Ok(())
