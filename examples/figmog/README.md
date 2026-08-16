@@ -99,6 +99,16 @@ $ claude mcp add figmog -- /absolute/path/to/clog/target/debug/figmog serve --db
 
 `--interval N` (default 10s) controls the poll cadence, same as `watch`.
 
+**Single-writer constraint:** because fjall allows only one open handle per
+store, `figmog serve` (like `figmog watch`) holds an exclusive lock on its
+`--db` for as long as it runs. A CLI read against the *same* store while
+`serve` is up — `figmog status`, `figmog search`, `figmog call
+figmog_status`, and any other command that opens the store — fails fast
+with a clean `store is locked` error rather than a raw panic; drive the
+running server through its own MCP tool calls instead, or stop `serve`
+first. (`figmog tools` never opens the store, so it works fine even while
+`serve` is running.)
+
 ### The cached proxy
 
 Proxying targets **paid Dev/Full seats**: it requires the Figma desktop
@@ -154,6 +164,12 @@ Both accept `--upstream <url>` / `--no-upstream`, probed fresh per
 invocation (no persistent connection between CLI calls). There are
 deliberately no bespoke subcommands for upstream tools — Figma's tool
 list churns; `figmog call` is the stable, generic surface.
+
+`figmog tools` and `figmog call` both require a resolved mirror — an
+established `.figmog/current` (from a prior `pull`) or an explicit `--db
+<path>` — even though `figmog tools` itself never reads the store; with
+neither, both exit 1 with `no mirror here — run figmog pull <file-url>
+first`.
 
 ### Core read tools
 

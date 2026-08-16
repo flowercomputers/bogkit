@@ -230,7 +230,7 @@ fn dispatch(cli: Cli) -> Result<(), String> {
             // generic over `P: Push<..>` — `P::Reader<'tx, R>` would be an
             // opaque associated type there, and a tuple pattern can't
             // destructure an unconstrained associated type.
-            let st = crate::open_store!(&db.path);
+            let st = open_store_checked(|| crate::open_store!(&db.path))?;
             let json = cli.json;
             match other {
                 Cmd::Status => st.rtx(|((nodes, _, _, _, _, _, _), _, _, _, _, _, meta, _)| {
@@ -404,6 +404,49 @@ pub(crate) fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
+/// The clean, user-facing error every CLI store-opening call site below
+/// translates a locked-store panic into (I-1). `figmog serve`/`figmog
+/// watch` hold fjall's single-writer lock for the life of the process — a
+/// CLI command opening the same `--db` concurrently must not surface fold's
+/// raw `unwrap()` panic (exit 101).
+const STORE_LOCKED_MSG: &str = "store is locked — is `figmog serve` running? Query the server instead (figmog call/tools), or stop it first.";
+
+/// `open_store!` (via `fold::stream::Stream::new`) panics rather than
+/// returning a `Result` when the underlying store can't be opened — most
+/// commonly because another process (`figmog serve` or `figmog watch`)
+/// already holds fjall's single-writer lock (`fjall::Error::Locked`). fold
+/// itself stays untouched (its panic-on-open contract is intentional and
+/// shared by `wtx`'s own rollback-on-panic path); this wrapper is figmog's
+/// layer, catching that one specific panic and translating it into a clean
+/// exit-1 error instead. Any *other* panic (a genuine bug — not lock
+/// contention) is re-raised unchanged so it isn't silently swallowed.
+///
+/// The default panic hook is suppressed for the duration of the call so a
+/// caught, translated panic doesn't also print Rust's raw "thread 'main'
+/// panicked at ..." line to stderr (stderr purity: only figmog's own
+/// `figmog: <message>` line should appear).
+pub(crate) fn open_store_checked<T>(
+    open: impl FnOnce() -> T + std::panic::UnwindSafe,
+) -> Result<T, String> {
+    let prev_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let result = std::panic::catch_unwind(open);
+    std::panic::set_hook(prev_hook);
+
+    result.map_err(|payload| {
+        let msg = payload
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_default();
+        if msg.contains("Locked") {
+            STORE_LOCKED_MSG.to_string()
+        } else {
+            std::panic::resume_unwind(payload)
+        }
+    })
+}
+
 // ---- engine commands ----
 
 /// Errors from [`do_pull`]: either a typed API failure (so callers can act
@@ -493,7 +536,7 @@ pub(crate) fn do_pull(
 
     let mut flattened = flatten_file(&resp).map_err(|e| e.to_string())?;
 
-    let mut st = crate::open_store!(&db.path);
+    let mut st = open_store_checked(|| crate::open_store!(&db.path))?;
     let mut prior: BTreeSet<Id> =
         st.rtx(|((nodes, ..), components, component_sets, styles, ..)| {
             collect_sweepable(&nodes, &components, &component_sets, &styles)
@@ -563,11 +606,11 @@ fn cmd_watch(db: &Db, file: Option<String>, interval: u64, json: bool) -> Result
         .map_err(|_| "FIGMA_TOKEN not set — required for watch".to_string())?;
     let api = UreqApi::new(token);
 
-    if read_watermark(db).is_none() {
+    if read_watermark(db)?.is_none() {
         cmd_pull(db, Some(key.clone()), None, false, json)?;
     }
 
-    let mut stored = read_watermark(db);
+    let mut stored = read_watermark(db)?;
     let mut watcher = Watcher::new(stored.clone());
     let interval = Duration::from_secs(interval);
     // Backoff for Tier-1 pull failures, independent of the Watcher's own
@@ -596,7 +639,7 @@ fn cmd_watch(db: &Db, file: Option<String>, interval: u64, json: bool) -> Result
                 }
                 match do_pull(db, Some(key.clone()), None, false) {
                     Ok((churn, name, version)) => {
-                        stored = read_watermark(db);
+                        stored = read_watermark(db)?;
                         pull_backoff = BACKOFF_START;
                         if json {
                             let mut v = serde_json::to_value(&churn).unwrap_or_default();
@@ -657,7 +700,7 @@ fn cmd_import_variables(db: &Db, path: PathBuf, json: bool) -> Result<(), String
         serde_json::from_str(&content).map_err(|e| format!("parsing {}: {e}", path.display()))?;
     let recs = crate::vars::parse_variables_export(&v).map_err(|e| e.to_string())?;
 
-    let mut st = crate::open_store!(&db.path);
+    let mut st = open_store_checked(|| crate::open_store!(&db.path))?;
     st.wtx(|tx| {
         for (id, rec) in &recs {
             tx.upsert(id, rec);
@@ -679,9 +722,9 @@ fn cmd_import_variables(db: &Db, path: PathBuf, json: bool) -> Result<(), String
     Ok(())
 }
 
-pub(crate) fn read_watermark(db: &Db) -> Option<String> {
-    let st = crate::open_store!(&db.path);
-    st.rtx(|(_, _, _, _, _, _, meta, _)| meta.get(&0).map(|m| m.last_modified))
+pub(crate) fn read_watermark(db: &Db) -> Result<Option<String>, String> {
+    let st = open_store_checked(|| crate::open_store!(&db.path))?;
+    Ok(st.rtx(|(_, _, _, _, _, _, meta, _)| meta.get(&0).map(|m| m.last_modified)))
 }
 
 // ---- cached-proxy CLI parity: `figmog tools` / `figmog call` ----
@@ -789,7 +832,7 @@ fn cmd_call(
     }
 
     let (mut upstream, upstream_status) = attach_upstream(upstream_url, no_upstream);
-    let mut st = crate::open_store!(&db.path);
+    let mut st = open_store_checked(|| crate::open_store!(&db.path))?;
 
     let result: Result<Value, String> = if proxy::is_local_tool(&tool) {
         match st.rtx(|r| dispatch::dispatch_read_tool(&tool, &args, upstream_status, r)) {
@@ -1258,6 +1301,51 @@ fn cmd_at<R: Readable>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// I-1: a store opened a second time in-process while the first handle
+    /// is still held reproduces the exact panic a CLI command hits against
+    /// a running `figmog serve`/`figmog watch` (fjall's file lock conflicts
+    /// on the second `File::try_lock`, regardless of whether the two opens
+    /// are in the same process or different ones — see
+    /// `fjall::locked_file::LockedFileGuard`). `open_store_checked` must
+    /// translate that panic into the clean, exit-1-friendly message instead
+    /// of letting it propagate as a raw panic.
+    #[test]
+    fn open_store_checked_translates_locked_store_panic_to_clean_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("db");
+
+        // Hold the first handle open, exactly like `figmog serve` does for
+        // the life of its process.
+        let _held = crate::open_store!(&db_path);
+
+        let result = open_store_checked(|| crate::open_store!(&db_path));
+        assert_eq!(result.err().as_deref(), Some(STORE_LOCKED_MSG));
+    }
+
+    /// The happy path: no contention, no panic, the store opens normally.
+    #[test]
+    fn open_store_checked_passes_through_a_successful_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("db");
+        let result = open_store_checked(|| crate::open_store!(&db_path));
+        assert!(result.is_ok());
+    }
+
+    /// Only the locked-store panic is translated; any other panic (a real
+    /// bug, not lock contention) must propagate unchanged rather than being
+    /// silently reworded into the locked-store message.
+    #[test]
+    fn open_store_checked_reraises_non_lock_panics_unchanged() {
+        let outcome = std::panic::catch_unwind(|| open_store_checked(|| -> () { panic!("boom") }));
+        let payload = outcome.expect_err("non-lock panics must still panic");
+        let msg = payload
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_default();
+        assert_eq!(msg, "boom");
+    }
 
     #[test]
     fn rate_limited_waits_max_of_interval_and_retry_after() {

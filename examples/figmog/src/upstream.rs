@@ -55,6 +55,12 @@ pub struct HttpUpstream {
     url: String,
     agent: ureq::Agent,
     session_id: Option<String>,
+    /// The `protocolVersion` the upstream's `initialize` response actually
+    /// negotiated (which may differ from [`PROTOCOL_VERSION`] if the
+    /// upstream negotiates down). `None` until `initialize` succeeds; once
+    /// set, sent as `MCP-Protocol-Version` on every later request per the
+    /// 2025-06-18 streamable-HTTP transport spec.
+    protocol_version: Option<String>,
     next_id: u64,
     tools: Vec<Value>,
 }
@@ -71,6 +77,7 @@ impl HttpUpstream {
             url,
             agent,
             session_id: None,
+            protocol_version: None,
             next_id: 1,
             tools: Vec::new(),
         }
@@ -112,6 +119,14 @@ impl HttpUpstream {
         if let Some(session_id) = &self.session_id {
             req = req.set("Mcp-Session-Id", session_id);
         }
+        // Per the 2025-06-18 streamable-HTTP transport spec (the version
+        // this client declares, `PROTOCOL_VERSION`), every request after a
+        // successful `initialize` must carry the negotiated protocol
+        // version; servers may reject requests without it (I-2). Absent
+        // before `initialize` completes — there's nothing negotiated yet.
+        if let Some(protocol_version) = &self.protocol_version {
+            req = req.set("MCP-Protocol-Version", protocol_version);
+        }
         let resp = match req.send_json(body.clone()) {
             Ok(resp) => resp,
             Err(ureq::Error::Status(_, resp)) => resp,
@@ -144,7 +159,13 @@ impl UpstreamMcp for HttpUpstream {
             },
         });
         let resp = self.send_request(&init_req)?;
-        extract_result(resp)?;
+        let result = extract_result(resp)?;
+        // Capture the negotiated version so every request from here on
+        // (including the `notifications/initialized` below) carries it.
+        self.protocol_version = result
+            .get("protocolVersion")
+            .and_then(Value::as_str)
+            .map(str::to_string);
 
         self.send_notification(&json!({
             "jsonrpc": "2.0",
@@ -620,6 +641,24 @@ mod tests {
                 req.to_ascii_lowercase()
                     .contains(&format!("mcp-session-id: {SESSION_ID}")),
                 "expected Mcp-Session-Id header, got: {req}"
+            );
+        }
+
+        // I-2: the initialize request predates any negotiated protocol
+        // version, so it must not carry the header yet; every request from
+        // request 2 onward (notifications/initialized, tools/list,
+        // tools/call) must carry the version the fake server's initialize
+        // response negotiated ("2025-06-18").
+        assert!(
+            !reqs[0]
+                .to_ascii_lowercase()
+                .contains("mcp-protocol-version")
+        );
+        for req in &reqs[1..] {
+            assert!(
+                req.to_ascii_lowercase()
+                    .contains("mcp-protocol-version: 2025-06-18"),
+                "expected MCP-Protocol-Version header, got: {req}"
             );
         }
     }

@@ -90,7 +90,7 @@ pub(crate) fn run_serve(
             .ok_or_else(|| "no file key: pass a file key or figma.com URL".to_string())?;
         let token = std::env::var("FIGMA_TOKEN")
             .map_err(|_| "FIGMA_TOKEN not set — required for watch".to_string())?;
-        if read_watermark(db).is_none() {
+        if read_watermark(db)?.is_none() {
             do_pull(db, Some(resolved), None, false).map_err(|e| e.to_string())?;
         }
         Some(UreqApi::new(token))

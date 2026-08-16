@@ -255,6 +255,60 @@ fn serve_e2e_initialize_tools_list_and_tool_calls() {
     assert!(status.success(), "figmog serve exited with {status:?}");
 }
 
+/// I-1: while `figmog serve` holds the store's single-writer lock, a CLI
+/// command opened against the same `--db` must fail with a clean, exit-1
+/// error — never fold's raw `unwrap()` panic (exit 101). Reproduces the
+/// review's live repro (serve holding a fixture store, `figmog status
+/// --db <same>` in a second process) as an automated test.
+#[test]
+fn cli_read_against_a_store_serve_holds_fails_clean_not_with_a_panic() {
+    let (_dir, db) = common::fixture_db();
+    let (mut guard, mut stdin, rx) = spawn_serve(&db);
+
+    // Complete the handshake before touching the store from a second
+    // process: `run_serve` opens the store synchronously, before it can
+    // ever respond to `initialize` (see serve.rs), so a response here
+    // proves the lock is already held.
+    send(
+        &mut stdin,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {"protocolVersion": "2025-06-18", "capabilities": {}},
+        }),
+    );
+    let resp = recv(&rx);
+    assert_eq!(resp["result"]["serverInfo"]["name"], json!("figmog"));
+
+    let out = assert_cmd::Command::cargo_bin("figmog")
+        .unwrap()
+        .args(["status", "--db"])
+        .arg(&db)
+        .assert()
+        .failure();
+    let output = out.get_output();
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "expected a clean exit-1, not fold's raw panic exit (101); stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("store is locked"),
+        "expected the locked-store message, got: {stderr}"
+    );
+    assert!(
+        !stderr.contains("panicked"),
+        "stderr must stay clean of the raw panic message: {stderr}"
+    );
+
+    drop(stdin);
+    let status = wait_with_timeout(&mut guard.0, TIMEOUT);
+    assert!(status.success(), "figmog serve exited with {status:?}");
+}
+
 // ---- cached-proxy e2e: figmog serve against an in-process HTTP fake ----
 //
 // Minimal hand-rolled HTTP/1.1 server (std `TcpListener`, no new deps) that
