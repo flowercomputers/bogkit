@@ -39,7 +39,8 @@ Alinery’s filesystem is the database. Sundew is the query engine it doesn’t 
 cargo run -p sundew -- --script
 cargo run -p sundew
 # then open http://localhost:3000
-# Stage (or press f) for the pizza-room path. Replay runs the clap.
+# If 3000 is taken: SUNDEW_PORT=3012 cargo run -p sundew
+# Full briefing (or press f) for the pizza-room path. Replay runs the clap.
 ```
 
 `SUNDEW_PORT` overrides the port if 3000 is taken.
