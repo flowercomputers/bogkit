@@ -15,6 +15,7 @@ use super::*;
 pub struct Stream<D: Clone, P: Push<D>> {
     pipeline: P,
     store: fjall::SingleWriterTxDatabase,
+    meta_taken: std::cell::RefCell<FxHashSet<String>>,
     _p: PhantomData<D>,
 }
 
@@ -34,6 +35,7 @@ impl<D: Clone, P: Push<D>> Stream<D, P> {
         Stream {
             pipeline,
             store,
+            meta_taken: Default::default(),
             _p: PhantomData,
         }
     }
@@ -100,7 +102,15 @@ impl<D: Clone, P: Push<D>> Stream<D, P> {
     /// For infrastructure layered over a `Stream` (e.g. replication
     /// cursors) that must commit its own bookkeeping atomically with
     /// pipeline writes via [`Tx::meta`].
+    ///
+    /// # Panics
+    /// Panics if `name` was already claimed on this `Stream` — two layers
+    /// silently sharing a metadata keyspace would corrupt each other.
     pub fn meta_keyspace(&self, name: &str) -> fjall::SingleWriterTxKeyspace {
+        assert!(
+            self.meta_taken.borrow_mut().insert(name.to_string()),
+            "duplicate meta keyspace name: {name}"
+        );
         self.store
             .keyspace(
                 format!("meta_{name}").as_str(),
