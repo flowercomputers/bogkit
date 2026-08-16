@@ -50,12 +50,13 @@
     padding: 4px 12px; border-radius: 3px;
   }
   .editbox button.danger { color: #8c3b2e; margin-left: auto; }
-  #addbtn {
-    margin-top: 26px; font-family: ui-monospace, Menlo, monospace; font-size: 11.5px;
-    cursor: pointer; border: 1px dashed var(--line); background: none; color: var(--faint);
-    padding: 5px 12px; border-radius: 3px;
+  #composer {
+    width: 100%; font: inherit; font-size: 18.5px; line-height: 1.7;
+    background: transparent; color: var(--ink); border: none; outline: none;
+    resize: none; min-height: 58px; padding: 1px 2px; margin-top: 2px;
   }
-  #addbtn:hover { color: var(--ink); border-color: var(--ink); }
+  #composer::placeholder { color: var(--faint); font-style: italic; font-size: 15px; }
+  .page.galing #composer { display: none; }
   .lane { position: sticky; top: 48px; }
   .lanehead { font-family: ui-monospace, Menlo, monospace; font-size: 10.5px; letter-spacing: .12em; color: var(--faint); text-transform: uppercase; margin-bottom: 10px; }
   #voice .hit { background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: 10px 12px; margin-bottom: 8px; }
@@ -126,7 +127,7 @@
   .lanenote { font-family: ui-monospace, Menlo, monospace; font-size: 10px; color: var(--faint); min-height: 14px; margin-bottom: 26px; }
   #naivedoc { font-size: 18.5px; line-height: 1.85; opacity: .78; }
   #naivedoc .s.stale { background-image: repeating-linear-gradient(45deg, rgba(0,0,0,.07) 0 3px, transparent 3px 6px); }
-  .page.galing #addbtn { display: none; }
+
   .page.galing #naivelane, .page.galing main { padding-top: 0; }
   /* instrument tiles — the board's black-and-amber plate */
   .tile { display: none; margin-top: 26px; background: #15110B; color: #EFE7D2; border: 1px solid #E5B54B; border-radius: 4px;
@@ -229,13 +230,13 @@
     </div>
     <div class="lenskey" id="lenskey"></div>
     <div id="doc"></div>
-    <button id="addbtn">+ add a sentence</button>
+    <textarea id="composer" rows="2" placeholder="write here — finished sentences flow into the page as you go…"></textarea>
     <div class="tile" id="foldtile"></div>
   </main>
   <aside>
     <div class="lane">
       <div id="corrigenda"></div>
-      <div class="lanehead">Nearest voices</div>
+      <div class="lanehead" id="voicehead">Nearest voices</div>
       <div id="voice"><div class="empty">Click a sentence to hear which of 20 books it stands closest to.</div></div>
     </div>
   </aside>
@@ -363,11 +364,12 @@ function renderHud() {
     : [st.keys, st.embed, st.scored].filter(Boolean).map(stageBox).join(arrow) + arrow +
       `<span class="stage">views <b>2</b></span>` +
       extra.map((s) => arrow + stageBox(s)).join("") +
-      (h.voice_us ? `${arrow}<span class="stage">kNN·canon <b>1</b> · <b>${h.voice_us}</b>µs <span class="lbl">stopwatch</span></span>` : "");
+      (h.voice_us ? `${arrow}<span class="stage">kNN·canon <b>1</b> · <b>${h.voice_us}</b>µs <span class="lbl">stopwatch</span></span>` : "") +
+      (opClass === "retract" ? `${arrow}<span class="stage lbl">re-derived the row to subtract it — same pipeline, sign −1</span>` : "");
   l.innerHTML =
     `<span class="head">fold · doc stream · <span class="op ${opClass}">${esc(verbs[h.op] || h.op)}${esc(target)}</span></span>` +
     tape +
-    `<span class="wall">wall <b>${h.wall_us}</b>µs · <b>${h.rows}</b> rows maintained, <b>${untouched}</b> never visited` +
+    `<span class="wall">wall <b>${h.wall_us}</b>µs · ${h.rows ? `<b>${h.rows}</b> rows maintained, <b>${untouched}</b> never visited` : `document empty`}` +
     `<span class="note">counted by Meter ops in the pipeline · wall = stopwatch</span></span>`;
 
   // ledger
@@ -431,31 +433,67 @@ function endEdit() {
   render();
 }
 
-$("addbtn").onclick = () => {
-  if (editId !== null || adding) return;
-  adding = true;
-  const box = document.createElement("div");
-  box.className = "editbox";
-  const ta = document.createElement("textarea");
-  ta.placeholder = "a new sentence…";
-  const rowEl = document.createElement("div");
-  rowEl.className = "row";
-  const commit = document.createElement("button");
-  commit.textContent = "commit ⏎";
-  commit.onclick = () => { if (ta.value.trim()) send({ op: "add", text: ta.value.trim() }); endEdit(); };
-  const cancel = document.createElement("button");
-  cancel.textContent = "cancel esc";
-  cancel.onclick = endEdit;
-  rowEl.append(commit, cancel);
-  box.append(ta, rowEl);
-  ta.onkeydown = (e) => {
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); commit.onclick(); }
-    if (e.key === "Escape") endEdit();
-  };
-  $("doc").after(box);
-  ta.focus();
-};
+// The app's sentence splitter (same semantics as the corpus prep): terminal
+// punctuation + closing quotes end a sentence; honorific abbreviations rejoin.
+// A pasted paragraph becomes one add per sentence — one key per sentence is
+// what keeps every downstream view incremental.
+function splitSentences(text) {
+  const out = [];
+  for (const m of text.matchAll(/([^.!?]+[.!?”"]+)|([^.!?]+$)/g)) {
+    const p = m[0].trim();
+    if (!p) continue;
+    if (out.length && /\b(Mr|Mrs|Ms|Dr|St)\.$/.test(out[out.length - 1])) {
+      out[out.length - 1] += " " + p;
+    } else {
+      out.push(p);
+    }
+  }
+  return out.length ? out : [text.trim()].filter(Boolean);
+}
 
+const composer = $("composer");
+function autogrow() { composer.style.height = "auto"; composer.style.height = composer.scrollHeight + "px"; }
+// a completed sentence = terminal punctuation (not an honorific) followed by
+// whitespace — the writer moved on. Commit completed segments, keep the rest.
+function harvest(force) {
+  const text = composer.value;
+  const segs = splitSentences(text);
+  if (!segs.length) return;
+  let keep = "";
+  if (!force) {
+    const last = segs[segs.length - 1];
+    const done = /[.!?]["\u201d]?\s*$/.test(last) && !/\b(Mr|Mrs|Ms|Dr|St)\.$/.test(last.trim());
+    const moved = /\s$/.test(text) || segs.length > 1;
+    if (!done || !moved) keep = segs.pop();
+    while (segs.length && /\b(Mr|Mrs|Ms|Dr|St)\.$/.test(segs[segs.length - 1].trim())) {
+      keep = segs.pop() + (keep ? " " + keep : "");
+    }
+  }
+  for (const sSeg of segs) send({ op: "add", text: sSeg });
+  if (segs.length) {
+    composer.value = keep;
+    autogrow();
+    $("voicehead").textContent = "Nearest voices — your last sentence";
+    fetchVoice(segs[segs.length - 1], null);
+  }
+}
+let penTimer = null;
+composer.addEventListener("input", () => {
+  autogrow();
+  harvest(false);
+  // live voices: follow the pen while the sentence is still being written
+  clearTimeout(penTimer);
+  const draft = composer.value.trim();
+  if (draft.split(/\s+/).length >= 3) {
+    penTimer = setTimeout(() => {
+      $("voicehead").textContent = "Nearest voices — following your pen";
+      fetchVoice(draft, null);
+    }, 350);
+  }
+});
+composer.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); harvest(true); }
+});
 // one delegated handler: seeded chips, user-lens chips (dynamic), their × and + lens
 document.querySelector(".chips").addEventListener("click", (e) => {
   const x = e.target.closest("[data-unlens]");
@@ -749,7 +787,9 @@ async function fetchVoice(text, forId) {
   const seq = ++voiceSeq;
   voiceForId = forId == null ? null : forId;
   const v = $("voice");
-  v.innerHTML = '<div class="empty">listening…</div>';
+  // keep the previous hits on screen while following the pen — only show the
+  // placeholder when the lane is empty, so live typing doesn't flicker
+  if (!v.querySelector(".hit")) v.innerHTML = '<div class="empty">listening…</div>';
   try {
     const res = await fetch(`/voice?text=${encodeURIComponent(text)}`);
     const data = await res.json();

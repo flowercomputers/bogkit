@@ -410,7 +410,10 @@ fn doc_ingest(
 
     let mut seq: u64 = 0;
     let existing = st.rtx(|(sents, _)| sents.iter().count());
-    let hud = if existing == 0 {
+    // SOUNDINGS_NO_SEED=1 starts an empty document instead of the demo doc —
+    // for writing your own piece rather than touring the seeded one
+    let no_seed = std::env::var("SOUNDINGS_NO_SEED").is_ok();
+    let hud = if existing == 0 && !no_seed {
         let before = reg.snapshot();
         let t = Instant::now();
         st.wtx(|tx| {
