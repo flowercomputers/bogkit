@@ -124,11 +124,12 @@ fn len_check(len_bytes: &[u8; 4]) -> [u8; 4] {
     blake3::hash(len_bytes).as_bytes()[..4].try_into().unwrap()
 }
 
-/// `decode_record` error when the length prefix fails its check — the
-/// declared length is untrustworthy, so the record cannot even be
-/// delimited. Log recovery treats this as interior corruption, never as a
-/// torn tail (torn appends produce *short* records, not garbled headers).
-pub const CORRUPT_LEN: &str = "record length check failed";
+/// `decode_record` error when the length prefix cannot be trusted — it
+/// fails its check, or its value overflows record arithmetic — so the
+/// record cannot even be delimited. Log recovery treats this as interior
+/// corruption, never as a torn tail (torn appends produce *short*
+/// records, not garbled headers).
+pub const CORRUPT_LEN: &str = "record length untrustworthy";
 
 /// Decode and verify one record from the front of `buf`.
 ///
@@ -145,10 +146,12 @@ pub fn decode_record(buf: &[u8]) -> Result<Option<(Frame, FrameHash, usize)>, So
         return Err(SodError::Corrupt(CORRUPT_LEN));
     }
     let len = u32::from_le_bytes(len_bytes) as usize;
-    // untrusted arithmetic: guard overflow on 32-bit targets (wasm32)
+    // untrusted arithmetic: guard overflow on 32-bit targets (wasm32).
+    // An overflowing length is as untrustworthy as a failed check — same
+    // classification, so recovery treats both as interior corruption.
     let total = match len.checked_add(HEADER + 32) {
         Some(t) => t,
-        None => return Err(SodError::Corrupt("record length overflows")),
+        None => return Err(SodError::Corrupt(CORRUPT_LEN)),
     };
     if buf.len() < total {
         return Ok(None);

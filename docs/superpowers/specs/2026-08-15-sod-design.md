@@ -84,7 +84,13 @@ Each invariant is enforced by a named test.
   **Exception: a replica never poisons its own feed** — it is the feed's
   authority, a conflicting claim about it is the peer's forgery (or a reused
   id), and self-poisoning would let one hostile message halt local commits.
-  Refusals recorded mid-session are returned to sync callers, never
+  Note the exception covers *conflicting* forgeries only: frames are
+  unsigned in v1, so a forged frame that cleanly *extends* our feed
+  (correct next seq, correct prev-hash) is accepted like any other — that
+  is the pre-existing unsigned-frame limitation the signatures item in
+  Future work owns, not something poisoning can address. Refusals recorded
+  mid-session are returned to sync callers (at most one per origin per
+  session, so a flooding peer cannot grow them unboundedly), never
   swallowed — a silently-poisoned feed is a feed that silently stopped
   replicating.
 - **SOD-3 (fresh replica id).** `replica_id` is 128 random bits generated when

@@ -47,6 +47,10 @@ pub struct Session {
     sent_done: bool,
     peer_done: bool,
     skipped: Vec<SodError>,
+    // origins already recorded in `skipped` — one refusal per origin per
+    // session, so a hostile peer flooding forged frames cannot grow
+    // `skipped` without bound
+    skipped_origins: std::collections::BTreeSet<crate::ReplicaId>,
 }
 
 impl Session {
@@ -58,6 +62,7 @@ impl Session {
             sent_done: false,
             peer_done: false,
             skipped: Vec::new(),
+            skipped_origins: Default::default(),
         }
     }
 
@@ -111,10 +116,13 @@ impl Session {
             }
             Msg::Frames(frames) => {
                 for frame in frames {
+                    let origin = frame.origin;
                     match r.ingest(frame) {
                         Ok(_) => {}
                         Err(e @ (SodError::Equivocation { .. } | SodError::Poisoned(_))) => {
-                            self.skipped.push(e);
+                            if self.skipped_origins.insert(origin) {
+                                self.skipped.push(e);
+                            }
                         }
                         Err(e) => return Err(e),
                     }
@@ -135,6 +143,8 @@ impl Session {
     }
 
     /// Per-origin refusals recorded while the session continued (SOD-2).
+    /// At most one entry per origin per session — bounded regardless of
+    /// how many refused frames a peer sends.
     pub fn skipped(&self) -> &[SodError] {
         &self.skipped
     }
