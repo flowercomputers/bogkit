@@ -1,0 +1,22 @@
+[package]
+name = "sod"
+version = "0.0.1"
+edition = "2024"
+
+[features]
+default = ["fold-engine", "ws", "os-rng"]
+# The fold-backed Engine (pulls in fold and, transitively, fjall — native only).
+fold-engine = ["dep:fold"]
+# Blocking websocket transport.
+ws = ["dep:tungstenite"]
+# ReplicaId::generate() via the OS RNG. Off on targets without getrandom
+# support; construct ReplicaId::from_bytes with caller-supplied entropy there.
+os-rng = ["dep:getrandom"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+postcard = { version = "1", features = ["use-std"] }
+blake3 = "1"
+fold = { path = "../fold", optional = true }
+tungstenite = { version = "0.24", optional = true }
+getrandom = { version = "0.2", optional = true }
