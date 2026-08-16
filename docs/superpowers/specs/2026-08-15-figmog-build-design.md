@@ -508,31 +508,31 @@ stdin ──▶ reader thread ──▶ mpsc<String> ──▶ main loop ──�
   requests; a pull blocks request handling for its duration (documented —
   seconds at worst, and only when the file actually changed).
 
-### Relationship to Figma's official MCP server (binding)
+### Relationship to Figma's official MCP server (binding; revised for v3)
 
-figmog must never be confusable with Figma's official MCP server. Three
-enforced distinctions:
+**Positioning (v3 decision): figmog is the ONLY Figma MCP an agent
+connects to** — a cached proxy in front of Figma's native desktop server,
+plus the local mirror's own query tools. Within the one server, the
+namespace rule keeps every call unambiguous:
 
-1. **Distinct namespace:** every tool is `figmog_*`. Figma's native tools
-   are unprefixed (`get_code`, `get_screenshot`, `get_variable_defs`, …);
-   there is no name collision and no tool on either server that overlaps
-   the other's capability. figmog ships nothing codegen- or
-   screenshot-shaped; the native server has nothing query-shaped.
-2. **Server-level steering:** the `initialize` result's `instructions`
-   field carries, verbatim: "figmog is a local, instant, rate-limit-free
-   mirror of one Figma file. Use figmog tools for ALL structure, search,
-   components, styles, and variables. Use the official Figma MCP only for
-   code generation or screenshots — never for reads figmog can answer."
-3. **Cost transparency:** every tool description states that it reads the
-   local mirror at zero API cost; `figmog_sync` alone is labeled as
-   spending Figma rate budget.
+1. **Native-named tools are always proxied.** Tools discovered from the
+   upstream desktop server (`get_design_context`, `get_screenshot`,
+   `get_metadata`, `get_variable_defs`, …) are re-exposed verbatim and
+   answered by the upstream (through the cache) with native semantics and
+   output formats — figmog never impersonates them with its own data.
+2. **`figmog_*` tools are always local.** The mirror's query tools answer
+   instantly from the store at zero API cost.
+3. **Server-level steering:** the `initialize` result's `instructions`
+   field carries, verbatim: "figmog is your Figma server: a local,
+   instant mirror of one Figma file plus a cached proxy to Figma's native
+   capabilities. Call figmog for everything Figma-related. figmog_* tools
+   answer from the local mirror at zero API cost; native-named tools
+   (get_*, …) go to Figma, cached by file version where possible."
 
-**v3 direction (documented, not built):** for paid seats with the desktop
-Dev Mode server available, figmog could become a *cached proxy* — the only
-Figma-facing MCP an agent sees — forwarding codegen/screenshot tools to
-the native server and caching responses keyed by (tool, args, file
-version). Out of scope until the native server is reachable in a target
-environment; on free plans there is nothing to proxy.
+This targets **paid Dev/Full seats** (the desktop server's requirement).
+The free-plan-only paths (plugin-console variables export, inference as
+primary) remain in the code as fallbacks but are no longer the design
+center.
 
 ### Tools
 
@@ -602,5 +602,94 @@ resolution identical to the other commands.
 
 ### Non-goals (v2)
 
-MCP resources/prompts capabilities; HTTP/SSE transports; multi-file
-serving; auth on the socket (stdio only, inherits process trust).
+MCP resources/prompts capabilities; HTTP/SSE transports for *our* server;
+multi-file serving; auth on the socket (stdio only, inherits process
+trust).
+
+## 12. v3: the cached proxy
+
+figmog becomes the only Figma MCP an agent sees: local `figmog_*` tools
+plus a verbatim passthrough of the native desktop server's tools, with a
+version-keyed response cache. Targets paid Dev/Full seats; requires the
+Figma desktop app's Dev Mode MCP server (streamable HTTP at
+`http://127.0.0.1:3845/mcp` by default).
+
+### Upstream client (`upstream.rs`)
+
+- `trait UpstreamMcp { fn initialize(&mut self) -> Result<(), UpstreamError>; fn tools(&self) -> &[Value]; fn call(&mut self, name: &str, args: &Value) -> Result<Value, UpstreamError>; }`
+  plus `HttpUpstream` (ureq POST of JSON-RPC frames; accept both
+  `application/json` bodies and single-event `text/event-stream`
+  responses, extracting the `data:` JSON; carry the
+  `Mcp-Session-Id` header if the server issues one) and a scripted fake
+  for tests. `--upstream <url>` overrides the default;
+  `--no-upstream` disables proxying entirely.
+- Startup: probe + MCP handshake; on failure, serve local tools only,
+  log one stderr line, and report `upstream: "unreachable"` in
+  `figmog_status`. No mid-session re-probe in v3 (restart to attach —
+  documented).
+
+### Registry merge
+
+`tools/list` = the 17 local `figmog_*` tools followed by every upstream
+tool verbatim (name, description, inputSchema passed through; description
+prefixed "[via Figma desktop] "). Name collisions are impossible by the
+namespace rule; if an upstream tool ever arrives named `figmog_*`, drop
+it and log. `tools/call` routes by name: local registry first, else
+upstream.
+
+### Cache
+
+- New record kind: `Id::ProxyCache(String /*key hash*/)`,
+  `Rec::ProxyCache { key_hash, tool, args_canonical, file_version,
+  content: String /*canonical JSON of the MCP result content*/ }`, stored
+  through the same stream into a `proxy_cache` Table sink.
+- **Cacheable** = tool name starts `get_` or `list_` AND the arguments
+  contain an explicit node id (selection-based calls are invisible to the
+  cache and always forwarded). Key = hash(tool + canonical args); a hit
+  requires `file_version == current FileMeta.version`.
+- **Eviction:** during `sync`, when the file version changes, stale
+  `ProxyCache` rows (any whose `file_version` differs from the incoming
+  version) join the sweep. Manually imported variables remain
+  sweep-exempt; the cache is not.
+- **Writes:** any non-cacheable upstream call that is not `get_`/`list_`
+  (e.g. `add_code_connect_map`, `send_code_connect_mappings`) is
+  forwarded uncached and, on success, triggers an immediate meta poll so
+  upstream-originated edits reach the mirror without waiting for the
+  next tick.
+
+### CLI parity (1:1 via mechanism)
+
+The engine exposes everything; the CLI can invoke anything:
+- `figmog tools` — the merged tool list (local + upstream, with source
+  and cacheability flags).
+- `figmog call <tool> [--args '<json>']` — invoke any tool by name
+  through the same dispatch the MCP server uses (local tools included).
+Bespoke subcommands for upstream tools are deliberately NOT added —
+Figma's tool list churns; the generic mechanism is the stable 1:1
+surface.
+
+### Enterprise variables (opportunistic)
+
+`pull` additionally calls `GET /v1/files/:key/variables/local` (Tier 2/
+Enterprise): on success its records flow through
+`parse_variables_export` into the same sync **and become sweepable for
+that pull** (API-provided variables are file state); on 403/404 the call
+is skipped silently and the v1 behavior (import/inference, sweep-exempt)
+holds unchanged.
+
+### Testing
+
+- Upstream client unit tests against a scripted fake; one in-process HTTP
+  fake (std `TcpListener` serving canned JSON-RPC responses, no new
+  deps) exercising `HttpUpstream` end to end incl. the SSE-style body.
+- Registry merge + routing + cache hit/miss/eviction unit tests (fake
+  upstream, fixture store; assert the second identical `get_*` call with
+  a nodeId never reaches the fake, and a version bump evicts).
+- e2e: serve with `--no-upstream` keeps the v2 behavior (existing tests);
+  one e2e with the in-process HTTP fake upstream asserts a proxied tool
+  appears in tools/list and round-trips.
+
+### Non-goals (v3)
+
+Proxying the remote server (OAuth); mid-session upstream re-attach /
+`listChanged` notifications; caching selection-based calls; multi-file.
