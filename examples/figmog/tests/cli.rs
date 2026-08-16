@@ -270,6 +270,60 @@ fn stats_path_text_where_at() {
     assert!(!ids.contains(&"1:2"), "ids={ids:?}");
 }
 
+/// A corrupted store with a `parent_id` cycle must not hang `path` or
+/// `stats` — both walk `parent_id` chains, and both become MCP tool bodies
+/// inside `figmog serve`'s single-threaded loop, where a hang would stall
+/// the whole server. Hand-upsert two nodes whose parents point at each
+/// other (same hand-upsert pattern as `tests/sync.rs`), bypassing
+/// `flatten`/`sync` entirely so the cycle can't be prevented upstream.
+#[test]
+fn parent_cycle_does_not_hang_path_or_stats() {
+    use figmog::model::{Id, NodeRec, Rec};
+
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("db");
+    let mut st = figmog::open_store!(&db);
+    let node = |id: &str, parent: &str| NodeRec {
+        id: id.into(),
+        parent_id: Some(parent.into()),
+        child_index: 0,
+        page_id: "0:1".into(),
+        node_type: "FRAME".into(),
+        name: id.into(),
+        visible: true,
+        text: None,
+        component_id: None,
+        component_properties: vec![],
+        property_definitions: None,
+        style_refs: vec![],
+        bound_variables: vec![],
+        abs_bounds: None,
+        raw: "{}".into(),
+    };
+    st.wtx(|tx| {
+        tx.upsert(&Id::Node("A:1".into()), &Rec::Node(node("A:1", "B:1")));
+        tx.upsert(&Id::Node("B:1".into()), &Rec::Node(node("B:1", "A:1")));
+    });
+    drop(st); // release the store lock before the child process opens it
+
+    let db = db.display().to_string();
+
+    let out = Command::cargo_bin("figmog")
+        .unwrap()
+        .args(["path", "A:1", "--db", &db])
+        .assert()
+        .failure()
+        .code(1);
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr).to_string();
+    assert!(stderr.contains("cycle"), "stderr: {stderr}");
+
+    Command::cargo_bin("figmog")
+        .unwrap()
+        .args(["stats", "--db", &db, "--json"])
+        .assert()
+        .success();
+}
+
 #[test]
 fn import_variables_upgrades_vars_to_authoritative() {
     let (dir, db) = fixture_db();

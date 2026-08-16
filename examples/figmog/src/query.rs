@@ -470,11 +470,19 @@ pub fn vars<R: Readable>(
 // rate-limited API surface could offer, all answered from the local store.
 
 /// Depth of `id` counting the root as 0, by walking `parent_id` up to the
-/// root. The file is local, so an O(depth) walk per node is fine.
+/// root. The file is local, so an O(depth) walk per node is fine. Guards
+/// against a corrupted store with a `parent_id` cycle: once an id repeats,
+/// stop and report the depth counted so far rather than looping forever —
+/// this runs inside `figmog serve`'s single-threaded loop, where a hang
+/// would stall the whole server.
 fn depth_of<R: Readable>(nodes: &TableReader<'_, R, String, NodeRec>, id: &str) -> usize {
     let mut depth = 0;
     let mut current = id.to_string();
+    let mut visited: BTreeSet<String> = BTreeSet::new();
     while let Some(n) = nodes.get(&current) {
+        if !visited.insert(current.clone()) {
+            break; // parent cycle: depth-so-far is the best available answer
+        }
         match n.parent_id {
             Some(parent) => {
                 depth += 1;
@@ -528,14 +536,20 @@ pub fn stats<R: Readable>(
 }
 
 /// Ancestor chain root→node, as `[{id, name, type}]`. Unknown id → Err.
+/// A `parent_id` cycle (a corrupted store) is also an `Err` rather than an
+/// infinite loop — see [`depth_of`]'s doc comment for why that matters here.
 pub fn path<R: Readable>(
     nodes: &TableReader<'_, R, String, NodeRec>,
     id: String,
 ) -> Result<Value, String> {
     let id = normalize_node_id(&id);
     let mut chain: Vec<NodeRec> = Vec::new();
+    let mut visited: BTreeSet<String> = BTreeSet::new();
     let mut current = id.clone();
     loop {
+        if !visited.insert(current.clone()) {
+            return Err(format!("parent cycle detected at {current}"));
+        }
         let n = nodes
             .get(&current)
             .ok_or_else(|| format!("no node {current} in the mirror"))?;
