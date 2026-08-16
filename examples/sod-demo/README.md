@@ -12,9 +12,11 @@ Each data directory is one replica (a **sod**):
 └── replica_id   16 random bytes, generated with the log, dies with it
 ```
 
-The pipeline is `(Bag<String>, Count)`; the datum is a `String` note. Bump
-`SCHEMA` in `main.rs` whenever you change either — replicas with different
-schemas refuse to sync instead of corrupting.
+The pipeline is `(sod::sinks::Bag<String>, fold Count)`; the datum is a
+`String` note. Bump `SCHEMA` in `main.rs` whenever you change either —
+replicas with different schemas refuse to sync instead of corrupting.
+(`sod::sinks::Bag` rather than fold's: replication-safe sinks must be pure
+functions of the net multiset — see the sod README.)
 
 ## Commands
 

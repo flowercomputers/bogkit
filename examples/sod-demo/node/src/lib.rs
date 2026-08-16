@@ -14,8 +14,9 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use fold::pipeline::terminal::{Bag, Count};
+use fold::pipeline::terminal::Count;
 use napi::bindgen_prelude::*;
+use sod::sinks::Bag;
 use napi_derive::napi;
 use sod::engine_fold::FoldEngine;
 use sod::log_file::FileLog;

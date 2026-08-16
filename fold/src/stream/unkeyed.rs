@@ -15,7 +15,6 @@ use super::*;
 pub struct Stream<D: Clone, P: Push<D>> {
     pipeline: P,
     store: fjall::SingleWriterTxDatabase,
-    meta_taken: std::cell::RefCell<FxHashSet<String>>,
     _p: PhantomData<D>,
 }
 
@@ -35,7 +34,6 @@ impl<D: Clone, P: Push<D>> Stream<D, P> {
         Stream {
             pipeline,
             store,
-            meta_taken: Default::default(),
             _p: PhantomData,
         }
     }
@@ -93,35 +91,5 @@ impl<D: Clone, P: Push<D>> Stream<D, P> {
 
     pub(crate) fn store(&self) -> &fjall::SingleWriterTxDatabase {
         &self.store
-    }
-
-    /// Open (or create) a metadata keyspace, backed by the partition
-    /// `meta_{name}` — outside the pipeline's `sink_*` namespace, so it can
-    /// never collide with a sink.
-    ///
-    /// For infrastructure layered over a `Stream` (e.g. replication
-    /// cursors) that must commit its own bookkeeping atomically with
-    /// pipeline writes via [`Tx::meta`].
-    ///
-    /// # Panics
-    /// Panics if `name` was already claimed on this `Stream` — two layers
-    /// silently sharing a metadata keyspace would corrupt each other.
-    pub fn meta_keyspace(&self, name: &str) -> fjall::SingleWriterTxKeyspace {
-        assert!(
-            self.meta_taken.borrow_mut().insert(name.to_string()),
-            "duplicate meta keyspace name: {name}"
-        );
-        self.store
-            .keyspace(
-                format!("meta_{name}").as_str(),
-                fjall::KeyspaceCreateOptions::default,
-            )
-            .unwrap()
-    }
-
-    /// A snapshot of committed state, for reading metadata keyspaces
-    /// (e.g. at startup, before any write transaction).
-    pub fn meta_snapshot(&self) -> fjall::Snapshot {
-        self.store.read_tx()
     }
 }

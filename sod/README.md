@@ -69,7 +69,7 @@ wasm32-unknown-unknown` passes and is enforced by `tests/wasm_check.rs`.
 ## Using it
 
 ```rust
-use fold::pipeline::terminal::Bag;
+use sod::sinks::Bag;
 use sod::{Replica, ReplicaId};
 use sod::{engine_fold::FoldEngine, log_file::FileLog, time::Watermark};
 
@@ -81,11 +81,17 @@ replica.commit(vec![(postcard::to_stdvec(&note)?, 1)], event_time_ms)?;
 sod::transport::ws::sync_with("ws://peer:7171", &mut replica, SCHEMA)?;
 ```
 
+Sod **consumes fold's public API and never modifies fold** — the
+applied-cursor is an ordinary pipeline node (sink name `sod_cursor`,
+reserved), and where a stock fold sink doesn't fit replication, sod ships
+its own in `sod::sinks`.
+
 Rules for a sod-compatible pipeline:
 
 1. Sinks must be pure functions of the net multiset (the differential
-   oracle test enforces this; it already caught and fixed a clamp bug in
-   fold's `Bag`).
+   oracle test enforces this; it caught fold's stock `Bag` clamping
+   negative sums — use `sod::sinks::Bag` instead; fold's `Count` is safe
+   as-is).
 2. No wall-clock or arrival-order-dependent operators — in particular
    fold's `Retain` is not yet sod-compatible (see the spec's Time section
    for the analysis; an event-time retain in fold is the fix).

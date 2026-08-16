@@ -17,6 +17,13 @@ Sod lives in this workspace as a crate (`sod/`) with a path dependency on
 compiled against it, so fold changes break sod at `cargo build` time and get
 fixed in-tree — never a lagging external binding chasing a moving API.
 
+**Sod consumes fold; it never modifies it.** Everything sod needs from fold
+comes through fold's public API — the `Push` trait, sink keyspaces, the
+startup snapshot, transactional writes. Where fold's behavior doesn't fit
+replication (see the `Bag` clamp finding below), sod ships its own sink
+rather than patching the core. This keeps fold pristine and
+upstream-mergeable, and keeps sod a pure consumer with nothing to rebase.
+
 The goal is that both **client↔server patterns and decentralized p2p
 patterns** can be enabled against **different bog machinery** — fold today,
 other engines tomorrow — with replicas running in browsers, native apps,
@@ -124,8 +131,9 @@ sod/                          workspace crate
 ├── time.rs         core      watermark clock
 ├── log_file.rs     [std]     filesystem LogStore with torn-tail recovery
 ├── transport/ws.rs [ws]      blocking websocket peer + listener
-└── engine_fold.rs  [fold]    fold-backed Engine: Stream, applied-cursor,
-                              watermark wired into Retain via with_clock
+├── engine_fold.rs  [fold]    fold-backed Engine: wraps the app pipeline in
+│                             an AppliedCursor node (fold public API only)
+└── sinks.rs        [fold]    replication-safe sinks (Bag) for sod pipelines
 
 examples/sod-demo/            two-replica convergence demo over websocket;
                               doubles as the app template
@@ -210,9 +218,11 @@ Local commit of a batch of deltas:
    policy.
 3. Hand the frame to the engine's `apply`, which must commit the deltas and
    the applied-cursor advance for `(origin, seq)` atomically. In the fold
-   engine this is one fold write transaction, with the cursor kept in a
-   sod-owned keyspace inside fold's store; in `MemEngine` it is a plain
-   in-memory update.
+   engine this is one fold write transaction: sod wraps the app pipeline in
+   an `AppliedCursor` node — an ordinary `Push` node claiming the sink name
+   `sod_cursor` — which persists the cursor at commit, inside the same
+   transaction as the deltas (fold public API only, no fold changes). In
+   `MemEngine` it is a plain in-memory update.
 
 Remote frames (from sync) follow the same steps 2–3 after chain verification
 and dedup. On open, sod compares the log against the applied-cursor and
@@ -321,11 +331,15 @@ and sync catches up when a peer is reachable.
 - **Negative multiplicities are visible.** A retraction arriving before its
   insert leaves a transient negative count. This is correct Z-set behavior;
   apps that surface raw counts should expect it.
-- **Fold sinks must not clamp.** The differential oracle already caught one
-  such bug: fold's `Bag` dropped negative running sums, making its state
-  arrival-order-dependent (fixed in-tree — sums persist, readers surface
-  positives). Every fold sink used in a sod pipeline must be a pure
-  function of the net multiset; the differential test is the enforcement.
+- **Sinks must not clamp.** The differential oracle caught fold's `Bag`
+  dropping negative running sums, making its state arrival-order-dependent
+  ('-1 then +2' and '+2 then -1' converge differently). Per the
+  fold-unmodified policy, sod ships `sod::sinks::Bag` with
+  order-independent semantics (nonzero sums persist; readers surface
+  positives) instead of patching fold; the finding stands as an upstream
+  report. Every sink in a sod pipeline must be a pure function of the net
+  multiset — use `sod::sinks` or audited fold sinks (`Count` is a plain
+  commutative sum) — and the differential test is the enforcement.
 
 ## Future work (recorded now, built later)
 

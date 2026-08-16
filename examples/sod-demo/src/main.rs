@@ -17,8 +17,9 @@
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use fold::pipeline::terminal::{Bag, Count};
+use fold::pipeline::terminal::Count;
 use sod::engine_fold::FoldEngine;
+use sod::sinks::Bag;
 use sod::log_file::FileLog;
 use sod::time::Watermark;
 use sod::transport::ws::{serve, sync_with};

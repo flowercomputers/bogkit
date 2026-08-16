@@ -2,8 +2,9 @@
 //! via the transactional cursor, and the MemEngine differential oracle.
 #![cfg(feature = "fold-engine")]
 
-use fold::pipeline::terminal::{Bag, Count};
+use fold::pipeline::terminal::Count;
 use sod::engine::{Engine, MemEngine};
+use sod::sinks::Bag;
 use sod::engine_fold::FoldEngine;
 use sod::log_file::FileLog;
 use sod::store::LogStore;

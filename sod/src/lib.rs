@@ -27,6 +27,8 @@ pub mod engine_fold;
 pub mod frame;
 pub mod log_file;
 pub mod replica;
+#[cfg(feature = "fold-engine")]
+pub mod sinks;
 pub mod store;
 pub mod sync;
 pub mod time;
