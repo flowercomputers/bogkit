@@ -34,10 +34,12 @@ use crate::lens::{self, LensDef, LensRegistry};
 pub const DIM: usize = ese::DIMENSIONS;
 
 /// Every Nth canon sentence goes into the index (SOUNDINGS_CANON_STEP,
-/// default 10) — samples all 20 books. With the graph snapshot the reopen
-/// cost no longer scales with this, only the one-time build does.
+/// default 1 = the full 129,097-sentence canon, matching the other three
+/// libraries and every published number; set 10 for a fast dev subsample).
+/// With the graph snapshot the reopen cost no longer scales with this,
+/// only the one-time build does.
 pub fn canon_step() -> usize {
-    std::env::var("SOUNDINGS_CANON_STEP").ok().and_then(|s| s.parse().ok()).unwrap_or(10).max(1)
+    std::env::var("SOUNDINGS_CANON_STEP").ok().and_then(|s| s.parse().ok()).unwrap_or(1).max(1)
 }
 
 // Sentence anchors for the concrete——abstract axis (the G4 finding: anchor
@@ -548,9 +550,10 @@ fn doc_ingest(
 
     let mut seq: u64 = 0;
     let existing = st.rtx(|(sents, _)| sents.iter().count());
-    // SOUNDINGS_NO_SEED=1 starts an empty document instead of the demo doc —
-    // for writing your own piece rather than touring the seeded one
-    let no_seed = std::env::var("SOUNDINGS_NO_SEED").is_ok();
+    // A fresh document starts EMPTY — the ⚡ demo-paragraph button seeds live,
+    // one passage at a time. SOUNDINGS_SEED=1 restores the old tour doc
+    // (which the ?demo=retract / chips dry-run scripts still assume).
+    let no_seed = std::env::var("SOUNDINGS_SEED").is_err();
     let hud = if existing == 0 && !no_seed {
         let before = reg.snapshot();
         let t = Instant::now();

@@ -31,6 +31,15 @@
     padding: 6px 14px; border-radius: 999px;
   }
   .chip.on { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+  #seedfab { position: fixed; left: 18px; bottom: 16px; z-index: 40;
+    font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--card); color: var(--ink);
+    padding: 8px 15px; border-radius: 999px; box-shadow: 0 6px 18px rgba(40,30,10,.14);
+    transition: bottom .25s ease; }
+  #seedfab:hover { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+  #seedfab:active { transform: translateY(1px); }
+  body.instruments #seedfab { bottom: 74px; }
+  .page.galing #seedfab { display: none; }
   #mast { display: flex; gap: 46px; margin: 20px 0 0; flex-wrap: wrap;
     border-bottom: 4px double var(--line); padding-bottom: 16px; }
   .slot { position: relative; cursor: pointer; min-width: 120px; }
@@ -207,35 +216,40 @@
   #galechip[disabled] { cursor: default; opacity: .55; }
   .page.galing { grid-template-columns: 1fr minmax(0, 560px) minmax(0, 560px) 1fr; }
   .page.galing aside { display: none; }
+  /* the gale takes the whole stage: writing chrome folds away, lanes align */
+  .page.galing h1, .page.galing .sub, .page.galing #mast, .page.galing .chips, .page.galing #lenskey { display: none; }
+  .lanetitle.fold, #foldnote { display: none; }
+  .page.galing .lanetitle.fold { display: block; color: #1D5C49; }
+  .page.galing #foldnote { display: block; }
   #galebar { display: none; grid-column: 2 / 4; grid-row: 1; align-items: center; gap: 14px;
-    font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--faint); margin-bottom: 8px; }
+    font-family: ui-monospace, Menlo, monospace; font-size: 13px; color: var(--faint); margin-bottom: 14px; }
   .page.galing #galebar { display: flex; }
-  #galebar b { color: var(--ink); font-weight: normal; }
-  #galebar .track { flex: 1; height: 2px; background: var(--line); position: relative; }
+  #galebar b { color: var(--ink); font-weight: normal; font-size: 15px; }
+  #galebar .track { flex: 1; height: 6px; border-radius: 3px; background: var(--line); position: relative; overflow: hidden; }
   #galebar .track i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--ink); }
   #naivelane { display: none; grid-column: 3; }
   .page.galing #naivelane { display: block; }
-  .lanetitle { font-family: ui-monospace, Menlo, monospace; font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--faint); margin: 0 0 4px; }
+  .lanetitle { font-family: ui-monospace, Menlo, monospace; font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: var(--faint); margin: 0 0 4px; }
   .lanetitle.naive { color: #8c3b2e; }
-  .lanenote { font-family: ui-monospace, Menlo, monospace; font-size: 10px; color: var(--faint); min-height: 14px; margin-bottom: 26px; }
+  .lanenote { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--faint); min-height: 14px; margin-bottom: 26px; }
   #naivedoc { font-size: 18.5px; line-height: 1.85; opacity: .78; }
-  #naivedoc .s.stale { background-image: repeating-linear-gradient(45deg, rgba(0,0,0,.07) 0 3px, transparent 3px 6px); }
+  #naivedoc .s.stale { background-image: repeating-linear-gradient(45deg, rgba(140,59,46,.16) 0 3px, transparent 3px 6px); }
 
   .page.galing #naivelane, .page.galing main { padding-top: 0; }
   /* instrument tiles — the board's black-and-amber plate */
-  .tile { display: none; margin-top: 26px; background: #15110B; color: #EFE7D2; border: 1px solid #E5B54B; border-radius: 4px;
+  .tile { display: none; margin: 0 0 20px; background: #15110B; color: #EFE7D2; border: 1px solid #E5B54B; border-radius: 4px;
     font-family: ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums; overflow: hidden; }
   .page.galing .tile { display: block; }
-  .tile .th { font-size: 9.5px; letter-spacing: .14em; text-transform: uppercase; color: #A8925B; padding: 6px 12px; border-bottom: 1px solid rgba(229,181,75,.35); }
-  .tile .tb { display: flex; gap: 22px; padding: 10px 12px 12px; flex-wrap: wrap; }
-  .tile .k { font-size: 9px; letter-spacing: .1em; color: #8D7B4F; text-transform: uppercase; }
-  .tile .v { font-size: 19px; color: #E5B54B; line-height: 1.2; }
+  .tile .th { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: #A8925B; padding: 7px 14px; border-bottom: 1px solid rgba(229,181,75,.35); }
+  .tile .tb { display: flex; gap: 26px; padding: 12px 14px 14px; flex-wrap: wrap; }
+  .tile .k { font-size: 10px; letter-spacing: .1em; color: #8D7B4F; text-transform: uppercase; }
+  .tile .v { font-size: 30px; color: #E5B54B; line-height: 1.15; }
   .tile .v.crim { color: #E0554A; }
   .tile .v.dim { color: #8D7B4F; }
-  #referee { display: none; grid-column: 2 / 4; grid-row: 3; margin-top: 12px;
-    font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--ink); line-height: 1.7; }
+  #referee { display: none; grid-column: 2 / 4; grid-row: 3; margin-top: 14px;
+    font-family: ui-monospace, Menlo, monospace; font-size: 13px; color: var(--ink); line-height: 1.7; }
   .page.galing #referee { display: block; }
-  #referee .fn { color: var(--faint); font-size: 10.5px; }
+  #referee .fn { color: var(--faint); font-size: 11px; }
   #referee .ok { color: #1D5C49; }
   #referee .bad { color: #8c3b2e; }
   /* moral card */
@@ -347,13 +361,13 @@
       </div>
     </div>
     <div class="chips">
-      <button id="seedchip" class="chip" title="drop a pre-written page tuned to the active library — then edit, pull, retract it live">⚡ demo page</button>
       <button id="constelchip" class="chip" title="your sentences as points in lens-space, over the active library's cloud">✦ constellation</button>
       <button id="readerchip" class="chip" title="one stranger reads each paragraph back to you — gists cached in a fold Table">👓 reader</button>
       <button id="galechip" title="replay scripted edits at 60/s for 10s against a naive full-rescan arm">▶ gale</button>
       <button id="tourchip" class="chip" title="pins on every region explaining which bogkit crate makes it work">❔ how it's made</button>
       <button id="enginechip" class="chip" title="the machine room — a live slide deck of the engine, in a new tab">⚙ machine room ↗</button>
     </div>
+    <button id="seedfab" title="drop this view's pre-written example — each type of writing seeds a longer one">⚡ demo paragraph</button>
     <div id="constel" hidden>
       <div class="chead"><span class="cname">the constellation</span><span class="chow">every sentence is a point · left = concrete, right = abstract · empty space = where nobody has written</span></div>
       <canvas id="ccanvas"></canvas>
@@ -367,8 +381,10 @@
       <div class="crail" id="scrail"></div>
       <div class="scap" id="scap"></div>
     </div>
-    <div id="doc" contenteditable="plaintext-only" spellcheck="false"></div>
+    <div class="lanetitle fold">Fold · deltas — your document</div>
+    <div class="lanenote" id="foldnote">re-embeds ONE sentence per edit · one HNSW probe · every view stays current</div>
     <div class="tile" id="foldtile"></div>
+    <div id="doc" contenteditable="plaintext-only" spellcheck="false"></div>
   </main>
   <aside>
     <div class="lane">
@@ -382,8 +398,8 @@
   <section id="naivelane">
     <div class="lanetitle naive">Naive arm · full rescan</div>
     <div class="lanenote" id="naivenote"></div>
-    <div id="naivedoc"></div>
     <div class="tile" id="naivetile"></div>
+    <div id="naivedoc"></div>
   </section>
   <div id="referee"></div>
 </div>
@@ -845,10 +861,15 @@ async function askRestyle(opts) {
   }
   const toward = opts.mode === "voice" ? `toward ${opts.target_title || "the canon"}` : `toward ${opts.dir}`;
   const dlt = opts.mode === "voice" ? resp.after.dist - resp.before.dist : resp.after.t - resp.before.t;
-  const dtxt = `<b style="color:${resp.verified ? "#1D5C49" : "#8c3b2e"}">${dlt >= 0 ? "+" : ""}${dlt.toFixed(opts.mode === "voice" ? 3 : 2)}</b>`;
+  // say the direction in words — "+0.076" on a toward-pull reads like a win when it's a drift
+  const ad = Math.abs(dlt).toFixed(opts.mode === "voice" ? 3 : 2);
+  const word = opts.mode === "voice"
+    ? (dlt < 0 ? `moved ${ad} closer` : dlt > 0 ? `drifted ${ad} farther` : "no movement")
+    : (dlt > 0 ? `moved ${ad} more abstract` : dlt < 0 ? `moved ${ad} more concrete` : "no movement");
+  const dtxt = `<b style="color:${resp.verified ? "#1D5C49" : "#8c3b2e"}">${word}</b>`;
   const receipt = opts.mode === "voice"
-    ? `cos-dist ${resp.before.dist.toFixed(3)} → ${resp.after.dist.toFixed(3)} ${dtxt}`
-    : `t ${resp.before.t.toFixed(2)} → ${resp.after.t.toFixed(2)} ${dtxt}`;
+    ? `cos-dist ${resp.before.dist.toFixed(3)} → ${resp.after.dist.toFixed(3)} · ${dtxt}`
+    : `t ${resp.before.t.toFixed(2)} → ${resp.after.t.toFixed(2)} · ${dtxt}`;
   const verdict = resp.verified
     ? `<div class="verdict ok">${receipt} · VERIFIED in ${resp.attempts} draft${resp.attempts === 1 ? "" : "s"}</div>`
     : `<div class="verdict meh">${receipt} · did not move the needle — your call</div>`;
@@ -1278,43 +1299,49 @@ function renderMast() {
 refreshLibs();
 
 // ---------- demo pages: one click drops a page tuned to the active shelf ----
+// One example per library, and the LENGTH CLIMBS ACROSS THE DEMO ARC:
+// novel = one sentence · screenplay = three sentences · contract = one
+// lengthy paragraph · your voice = two paragraphs. Each entry is an array
+// of paragraphs; a second press in the same library is a no-op (no dupes).
 const DEMO_SEEDS = {
-  canon: [
-    "The tide pools held their breath between waves. Every small thing in them had learned to wait. Patience, in that world, was not a virtue but a physics.",
-    "By August the harbor had forgiven the winter. Boats went out before light and came back low in the water, and the town counted its luck in crates of silver fish. Luck, the old men said, is only weather you have decided to take personally.",
-  ],
+  canon: ["The tide pools held their breath between waves."],
   screen: [
     "The warehouse door screams open. Reyes steps through with the flashlight low, sweeping the pallet rows. Water drips somewhere deep in the dark.",
-    "She freezes. A second set of footsteps stops half a beat after hers. Reyes kills the light and presses her back to the cold steel shelf. I know you're there, she says, to no one she can see.",
   ],
   contracts: [
-    "The Employee shall indemnify and hold harmless the Company against all losses, claims, and reasonable expenses arising from any breach of the obligations set forth in this Agreement. Such indemnification shall survive the termination of this Agreement for a period of three years.",
-    "If any provision of this Agreement is held to be unenforceable, the remaining provisions shall continue in full force and effect. The parties agree to negotiate in good faith a replacement provision that most closely reflects the original intent.",
+    "The Employee shall indemnify and hold harmless the Company against all losses, claims, and reasonable expenses arising from any breach of the obligations set forth in this Agreement. Such indemnification shall survive the termination of this Agreement for a period of three years. If any provision of this Agreement is held to be unenforceable, the remaining provisions shall continue in full force and effect. The parties agree to negotiate in good faith a replacement provision that most closely reflects the original intent of the parties. This Agreement shall be governed by the laws of the State of Delaware, without regard to its conflict of laws principles.",
   ],
   self: [
-    "Ten years in this city and I still measure it in cycles: the booms, the hollowing out, the stubborn refill. Every collapse taught me which parts of my work were load-bearing and which were decoration.",
-    "What I want to build next is smaller and more honest. A tool that watches quietly, earns trust in microseconds, and never speaks unless spoken to.",
+    "What I want to build next is smaller and more honest. A tool that watches quietly, earns trust in microseconds, and never speaks unless spoken to. I keep coming back to instruments over oracles — things that measure instead of things that guess.",
+    "The demos I remember were never the loudest ones. They were the ones where someone typed a real sentence, and the machine did one true thing with it, and the room went quiet for a second. That silence is the metric I optimize for now.",
   ],
 };
-$("seedchip").onclick = () => {
-  const seeds = DEMO_SEEDS[lib.id] || DEMO_SEEDS.canon;
+$("seedfab").onclick = () => {
+  const paras = DEMO_SEEDS[lib.id] || DEMO_SEEDS.canon;
   const ed = $("doc");
-  const hadText = !!domTextNow();
-  for (const para of seeds) {
-    const d = document.createElement("div");
-    d.className = "para";
+  // one example per library — a second press must not duplicate it
+  if (ed.textContent.includes(paras[0].slice(0, 40))) return;
+  let first = null;
+  for (const para of paras) {
+    // reuse a trailing empty paragraph rather than leaving a blank line above
+    let d = ed.lastElementChild;
+    if (!(d && d.classList.contains("para") && !d.textContent.trim())) {
+      d = document.createElement("div");
+      d.className = "para";
+      ed.appendChild(d);
+    }
     d.textContent = para;
-    ed.appendChild(d);
+    if (!first) first = d;
   }
   ed.classList.remove("empty");
   dirtyAt = Date.now();
   ed.dispatchEvent(new InputEvent("input", { bubbles: true }));
-  // park the caret in the first seeded sentence so the lane answers at once
+  first.scrollIntoView({ block: "center", behavior: "smooth" });
+  // park the caret in the first seeded paragraph so the lane answers at once
   setTimeout(() => {
-    const blk = blocks()[hadText ? blocks().length - seeds.length : 0];
-    if (blk && blk.firstChild) {
+    if (first.isConnected && first.firstChild) {
       const sel = getSelection(); const rng = document.createRange();
-      rng.setStart(blk.firstChild, Math.min(10, blk.firstChild.length)); rng.collapse(true);
+      rng.setStart(first.firstChild, Math.min(10, first.firstChild.length)); rng.collapse(true);
       sel.removeAllRanges(); sel.addRange(rng);
       ed.focus(); penFollow();
     }
@@ -1672,8 +1699,8 @@ function renderGale() {
     return s;
   }));
   const behind = n.behind_ms || 0;
-  $("naivenote").textContent = `re-embeds every row · rescans ${(n.canon_n || 0).toLocaleString()} canon vectors per row · ` +
-    (behind > 200 ? `behind by ${fmtS(behind)}` : "keeping up");
+  $("naivenote").textContent = `re-embeds EVERY row · rescans ${(n.canon_n || 0).toLocaleString()} canon vectors per row · ` +
+    (behind > 200 ? `behind by ${fmtS(behind)} · ▨ hatched = stale, never recomputed` : "keeping up");
 
   // instrument tiles
   // completed updates within the run; the post-run restore edits are not part of the race
@@ -1698,8 +1725,9 @@ function renderGale() {
   const checks = n.referee_checks || 0, matches = n.referee_matches || 0;
   const den = n.voice_agree_den || 0, num = n.voice_agree_num || 0;
   const refCls = checks && matches === checks ? "ok" : checks ? "bad" : "";
+  const refMark = checks ? (matches === checks ? "✓ " : "✗ ") : "";
   $("referee").innerHTML =
-    `referee · <span class="${refCls}">${matches}/${checks} score digests match at the same cursor</span>` +
+    `referee · <span class="${refCls}">${refMark}${matches}/${checks} score digests match at the same cursor</span>` +
     (den ? ` · voice agreement ${Math.round((100 * num) / den)}% (HNSW ≈ vs exact scan, ${num}/${den})` : " · voice agreement — (waiting for the canon)") +
     `<br><span class="fn">naive arm · same scoring code · no deltas · no index — linear scan over ${(n.canon_n || 0).toLocaleString()} vectors · both arms fed the same edits on the same clock</span>`;
 
@@ -1724,6 +1752,7 @@ function renderGale() {
 }
 
 $("galechip").onclick = async () => {
+  window.scrollTo({ top: 0, behavior: "smooth" });
   try {
     const r = await fetch("/gale?rate=60&secs=10");
     const j = await r.json();
