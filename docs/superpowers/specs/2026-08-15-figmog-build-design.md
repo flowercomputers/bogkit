@@ -777,5 +777,6 @@ result, not a failure).
 
 Concurrent client simulation (stdio is one pipe; the server is
 single-threaded by design); benchmarking the proxy path (network-bound,
-not ours to measure); comparing against a live Figma API call (the
-rate-limit number is documented, not re-measured).
+not ours to measure); measuring Figma's rate limit itself (the
+comparison phase measures API *latency* with K small calls; the
+~10/min budget number is documented, never probed to exhaustion).
