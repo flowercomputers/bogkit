@@ -24,9 +24,11 @@ function fail(msg) {
 }
 
 function boot(port, env) {
-  const child = spawn("npm", ["run", "start"], {
+  // spawn the standalone server directly — no npm wrapper, so kill()
+  // reaches the actual server process and nothing leaks
+  const child = spawn(process.execPath, [join(appDir, ".next", "standalone", "server.js")], {
     cwd: appDir,
-    env: { ...process.env, PORT: String(port), ...env },
+    env: { ...process.env, PORT: String(port), HOSTNAME: "127.0.0.1", ...env },
     stdio: ["ignore", "ignore", "inherit"],
   });
   children.push(child);

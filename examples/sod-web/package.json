@@ -4,8 +4,8 @@
   "scripts": {
     "build:addon": "cargo build -p sod-web-addon --release && node scripts/copy-addon.mjs",
     "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
+    "build": "next build && node scripts/prepare-standalone.mjs",
+    "start": "node .next/standalone/server.js",
     "smoke": "node scripts/smoke.mjs",
     "demo:local": "node scripts/demo-local.mjs"
   },

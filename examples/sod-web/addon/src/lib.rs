@@ -25,7 +25,7 @@ use sod::engine_fold::FoldEngine;
 use sod::log_file::FileLog;
 use sod::sinks::Bag;
 use sod::time::Watermark;
-use sod::transport::ws::{SyncListener, sync_with};
+use sod::transport::ws::{SyncListener, connect};
 use sod::{Replica, ReplicaId};
 
 type Pipeline = (Bag<String>, Count);
@@ -123,15 +123,20 @@ pub fn react(emoji: String) -> Result<()> {
 }
 
 /// Remove one reaction. Errors at zero — an unmatched retraction would
-/// store hidden negative debt that swallows a future reaction.
+/// store hidden negative debt that swallows a future reaction. The check
+/// and the commit run under ONE replica borrow, so a concurrent remote
+/// retraction (sync worker thread) cannot slip between them.
 #[napi]
 pub fn unreact(emoji: String) -> Result<()> {
-    let present =
-        with_replica(|r| Ok(r.engine().stream().rtx(|(bag, _)| bag.contains(&emoji))))?;
-    if !present {
-        return Err(err(format!("nothing to unreact: {emoji}")));
-    }
-    commit(&emoji, -1)
+    let datum = postcard::to_stdvec(&emoji).map_err(err)?;
+    with_replica(|r| {
+        let present = r.engine().stream().rtx(|(bag, _)| bag.contains(&emoji));
+        if !present {
+            return Err(err(format!("nothing to unreact: {emoji}")));
+        }
+        r.commit(vec![(datum, -1)], now_ms()).map_err(err)?;
+        Ok(())
+    })
 }
 
 #[napi(object)]
@@ -212,8 +217,12 @@ impl Task for SyncTask {
 
     fn compute(&mut self) -> Result<Self::Output> {
         // Worker thread: blocking here never blocks the JS event loop.
+        // CONNECT BEFORE LOCKING: dialing an unreachable peer (the whole
+        // point of the wifi-kill demo) must never stall reads/writes —
+        // the replica is borrowed only once the socket is live.
+        let outgoing = connect(&self.url).map_err(err)?;
         with_replica(|r| {
-            let report = sync_with(&self.url, r, SCHEMA).map_err(err)?;
+            let report = outgoing.run(r, SCHEMA).map_err(err)?;
             seen(report.peer);
             Ok(report.skipped.iter().map(|s| s.to_string()).collect())
         })

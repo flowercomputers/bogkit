@@ -12,9 +12,22 @@
 //! interrupted session leaves both replicas correct (SOD-6) and the next
 //! session picks up from the version vectors.
 
-use std::net::{TcpListener, TcpStream};
+use std::net::{TcpListener, TcpStream, ToSocketAddrs};
+use std::time::Duration;
 
 use tungstenite::{Message, WebSocket};
+
+/// Bound on TCP connect to a peer (an unroutable host must fail fast —
+/// callers may be holding user-visible state).
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+/// Bound on any single socket read/write during a session, so a stalled
+/// peer cannot pin a session (and whatever borrows it holds) forever.
+const IO_TIMEOUT: Duration = Duration::from_secs(10);
+
+fn set_io_timeouts(stream: &TcpStream) -> Result<(), SodError> {
+    stream.set_read_timeout(Some(IO_TIMEOUT)).map_err(io_err)?;
+    stream.set_write_timeout(Some(IO_TIMEOUT)).map_err(io_err)
+}
 
 use crate::engine::Engine;
 use crate::replica::Replica;
@@ -95,21 +108,61 @@ fn run_session<E: Engine, L: LogStore, S: std::io::Read + std::io::Write>(
     Ok(session.report())
 }
 
-/// Dial `url` (e.g. `ws://127.0.0.1:7171`) and run one full sync session.
+/// An established outbound connection, waiting for its session to run.
 ///
-/// The report identifies the peer and carries any per-origin refusals the
-/// session recorded while continuing (SOD-2) — surface a non-empty
-/// `skipped` to the user: swallowing it hides that some feed silently
-/// stopped replicating.
+/// Connecting is separate from running so hosts can dial **without
+/// borrowing the replica** — a dial to an unreachable peer must never
+/// stall writes (the wifi-kill case is exactly when peers are
+/// unreachable). Connect first, borrow the replica only for the session.
+pub struct OutgoingSession {
+    sock: WebSocket<TcpStream>,
+}
+
+/// Dial `url` (`ws://host:port` only in v1) with bounded connect and I/O
+/// timeouts. Owns no replica.
+pub fn connect(url: &str) -> Result<OutgoingSession, SodError> {
+    let rest = url
+        .strip_prefix("ws://")
+        .ok_or_else(|| SodError::Io(format!("unsupported url (v1 speaks ws:// only): {url}")))?;
+    let host_port = rest.split('/').next().unwrap_or(rest);
+    let addr = host_port
+        .to_socket_addrs()
+        .map_err(io_err)?
+        .next()
+        .ok_or_else(|| SodError::Io(format!("no address for {host_port}")))?;
+    let stream = TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT).map_err(io_err)?;
+    set_io_timeouts(&stream)?;
+    let (sock, _resp) = tungstenite::client(url, stream)
+        .map_err(|e| SodError::Io(format!("websocket handshake failed: {e}")))?;
+    Ok(OutgoingSession { sock })
+}
+
+impl OutgoingSession {
+    /// Run the whole session as initiator; the replica is borrowed only
+    /// for this call. Closes the socket on exit either way.
+    pub fn run<E: Engine, L: LogStore>(
+        mut self,
+        r: &mut Replica<E, L>,
+        schema: u32,
+    ) -> Result<SyncReport, SodError> {
+        let result = run_session(&mut self.sock, r, schema, true);
+        let _ = self.sock.close(None);
+        result
+    }
+}
+
+/// Dial `url` and run one full sync session (connect + [`OutgoingSession::run`]).
+///
+/// Hosts embedding sod in a live server should call [`connect`] first and
+/// borrow the replica only for `run`. The report identifies the peer and
+/// carries any per-origin refusals the session recorded while continuing
+/// (SOD-2) — surface a non-empty `skipped` to the user.
 pub fn sync_with<E: Engine, L: LogStore>(
     url: &str,
     r: &mut Replica<E, L>,
     schema: u32,
 ) -> Result<SyncReport, SodError> {
-    let (mut sock, _resp) = tungstenite::connect(url).map_err(io_err)?;
-    let result = run_session(&mut sock, r, schema, true);
-    let _ = sock.close(None);
-    result
+    connect(url)?.run(r, schema)
 }
 
 /// A bound sync listener. Owns **no replica** — hosts embedding sod in a
@@ -135,11 +188,22 @@ impl SyncListener {
 
     /// Block until a peer connects **and** completes the websocket
     /// handshake. Still owns no replica.
+    ///
+    /// Failed handshakes (stray TCP probes, port scanners) are logged and
+    /// retried internally — they are the network's noise, not the
+    /// caller's problem. `Err` means the *listener* itself failed.
     pub fn accept(&self) -> Result<IncomingSession, SodError> {
-        let (stream, _addr) = self.listener.accept().map_err(io_err)?;
-        let sock = tungstenite::accept(stream)
-            .map_err(|e| SodError::Io(format!("websocket handshake failed: {e}")))?;
-        Ok(IncomingSession { sock })
+        loop {
+            let (stream, _addr) = self.listener.accept().map_err(io_err)?;
+            if let Err(e) = set_io_timeouts(&stream) {
+                eprintln!("sod: could not set socket timeouts: {e}");
+                continue;
+            }
+            match tungstenite::accept(stream) {
+                Ok(sock) => return Ok(IncomingSession { sock }),
+                Err(e) => eprintln!("sod: websocket handshake failed: {e}"),
+            }
+        }
     }
 }
 
