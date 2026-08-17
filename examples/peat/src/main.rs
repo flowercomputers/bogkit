@@ -605,13 +605,17 @@ beside the shared db); pass --session",
 
         Cli::Show { session, seq } => {
             let now = now_ms();
-            let found = st.rtx(|(_, _, _, (subjects, evidence), _, ledger)| {
-                // session may be a prefix: resolve against the ledger
-                let hit: Option<(EventId, Envelope)> = ledger
+            let found = st.rtx(|(_, _, _, (subjects, evidence), sessions, ledger)| {
+                // resolve the session prefix against the small sessions
+                // table, then point-read the ledger — never scan it
+                let full: Option<String> = sessions
                     .iter()
-                    .find(|((s, q), _): &(EventId, Envelope)| {
-                        *q == seq && s.starts_with(session.as_str())
-                    });
+                    .map(|(sess, _): (String, SessStats)| sess)
+                    .find(|sess| sess.starts_with(session.as_str()));
+                let hit: Option<(EventId, Envelope)> = full.and_then(|sess| {
+                    let id = (sess, seq);
+                    ledger.get(&id).map(|e: Envelope| (id, e))
+                });
                 let citing: Vec<(String, pipeline::ObsRow)> = subjects
                     .iter()
                     .flat_map(|(name, _): (String, SubjStats)| {
