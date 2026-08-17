@@ -157,12 +157,13 @@
     transition: width var(--dur-fast) ease-out;
   }
   .ask { display: flex; gap: 8px; margin: 0 0 12px; align-items: center }
-  input {
+  input, select {
     flex: 1; min-width: 0; height: var(--control-h-lg);
     background: var(--surface); color: var(--text);
     border: 1px solid var(--border); border-radius: var(--radius-md);
     padding: 0 10px; font: 16px/1.3 var(--font-ui);
   }
+  select { flex: 0 0 auto; font-size: 13px }
   button {
     height: var(--control-h-lg); padding: 0 12px;
     background: var(--surface-subtle); color: var(--text);
@@ -177,10 +178,40 @@
   button.primary:hover { background: var(--accent-base); border-color: var(--accent-base) }
   button:active { transform: scale(0.96) }
   button:disabled { opacity: 0.5; cursor: wait; transform: none }
-  :where(button, input):focus-visible {
+  :where(button, input, select):focus-visible {
     outline: 2px solid var(--accent); outline-offset: 2px;
   }
-  input:focus-visible { outline-offset: 0 }
+  :where(input, select):focus-visible { outline-offset: 0 }
+  .retrieval {
+    margin: 0 0 16px; padding: 12px;
+    border: 1px solid var(--border); border-radius: var(--radius-md);
+    background: var(--surface);
+  }
+  .goal-row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; margin: 0 0 10px;
+  }
+  .goal-row label {
+    color: var(--text-muted); font: 12px/1.3 var(--font-mono);
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .model-bars { display: grid; gap: 7px }
+  .model-row {
+    display: grid;
+    grid-template-columns: 84px minmax(80px, 1fr) 30px minmax(150px, 1.7fr);
+    align-items: center; gap: 9px;
+    font: 12px/1.3 var(--font-mono); color: var(--text-muted);
+  }
+  .model-name { color: var(--text); font-weight: 600 }
+  .model-track {
+    height: 8px; overflow: hidden;
+    border-radius: 99px; background: var(--surface-subtle);
+  }
+  .model-fill { display: block; height: 100%; border-radius: inherit; background: var(--text-faint) }
+  .model-fill.ese { background: var(--accent) }
+  .model-fill.potion { background: #a66cff }
+  .model-weight { text-align: right; font-variant-numeric: tabular-nums }
+  .model-top { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
   .meta {
     color: var(--text-muted); font: 12px/1.4 var(--font-mono);
     font-variant-numeric: tabular-nums; margin: 0 0 10px;
@@ -212,6 +243,8 @@
     .grid, .grid.stage { grid-template-columns: 1fr; height: auto }
     .grid.stage .index { display: block }
     section + section { border-left: 0; border-top: 1px solid var(--border) }
+    .model-row { grid-template-columns: 84px minmax(80px, 1fr) 30px }
+    .model-top { grid-column: 1 / -1; padding-left: 93px }
   }
 </style>
 </head>
@@ -244,6 +277,17 @@
       <button id="ask" type="button">Ask</button>
       <button id="copy" type="button">Copy briefing</button>
     </div>
+    <div class="retrieval" aria-label="Retrieval policy">
+      <div class="goal-row">
+        <label for="goal">Retrieval goal</label>
+        <select id="goal">
+          <option value="balanced">Balanced briefing</option>
+          <option value="locate">Locate implementation</option>
+          <option value="explain">Explain rationale</option>
+        </select>
+      </div>
+      <div class="model-bars" id="model-bars"></div>
+    </div>
     <p class="beat" id="beat" role="status">Seed</p>
     <div class="meta" id="packmeta"></div>
     <div class="bar" aria-hidden="true"><i id="bar"></i></div>
@@ -264,7 +308,7 @@
 <script>
 const ws = new WebSocket(`ws://${location.host}/ws`);
 const $ = (id) => document.getElementById(id);
-const send = (op, q) => ws.send(JSON.stringify({ op, q: q || "" }));
+const send = (op, q, goal) => ws.send(JSON.stringify({ op, q: q || "", goal }));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let lastSeed = "";
 let prevIndex = new Set();
@@ -314,10 +358,24 @@ const indexRow = (item, delta) => {
 const flag = (on, onText, offText) =>
   el("span", { class: on ? "flag" : "flag off", text: on ? onText : offText });
 
+const modelRow = (model, maxWeight) => {
+  const fill = el("i", { class: `model-fill ${model.key}` });
+  fill.style.width = `${(model.weight / maxWeight) * 100}%`;
+  return el(
+    "div",
+    { class: "model-row" },
+    el("span", { class: "model-name", text: model.name }),
+    el("span", { class: "model-track", "aria-hidden": "true" }, fill),
+    el("span", { class: "model-weight", text: model.weight.toFixed(1) }),
+    el("span", { class: "model-top", text: `#1 → ${model.top || "no hit"}` }),
+  );
+};
+
 ws.onmessage = (event) => {
   const s = JSON.parse(event.data);
   lastSeed = s.briefing.seed || "";
   $("q").value = s.briefing.query;
+  $("goal").value = s.briefing.goal;
   $("kinds").textContent = s.kinds.map((k) => `${k.kind} ${k.n}`).join(" · ");
   $("flags").replaceChildren(
     flag(s.live.comment_landed, "Comment in", "Comment out"),
@@ -327,6 +385,9 @@ ws.onmessage = (event) => {
   $("packmeta").textContent =
     `${s.briefing.tokens} / ${s.briefing.budget} tokens · ${s.briefing.pack_us} µs · ${s.briefing.lines.length} packed`;
   $("bar").style.width = Math.min(100, (s.briefing.tokens / s.briefing.budget) * 100) + "%";
+  const models = s.briefing.models || [];
+  const maxWeight = Math.max(1, ...models.map((model) => model.weight));
+  $("model-bars").replaceChildren(...models.map((model) => modelRow(model, maxWeight)));
 
   const nowIds = new Set(s.swamp.map((item) => item.id));
   s.swamp.forEach((item) => indexMeta.set(item.id, item));
@@ -339,7 +400,7 @@ ws.onmessage = (event) => {
     const fresh = !firstPaint && !prevIndex.has(item.id);
     return indexRow(item, fresh ? "in" : "");
   }));
-  if (s.live.wiki_retracted && s.live.comment_landed) $("beat").textContent = "Retracted · BM25 + HNSW + table";
+  if (s.live.wiki_retracted && s.live.comment_landed) $("beat").textContent = "Retracted · BM25 + ESE + Potion + table";
   else if (s.live.comment_landed) $("beat").textContent = "Comment at #1";
   else $("beat").textContent = "Seed";
   prevIndex = nowIds;
@@ -370,8 +431,10 @@ ws.onmessage = (event) => {
   ));
 };
 
-$("ask").onclick = () => send("ask", $("q").value);
-$("q").onkeydown = (e) => { if (e.key === "Enter") send("ask", $("q").value); };
+const ask = () => send("ask", $("q").value, $("goal").value);
+$("ask").onclick = ask;
+$("q").onkeydown = (e) => { if (e.key === "Enter") ask(); };
+$("goal").onchange = ask;
 document.addEventListener("keydown", (e) => {
   if (e.target === $("q") || e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.key === "f" || e.key === "F") $("stage").click();
@@ -407,7 +470,7 @@ $("replay").onclick = async () => {
     btn.textContent = "Comment…";
     send("comment");
     await sleep(1100);
-    $("beat").textContent = "Retracted · BM25 + HNSW + table";
+    $("beat").textContent = "Retracted · BM25 + ESE + Potion + table";
     btn.textContent = "Retract…";
     send("retract");
   } finally {
