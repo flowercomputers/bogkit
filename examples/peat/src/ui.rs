@@ -1,5 +1,5 @@
 //! Terminal presentation. One rule governs this module: **stdout is an
-//! API** — the SessionStart hook injects `peat brief` stdout into an
+//! API** — the `SessionStart` hook injects `peat brief` stdout into an
 //! agent's context verbatim, and `--json` is machine-read. Everything
 //! animated or decorative therefore targets stderr, and only when stderr
 //! is a real terminal; color reaches stdout only when stdout is one.
@@ -34,7 +34,7 @@ pub fn fancy_out() -> bool {
 }
 
 /// Whether stdout is a terminal at all (paging is independent of color:
-/// NO_COLOR suppresses ANSI but should not suppress `less`).
+/// `NO_COLOR` suppresses ANSI but should not suppress `less`).
 pub fn stdout_is_tty() -> bool {
     static C: OnceLock<bool> = OnceLock::new();
     *C.get_or_init(|| std::io::stdout().is_terminal())
@@ -204,8 +204,8 @@ pub fn age_label(now: u64, ts: u64) -> String {
 /// ANSI), plain stdout otherwise.
 pub fn page(text: &str) {
     use std::io::Write;
-    if stdout_is_tty() {
-        if let Ok(mut p) = std::process::Command::new("less")
+    if stdout_is_tty()
+        && let Ok(mut p) = std::process::Command::new("less")
             .args(["-RFX"])
             .stdin(std::process::Stdio::piped())
             .spawn()
@@ -216,6 +216,5 @@ pub fn page(text: &str) {
             let _ = p.wait();
             return;
         }
-    }
     print!("{text}");
 }

@@ -7,7 +7,7 @@
 //!
 //!   peat capture <transcript.jsonl>     # Stop hook
 //!   peat obs <subject> <text...>        # the one judgment step
-//!   peat brief [task words...]          # SessionStart hook (stdout -> context)
+//!   peat brief [task words...]          # `SessionStart` hook (stdout -> context)
 //!
 //! Wall-clock time is read only at the capture/render boundary (obs
 //! timestamps, brief age labels) — never inside any fold path, so the

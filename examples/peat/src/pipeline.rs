@@ -116,10 +116,10 @@ pub fn day_delta(k: &Keyed<EventId, Envelope>) -> Option<Keyed<u64, DayDelta>> {
 
 pub fn day_step(acc: &mut DayStats, v: &DayDelta, delta: isize) {
     let d = delta as i64;
-    acc.sessions += d * v.session_start as i64;
-    acc.tools += d * v.tool as i64;
-    acc.fails += d * v.fail as i64;
-    acc.commits += d * v.commit as i64;
+    acc.sessions += d * i64::from(v.session_start);
+    acc.tools += d * i64::from(v.tool);
+    acc.fails += d * i64::from(v.fail);
+    acc.commits += d * i64::from(v.commit);
     if let Some(f) = &v.file {
         let n = acc.files.entry(f.clone()).or_default();
         *n += d;

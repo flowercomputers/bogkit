@@ -53,7 +53,9 @@ pub fn current_session(explicit: Option<String>) -> Option<String> {
 /// loop exits — the hook is muted during retries because `catch_unwind`
 /// does not silence it, and a caught-and-retried lock conflict must not
 /// print a backtrace.
-struct QuietPanics(Option<Box<dyn Fn(&std::panic::PanicHookInfo<'_>) + Sync + Send + 'static>>);
+type PanicHook = Box<dyn Fn(&std::panic::PanicHookInfo<'_>) + Sync + Send + 'static>;
+
+struct QuietPanics(Option<PanicHook>);
 
 impl QuietPanics {
     fn engage() -> Self {
@@ -107,7 +109,7 @@ where
     }
 
     let phase = ui::Phase::new("opening ledger");
-    let _quiet = QuietPanics::engage();
+    let quiet = QuietPanics::engage();
     let mut delay_ms = 200u64;
     let mut waited = 0u64;
     let st = loop {
@@ -123,11 +125,11 @@ where
                     .or_else(|| p.downcast_ref::<&str>().copied())
                     .unwrap_or("");
                 if !msg.contains("Locked") {
-                    drop(_quiet);
+                    drop(quiet);
                     std::panic::resume_unwind(p);
                 }
                 if waited >= wait_max_ms {
-                    drop(_quiet);
+                    drop(quiet);
                     ui::error(&format!(
                         "ledger still locked after {}s — another peat \
 process holds it (reads are exclusive too; a bulk capture can hold it for \

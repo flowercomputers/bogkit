@@ -56,8 +56,8 @@ pub fn parse(jsonl: &str, fallback_session: Option<&str>) -> Option<Parsed> {
         last_ts = ts;
 
         // one SessionMeta from the first line that carries cwd
-        if !meta_done {
-            if let Some(cwd) = line.get("cwd").and_then(Value::as_str) {
+        if !meta_done
+            && let Some(cwd) = line.get("cwd").and_then(Value::as_str) {
                 meta_done = true;
                 events.push((
                     (session.clone(), seq0),
@@ -75,7 +75,6 @@ pub fn parse(jsonl: &str, fallback_session: Option<&str>) -> Option<Parsed> {
                     ),
                 ));
             }
-        }
 
         if line.get("isCompactSummary").and_then(Value::as_bool) == Some(true) {
             events.push((
@@ -210,19 +209,15 @@ pub fn parse(jsonl: &str, fallback_session: Option<&str>) -> Option<Parsed> {
                                     .and_then(|r| r.get("is_error"))
                                     .and_then(Value::as_bool)
                                     == Some(true);
-                            if err {
-                                if let Some(id) =
+                            if err
+                                && let Some(id) =
                                     block.get("tool_use_id").and_then(Value::as_str)
-                                {
-                                    if let Some(&i) = call_sites.get(id) {
-                                        if let Event::ToolCall { ok, .. } =
+                                    && let Some(&i) = call_sites.get(id)
+                                        && let Event::ToolCall { ok, .. } =
                                             &mut events[i].1.kind
                                         {
                                             *ok = false;
                                         }
-                                    }
-                                }
-                            }
                         }
                         _ => {}
                     }
@@ -314,7 +309,7 @@ fn commit_of(tool: &str, input: &Value, line: &Value) -> Option<(String, String)
     Some((hash, cap(&message, 200)))
 }
 
-/// Replace any parsed FinalMsg with the hook-provided closing message
+/// Replace any parsed `FinalMsg` with the hook-provided closing message
 /// (`Stop` passes `last_assistant_message`, which is authoritative — the
 /// transcript file may lag the final turn).
 pub fn override_final_msg(parsed: &mut Parsed, text: &str) {
