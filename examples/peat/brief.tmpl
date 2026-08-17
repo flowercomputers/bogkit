@@ -1,35 +1,43 @@
 {{ ("== peat brief · " ~ today ~ " ==") | h1 }}
 {%- if active %}
+
 {{ "active in the last hour:" | h1 }}
 {%- for a in active %}
   {{ a.where | accent }} {{ ("[" ~ a.session ~ "]") | dim }} — {{ a.age }} ago{% if a.commits %}, {{ a.commits }} commits{% endif %}
 {%- endfor %}
 {%- endif %}
 {%- if days %}
+
 {{ "recent activity:" | h1 }}
 {%- for d in days %}
   {{ d.day }}: {{ d.tools }} tool calls ({{ d.fails }} failed), {{ d.commits }} commits{% if d.files %} · {{ d.files | join(", ") }}{% endif %}
 {%- endfor %}
 {%- endif %}
 {%- if last_session %}
+
 {{ "last session" | h1 }}{{ (" (" ~ last_session.age_hours ~ "h ago" ~ (", " ~ last_session.branch if last_session.branch else "") ~ "):") | dim }}
   {{ last_session.final_msg }}
 {%- endif %}
 {%- if files %}
+
 {{ "recently touched files:" | h1 }}
 {%- for f in files %}
   {{ f.path }} — sessions {{ f.sessions | join(", ") }}
 {%- endfor %}
 {%- endif %}
 {%- if relevant %}
+
 {{ "possibly relevant (judge each; origin and age shown):" | h1 }}
 {%- for r in relevant %}
-  {{ ("[" ~ r.tag ~ "]") | dim }} {{ r.text }}
+  {{ ("[" ~ r.tag ~ "]") | dim }} {{ r.text }}{% if not loop.last %}
+{% endif %}
 {%- endfor %}
 {%- endif %}
 {%- if subjects %}
+
 {{ "current understanding (agent-asserted, newest wins):" | h1 }}
 {%- for s in subjects %}
-  {{ s.subject | accent }}{{ (" (" ~ s.count ~ " obs") | dim }}{% if not s.cited %}{{ ", uncited" | warn }}{% endif %}{{ (", " ~ s.age ~ "):") | dim }} {{ s.text }}
+  {{ s.subject | accent }}{{ (" (" ~ s.count ~ " obs") | dim }}{% if not s.cited %}{{ ", uncited" | warn }}{% endif %}{{ (", " ~ s.age ~ "):") | dim }} {{ s.text }}{% if not loop.last %}
+{% endif %}
 {%- endfor %}
 {%- endif %}
