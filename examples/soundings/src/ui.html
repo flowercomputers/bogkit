@@ -252,10 +252,12 @@
   .chip.user .hue { display: inline-block; width: 10px; height: 10px; border-radius: 50%; border: 1px solid var(--line); }
   .chip.user .x { margin-left: 2px; opacity: .55; padding: 0 2px; }
   .chip.user .x:hover { opacity: 1; color: #8c3b2e; }
-  #lenscard { background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: 10px 12px 9px; margin: 6px 0 12px; max-width: 540px; font-size: 13px; }
-  #lenscard .lc-h { font-family: ui-monospace, Menlo, monospace; font-size: 9px; letter-spacing: .14em; color: var(--faint); margin-bottom: 4px; }
+  #lenscard { background: var(--card); border: 1px solid var(--line); border-radius: 5px; padding: 12px 14px 11px; margin: 8px 0 14px; max-width: 560px; font-size: 14px; box-shadow: 0 8px 24px rgba(40,30,10,.08); }
+  #lenscard .lc-h { display: flex; align-items: baseline; font-family: ui-monospace, Menlo, monospace; font-size: 11px; letter-spacing: .14em; color: var(--faint); margin-bottom: 5px; }
+  #lenscard .lc-x { margin-left: auto; cursor: pointer; font-size: 14px; letter-spacing: 0; color: var(--faint); padding: 0 2px; }
+  #lenscard .lc-x:hover { color: #8c3b2e; }
   #lenscard .lc-row { display: flex; gap: 8px; align-items: baseline; margin-top: 6px; }
-  #lenscard .lc-row .k { font-family: ui-monospace, Menlo, monospace; font-size: 10px; color: var(--faint); width: 32px; flex: none; }
+  #lenscard .lc-row .k { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--faint); width: 36px; flex: none; }
   #lenscard .lc-row input { flex: 1; font: inherit; font-size: 16px; background: none; border: 0; border-bottom: 1px solid var(--line); padding: 2px 0; color: var(--ink); outline: none; }
   #lenscard .lc-row input:focus { border-bottom-color: var(--ink); }
   #lenscard .lc-name input { font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; }
@@ -859,7 +861,10 @@ $("instru").onclick = () => {
 // the chips row keeps lens authoring and the gale; lens selection lives in
 // the masthead's feel slot
 document.querySelector(".chips").addEventListener("click", (e) => {
-  if (e.target.closest("#lensadd")) { openLensCard(); return; }
+  if (e.target.closest("#lensadd")) {
+    if (lensCard) closeLensCard(); else openLensCard();
+    return;
+  }
 });
 
 // ---- corrigendum (branch C): retract = strike, never delete ----
@@ -1082,7 +1087,7 @@ function openLensCard(prefill) {
   const card = document.createElement("div");
   card.id = "lenscard";
   card.innerHTML =
-    `<div class="lc-h">NEW LENS · TWO ANCHOR SENTENCES</div>` +
+    `<div class="lc-h">NEW LENS · TWO ANCHOR SENTENCES<span class="lc-x" title="close (esc, or click anywhere outside)">×</span></div>` +
     `<div class="lc-row"><span class="k">A</span><input id="lcA" placeholder="a sentence at the cool end of your axis…" autocomplete="off"></div>` +
     `<div class="lc-row"><span class="k">B</span><input id="lcB" placeholder="a sentence at the warm end…" autocomplete="off"></div>` +
     `<div class="lc-row lc-name"><span class="k">name</span><input id="lcN" placeholder="first words —— first words" autocomplete="off"></div>` +
@@ -1098,7 +1103,13 @@ function openLensCard(prefill) {
     if (e.key === "Enter") { e.preventDefault(); submitLens(); }
     if (e.key === "Escape") { e.preventDefault(); closeLensCard(); }
   };
+  card.querySelector(".lc-x").onclick = closeLensCard;
   card.querySelector(".lc-go").onclick = submitLens;
+  // closable from anywhere: esc regardless of focus, click-away dismisses
+  lensCardEsc = (e) => { if (e.key === "Escape") closeLensCard(); };
+  lensCardAway = (e) => { if (!e.target.closest("#lenscard") && !e.target.closest("#lensadd")) closeLensCard(); };
+  document.addEventListener("keydown", lensCardEsc);
+  setTimeout(() => document.addEventListener("mousedown", lensCardAway), 0);
   if (prefill) { A.value = prefill.a; B.value = prefill.b; auto(); }
   A.focus();
 }
@@ -1114,7 +1125,14 @@ function submitLens() {
   pendingLensSelect = true;
   send({ op: "lens", a: A, b: B, name: N });
 }
-function closeLensCard() { if (lensCard) { lensCard.remove(); lensCard = null; } }
+let lensCardEsc = null, lensCardAway = null;
+function closeLensCard() {
+  if (!lensCard) return;
+  lensCard.remove();
+  lensCard = null;
+  if (lensCardEsc) { document.removeEventListener("keydown", lensCardEsc); lensCardEsc = null; }
+  if (lensCardAway) { document.removeEventListener("mousedown", lensCardAway); lensCardAway = null; }
+}
 // ---- gutter chips (D) ----
 // After an edit, the number lands beside the sentence you touched, not just
 // in the strip: wall µs of the wtx (stopwatch — the strip's tape has the
