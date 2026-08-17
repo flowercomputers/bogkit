@@ -38,8 +38,11 @@ protocol machinery.
 - The **watermark** (max event-time applied) is the only "now" (SOD-7);
   sod itself never reads a clock — apps stamp event time at commit.
 - Sync sessions start with a protocol + app-schema version handshake and
-  refuse mismatches (SOD-9). Interrupted sessions need no cleanup: the
-  version vector is the resume point (SOD-6).
+  refuse mismatches (SOD-9); the handshake carries the sender's replica
+  id, and completed sessions yield a `SyncReport` (peer id, the peer's
+  vector, any per-origin refusals) — which is how apps know who they're
+  connected to. Interrupted sessions need no cleanup: the version vector
+  is the resume point (SOD-6).
 
 ## Ports (what makes it portable)
 
@@ -47,7 +50,7 @@ protocol machinery.
 |---|---|---|
 | `engine::Engine` | "the bog machinery" materializing deltas | `MemEngine` (always; oracle + wasm-viable), `engine_fold::FoldEngine` (feature `fold-engine`) |
 | `store::LogStore` | append-only frame storage | `MemLog` (always), `log_file::FileLog` (torn-tail recovery) |
-| transport | drives the sans-io `sync::Session` | `transport::ws` blocking websockets (feature `ws`) |
+| transport | drives the sans-io `sync::Session` | `transport::ws` blocking websockets (feature `ws`): `sync_with`/`serve`, plus `SyncListener`/`IncomingSession` for hosts that must not hold the replica while idle (web servers) |
 | entropy | `ReplicaId::generate` | `getrandom` (feature `os-rng`); or pass bytes via `ReplicaId::from_bytes` |
 
 Feature flags: `default = ["fold-engine", "ws", "os-rng"]`. The core —

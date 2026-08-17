@@ -1,0 +1,42 @@
+# Deploy from the REPO ROOT (build context needs sod/ and fold/):
+#   fly deploy . -c examples/sod-web/fly.toml
+app = "sod-web-demo"
+primary_region = "iad"
+
+[build]
+  dockerfile = "examples/sod-web/Dockerfile"
+
+[env]
+  SOD_SERVE_ADDR = "0.0.0.0:7300"
+  SOD_DATA_DIR = "/data/sod"
+
+# the Next.js app, behind Fly's HTTPS edge
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  # the hub must not sleep mid-demo
+  min_machines_running = 1
+
+# the sod sync port: raw TCP, exposed directly.
+# Plain TCP first (clients dial ws://<app>.fly.dev:10700). Before any
+# public showing: add handlers = ["tls"] here and enable sod's wss
+# client support on the dialing side.
+[[services]]
+  protocol = "tcp"
+  internal_port = 7300
+
+  [[services.ports]]
+    port = 10700
+
+# the log + fold db live here; exactly ONE machine — the replica is
+# single-writer (a scaled-out hub would be several bogs, which the
+# protocol supports but this demo does not exercise)
+[mounts]
+  source = "sod_data"
+  destination = "/data"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
