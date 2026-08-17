@@ -9,6 +9,7 @@ anny = { path = "../../anny" }
 axum = { version = "0.8", features = ["ws"] }
 ese = { path = "../../ese", features = ["dim-512", "quant-8"] }
 fold = { path = "../../fold" }
+model2vec-rs = "0.2.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
