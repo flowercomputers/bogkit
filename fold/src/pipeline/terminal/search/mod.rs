@@ -54,15 +54,15 @@ const POSTING: u8 = 2;
 /// tokenized the same way by [`Bm25Reader::search`], which scores with the
 /// Lucene-style non-negative IDF `ln(1 + (N - df + 0.5) / (df + 0.5))`.
 ///
-/// Like [`InvertedIndex`](super::InvertedIndex), documents are set-semantic:
-/// within a transaction deltas accumulate, and the net sign decides — a
-/// positive delta (re)writes the document's postings, a non-positive one
-/// deletes them, without reading prior state. Corpus statistics do
-/// accumulate deltas, so insert each document once with delta `+1` and
-/// retract it once with `-1`. Like [`Map`](crate::pipeline::Map), this
-/// relies on determinism: a retraction must present the same `(key, text)`
-/// that was inserted, and the tokenizer must be a pure function, or index
-/// state will not cancel.
+/// Documents are set-semantic per key. Within a transaction, a positive
+/// delta writes that document's term frequencies and length as absolute
+/// values, while a negative delta removes them. This makes a
+/// [`KeyedStream`](crate::stream::KeyedStream) replacement (`-old`, then
+/// `+new`) leave the index at the new document. Corpus statistics accumulate
+/// deltas, so insert each document once with delta `+1` and retract it once
+/// with `-1`. Like [`Map`](crate::pipeline::Map), this relies on determinism:
+/// a retraction must present the same `(key, text)` that was inserted, and the
+/// tokenizer must be a pure function.
 ///
 /// ```no_run
 /// use fold::pipeline::{Keyed, terminal::search::Bm25};
@@ -83,9 +83,9 @@ pub struct Bm25<K, V, T = fn(&str, &mut Vec<u8>)> {
     tokens: Vec<u8>,
     k1: f64,
     b: f64,
-    // pending accumulated deltas this tx, by encoded store key
-    postings: FxHashMap<Vec<u8>, i64>,
-    doc_lens: FxHashMap<Vec<u8>, i64>,
+    // latest pending write this tx, by encoded store key
+    postings: FxHashMap<Vec<u8>, Option<i64>>,
+    doc_lens: FxHashMap<Vec<u8>, Option<i64>>,
     docs: i64,
     len: i64,
     _p: PhantomData<(K, V)>,
@@ -130,20 +130,18 @@ impl<K, V, T> Bm25<K, V, T> {
     }
 }
 
-// flush a pending delta map set-semantically, like `InvertedIndex`: the net
-// sign decides between writing the magnitude and deleting the key, with no
-// read of prior state — a read-modify-write here turns mass retraction into
-// a random point read per key
+// Flush the latest operation for each posting or document length. Values are
+// absolute so a retained term in a `-old`, `+new` replacement gets the new
+// frequency instead of the frequency difference.
 fn fold(
     tx: &mut WriteTx<'_>,
     ks: &fjall::SingleWriterTxKeyspace,
-    pending: &mut FxHashMap<Vec<u8>, i64>,
+    pending: &mut FxHashMap<Vec<u8>, Option<i64>>,
 ) {
-    for (key, delta) in pending.drain() {
-        match delta {
-            1.. => tx.insert(ks, &key, delta.to_be_bytes()),
-            0 => {}
-            _ => tx.remove(ks, &key),
+    for (key, value) in pending.drain() {
+        match value {
+            Some(value) => tx.insert(ks, &key, value.to_be_bytes()),
+            None => tx.remove(ks, &key),
         }
     }
 }
@@ -163,6 +161,10 @@ where
     fn push(&mut self, tx: &mut WriteTx<'_>, data: &Keyed<K, V>, delta: isize) {
         let Keyed { key, val } = data;
         let delta = delta as i64;
+        if delta == 0 {
+            return;
+        }
+        let inserting = delta > 0;
         (self.tok)(val.as_ref(), &mut self.tokens);
 
         let mut dl = 0i64;
@@ -180,13 +182,14 @@ where
             tx.buf.push(POSTING);
             postcard::to_io(term, &mut tx.buf).unwrap();
             postcard::to_io(key, &mut tx.buf).unwrap();
-            *self.postings.entry(tx.buf.clone()).or_insert(0) += n * delta;
+            self.postings.insert(tx.buf.clone(), inserting.then_some(n));
         }
 
         tx.buf.clear();
         tx.buf.push(DOCLEN);
         postcard::to_io(key, &mut tx.buf).unwrap();
-        *self.doc_lens.entry(tx.buf.clone()).or_insert(0) += dl * delta;
+        self.doc_lens
+            .insert(tx.buf.clone(), inserting.then_some(dl));
 
         self.docs += delta;
         self.len += dl * delta;
