@@ -17,11 +17,11 @@ cargo run -p soundings             # embedding-quality probe (axis / drift gates
 cargo run -p soundings -- bench    # corpus-scale measurements
 ```
 
-First `serve` builds the canon index (~20s at the default sampling; set
-`SOUNDINGS_CANON_STEP=1` for all 129,097 sentences, ~3min once) and
-checkpoints the HNSW graph — after that, cold start is instant. Kill the
-process with `-9` mid-edit and relaunch: the document, its lenses, and the
-canon are back before you can alt-tab.
+First `serve` builds the full 129,097-sentence canon index once (~3¼min;
+set `SOUNDINGS_CANON_STEP=10` for a ~20s subsampled dev shelf) and
+checkpoints the HNSW graph — after that, every start is a ~0.5s snapshot
+fast-load. Kill the process with `-9` mid-edit and relaunch: the document,
+its lenses, and the canon are back before you can alt-tab.
 
 ## What it is, for a writer
 
@@ -116,10 +116,10 @@ with credit.
 |---|---|
 | ese encode | ~291k sentences/s |
 | one edit, end to end (retract → re-embed → re-score → repaint) | 15–130µs wall; 23–38µs inside the pipeline per the Meter |
-| kNN against the canon | ~230µs |
+| kNN against the full canon | 0.23–0.87ms |
 | doc resume after `kill -9` | ~15ms |
-| canon reopen (129,097 sentences) | 195s rebuild → **0.27s** snapshot fast-load |
-| gale, 60 edits/s × 6s | fold **360/360** at median ~400µs · naive arm drops 75 (trial canon) to 347 (full canon) |
+| canon reopen (129,097 sentences) | 194.85s rebuild → **0.51s** snapshot fast-load |
+| gale, 60 edits/s × 10s | fold **600/600** at median ~600µs · naive arm completes 33 and drops **567** at the full canon (median stride 307ms — a 500× ratio) |
 
 ## Local vs cloud (measured, not asserted)
 
@@ -143,9 +143,10 @@ sentence first.
 
 - The naive lane scopes the ANN index out (it linear-scans) — stated on
   screen; the comparison is maintenance strategy, not index vs no index.
-- Voice agreement between HNSW and an exact scan is ~89% at the sampled
-  canon and ~65% at the full 129k — approximate means approximate, and the
-  referee reports it rather than hiding it.
+- Voice agreement between HNSW and an exact scan is ~92% at the sampled
+  canon and ~74% at the full 129k (measured 8/16, after the Hnsw sink
+  last-write-wins fix) — approximate means approximate, and the referee
+  reports it rather than hiding it.
 - A drift / "doesn't sound like you" lens was prototyped and **cut**: static
   embedding geometry carries no authorial-register signal, and a lens that
   can't prove itself doesn't ship.
