@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Bumped when the schema changes shape. Written into every envelope.
-pub const EVENT_VERSION: u16 = 1;
+pub const EVENT_VERSION: u16 = 2;
 
 pub type SessionId = String;
 
@@ -61,6 +61,12 @@ pub enum Event {
     FinalMsg { text: String },
     Compaction {},
 
+    /// A substantive assistant message mid-session — where conclusions
+    /// live ("the fix is X", "root cause was Y"). Keyword-indexed for
+    /// recall; not embedded (volume). Added in v2; additive, so v1
+    /// envelopes still parse.
+    Said { text: String },
+
     // ---- the one judgment step ----
     /// A small claim the agent chose to record. `derived_from` cites the
     /// seqs of mechanical events it rests on; empty means a bare assertion,
@@ -75,6 +81,9 @@ pub enum Event {
 pub const USER_MSG_CAP: usize = 2048;
 pub const FINAL_MSG_CAP: usize = 8192;
 pub const DETAIL_CAP: usize = 500;
+pub const SAID_CAP: usize = 1200;
+/// Assistant messages shorter than this are chatter, not conclusions.
+pub const SAID_MIN: usize = 80;
 
 /// Truncate on a char boundary at `cap` bytes.
 pub fn cap(s: &str, cap: usize) -> String {

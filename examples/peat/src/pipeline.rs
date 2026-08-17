@@ -155,8 +155,12 @@ pub fn file_session(k: &Keyed<EventId, Envelope>) -> Option<Keyed<String, String
 pub const EMBED_USER_MAX: usize = 400;
 
 pub fn embeddable(t: &Keyed<EventId, TextRow>) -> Option<Keyed<EventId, [f32; ese::DIMENSIONS]>> {
-    (t.val.kind != "user" || t.val.text.len() <= EMBED_USER_MAX)
-        .then(|| Keyed::new(t.key.clone(), ese::encode_single(&t.val.text)))
+    let embed = match t.val.kind.as_str() {
+        "said" => false, // keyword-recallable, too voluminous to embed
+        "user" => t.val.text.len() <= EMBED_USER_MAX,
+        _ => true,
+    };
+    embed.then(|| Keyed::new(t.key.clone(), ese::encode_single(&t.val.text)))
 }
 
 pub fn searchable(k: &Keyed<EventId, Envelope>) -> Option<Keyed<EventId, TextRow>> {
@@ -166,6 +170,7 @@ pub fn searchable(k: &Keyed<EventId, Envelope>) -> Option<Keyed<EventId, TextRow
             text, derived_from, ..
         } => (text, "obs", !derived_from.is_empty()),
         Event::FinalMsg { text } => (text, "final", true),
+        Event::Said { text } => (text, "said", true),
         Event::UserMsg { text } => (text, "user", true),
         _ => return None,
     };

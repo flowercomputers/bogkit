@@ -12,7 +12,9 @@
 
 use serde_json::Value;
 
-use crate::event::{cap, Envelope, Event, EventId, DETAIL_CAP, FINAL_MSG_CAP, USER_MSG_CAP};
+use crate::event::{
+    cap, Envelope, Event, EventId, DETAIL_CAP, FINAL_MSG_CAP, SAID_CAP, SAID_MIN, USER_MSG_CAP,
+};
 
 /// Blocks per transcript line the seq scheme can address.
 const SEQ_STRIDE: u32 = 16;
@@ -124,7 +126,21 @@ pub fn parse(jsonl: &str, fallback_session: Option<&str>) -> Option<Parsed> {
                         }
                         Some("text") if ty == "assistant" => {
                             if let Some(text) = block.get("text").and_then(Value::as_str) {
-                                // remember the last assistant text: it becomes FinalMsg
+                                // substantive assistant messages are recallable
+                                if text.len() >= SAID_MIN {
+                                    events.push((
+                                        (session.clone(), seq),
+                                        Envelope::new(
+                                            &session,
+                                            ts,
+                                            Event::Said {
+                                                text: cap(text, SAID_CAP),
+                                            },
+                                        ),
+                                    ));
+                                }
+                                // remember the last assistant text: it becomes
+                                // FinalMsg (replacing its Said at the same seq)
                                 final_msg = Some((seq, ts, cap(text, FINAL_MSG_CAP)));
                             }
                         }
@@ -196,6 +212,8 @@ pub fn parse(jsonl: &str, fallback_session: Option<&str>) -> Option<Parsed> {
     }
 
     if let Some((seq, ts, text)) = final_msg {
+        // the closing message is FinalMsg, not Said — drop the duplicate
+        events.retain(|(id, e)| !(id.1 == seq && matches!(e.kind, Event::Said { .. })));
         events.push((
             (session.clone(), seq),
             Envelope::new(&session, ts, Event::FinalMsg { text }),
