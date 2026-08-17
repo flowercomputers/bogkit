@@ -543,6 +543,41 @@ fn bench_e2e_synthetic_json_report() {
     }
 }
 
+/// `--interactive` is a human-only REPL (build design §13): combined with
+/// `--json` it's a usage error, not a silent pick-one. Exit 1, nothing on
+/// stdout, and (since `--json` was set) the error is JSON on stderr —
+/// `cli::run`'s top-level error handler emits `{"error": …}` there when
+/// `cli.json` is true, matching every other command's `--json` error
+/// convention.
+#[test]
+fn bench_interactive_and_json_is_a_usage_error() {
+    let assert = Command::cargo_bin("figmog")
+        .unwrap()
+        .args(["bench", "--nodes", "300", "--interactive", "--json"])
+        .assert()
+        .failure()
+        .code(1);
+    let output = assert.get_output();
+
+    assert!(
+        output.stdout.is_empty(),
+        "stdout must stay empty on a usage error: {:?}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let v: serde_json::Value = serde_json::from_str(stderr.trim()).unwrap_or_else(|e| {
+        panic!("stderr was not exactly one JSON object: {e}\nstderr: {stderr}")
+    });
+    let msg = v["error"]
+        .as_str()
+        .expect("stderr JSON has an `error` string field");
+    assert!(
+        msg.contains("--interactive") && msg.contains("--json"),
+        "expected the error to name both conflicting flags: {msg:?}"
+    );
+}
+
 /// End-to-end smoke for `figmog bench --interactive` (build design §13
 /// "Interactive mode"), driven non-interactively by piping a command
 /// script into stdin — this is exactly how CI (a non-TTY pipe) exercises
@@ -571,12 +606,17 @@ fn bench_interactive_e2e_scripted_session_is_plain_and_clean() {
         "expected a per-request line naming figmog_search:\n{stdout}"
     );
 
-    // `run 20`: 20 numbered per-request lines, `#   1` through `#  20`.
+    // Sequence numbers are session-wide, not per-command: `stats` fires
+    // #1, `search garden` fires #2, so `run 20`'s 20 numbered per-request
+    // lines are #3 through #22. `#1` and `#20` are both still present
+    // somewhere in that combined stream — the first from `stats`, the
+    // second from partway through the burst — which is enough to confirm
+    // both the pre-burst call and the burst itself actually fired.
     for n in [1, 20] {
         let needle = format!("#{n:>4}");
         assert!(
             stdout.contains(&needle),
-            "expected a `run 20` burst line numbered {n} ({needle:?}):\n{stdout}"
+            "expected a numbered line #{n} ({needle:?}) somewhere in the session:\n{stdout}"
         );
     }
 
