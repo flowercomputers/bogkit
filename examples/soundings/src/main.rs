@@ -12,6 +12,7 @@
 mod gale;
 mod lens;
 mod pct;
+mod anchors;
 mod restyle;
 mod serve;
 
@@ -201,6 +202,7 @@ fn main() {
     match std::env::args().nth(1).as_deref() {
         Some("bench") => return bench(),
         Some("serve") => return serve::run(),
+        Some("anchors") => return anchors::print_bench(),
         _ => {}
     }
     let t0 = std::time::Instant::now();

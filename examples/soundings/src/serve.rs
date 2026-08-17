@@ -1110,7 +1110,7 @@ async fn engine_info(State(app): State<AppState>) -> Json<serde_json::Value> {
             })
         })
         .collect();
-    Json(serde_json::json!({ "libs": libs, "model": crate::restyle::model_name() }))
+    Json(serde_json::json!({ "libs": libs, "model": crate::restyle::model_name(), "anchors": crate::anchors::bench() }))
 }
 
 async fn index() -> Html<&'static str> {

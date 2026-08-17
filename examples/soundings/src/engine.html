@@ -100,6 +100,20 @@
     <div style="font-size:10px;color:var(--dim);margin-top:10px;">switching drops one stream and opens another · HNSW graphs restore from content-digested snapshots (v2) instead of rebuilding · an interrupted shelf is detected and rebuilt, never trusted</div>
   </div>
 
+  <div class="panel">
+    <h2>The anchor question — how many examples make an axis?</h2>
+    <div style="font-size:10.5px;color:var(--dim);line-height:1.6;margin-bottom:8px;">
+      the concrete——abstract axis is a centroid difference over example sentences. benched live at startup
+      against a held-out 30-sentence ladder (6 human-graded bands, topics overlapping across bands so the
+      axis can't cheat by scoring topic) · <span id="apairs">—</span> cross-band pairs
+    </div>
+    <table class="bench" id="abench"><tr><td>loading…</td></tr></table>
+    <div style="font-size:10.5px;color:var(--dim);margin-top:10px;line-height:1.6;">
+      gains taper in the tens — the v2 axis ships 20+/pole. today's instrument stays at 4/pole:
+      changing anchors re-scores the world, and a materialized view keeps its history honest.
+    </div>
+  </div>
+
   <div class="panel wide">
     <h2>Three crates, all load-bearing — and what we sent back upstream</h2>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:0 26px;">
@@ -150,6 +164,15 @@ async function shelves() {
   try {
     const d = await (await fetch("/engine-info")).json();
     $("model").textContent = d.model || "—";
+    if (d.anchors && d.anchors.length) {
+      $("apairs").textContent = d.anchors[0].pairs;
+      $("abench").innerHTML =
+        `<tr><td style="color:var(--dim)">anchors/pole</td><td style="color:var(--dim)">ordering</td><td style="color:var(--dim)">spread</td><td style="color:var(--dim)">built in</td></tr>` +
+        d.anchors.map((a) => {
+          const track = `<span style="display:inline-block;width:64px;height:4px;background:var(--line);border-radius:2px;position:relative;vertical-align:2px;margin-right:7px;"><i style="position:absolute;left:0;top:0;height:4px;border-radius:2px;background:var(--amber);width:${(a.pairwise_accuracy * 100).toFixed(0)}%"></i></span>`;
+          return `<tr><td><b style="color:var(--ink)">${a.per_pole}</b></td><td>${track}<b>${(a.pairwise_accuracy * 100).toFixed(1)}%</b></td><td><b>${a.spread.toFixed(2)}</b></td><td>${a.build_us >= 1000 ? (a.build_us / 1000).toFixed(1) + " ms" : a.build_us + " µs"}</td></tr>`;
+        }).join("");
+    }
     $("shelves").innerHTML = d.libs.map((l) => {
       const mb = l.snap_bytes ? (l.snap_bytes / 1048576).toFixed(1) + " MB snapshot" : "no snapshot yet";
       const n = l.sentences != null ? l.sentences.toLocaleString() + " sentences" : (l.prepped ? "prepped" : "not prepped");
