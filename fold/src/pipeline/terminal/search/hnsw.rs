@@ -97,11 +97,11 @@ where
 /// [`anny::metric`] — smaller is closer).
 ///
 /// Like the posting sinks, documents are set-semantic per key: within a
-/// transaction deltas accumulate and the net sign decides — positive
-/// (re)indexes the key under its latest embedding, non-positive deletes it —
-/// with no read of prior state. Retraction genuinely removes the node from
-/// the graph (anny repairs the neighborhood), so recall does not decay
-/// under churn the way tombstoning indexes do.
+/// transaction the most recent push decides — positive (re)indexes the key
+/// under that embedding, non-positive deletes it — with no read of prior
+/// state. Retraction genuinely removes the node from the graph (anny repairs
+/// the neighborhood), so recall does not decay under churn the way
+/// tombstoning indexes do.
 ///
 /// The graph lives in memory: it is rebuilt from the persisted vectors when
 /// the stream opens, and again if a transaction aborts after a mid-tx flush
@@ -142,8 +142,8 @@ pub struct Hnsw<
     metric: M,
     seed: u64,
     state: Rc<RefCell<State<K, T, M, DIM, M0, TOP_K, EF_SEARCH, EF_BUILD, MAX_LEVEL>>>,
-    // encoded key -> (key, latest embedding, net delta this tx)
-    pending: FxHashMap<Vec<u8>, (K, [T; DIM], i64)>,
+    // encoded key -> (key, embedding, delta) of the last push this tx
+    pending: FxHashMap<Vec<u8>, (K, [T; DIM], isize)>,
     vec_buf: Vec<u8>,
 }
 
@@ -222,12 +222,8 @@ where
     fn push(&mut self, tx: &mut WriteTx<'_>, data: &Keyed<K, [T; DIM]>, delta: isize) {
         tx.buf.clear();
         postcard::to_io(&data.key, &mut tx.buf).unwrap();
-        let e = self
-            .pending
-            .entry(tx.buf.clone())
-            .or_insert_with(|| (data.key.clone(), data.val, 0));
-        e.1 = data.val;
-        e.2 += delta as i64;
+        self.pending
+            .insert(tx.buf.clone(), (data.key.clone(), data.val, delta));
     }
 
     fn commit(&mut self, tx: &mut WriteTx<'_>) {
@@ -255,7 +251,6 @@ where
                     tx.insert(&ks, &kenc, &self.vec_buf);
                     state.upsert(kenc, key, vec);
                 }
-                0 => {}
                 _ => {
                     if state.remove(&kenc) {
                         tx.remove(&ks, &kenc);

@@ -46,13 +46,13 @@
 //! - *Counting* sinks ([`Count`], [`Bag`], [`Stats`], [`Histogram`],
 //!   [`Ranked`], [`KeyedRanked`]) accumulate signed multiplicities, so
 //!   deltas cancel exactly at any magnitude.
-//! - *Posting* sinks ([`InvertedIndex`], [`Multimap`], [`search::Bm25`],
-//!   [`search::Hnsw`]) are set-semantic per record: a transaction's
-//!   net-positive delta inserts, net-negative deletes, regardless of
-//!   magnitude — no prior state is read, keeping mass retraction cheap.
-//! - [`Table`] is last-writer-wins: the final push to a key within a
-//!   transaction decides its value (positive delta) or removal
-//!   (non-positive).
+//! - *Posting* sinks ([`InvertedIndex`], [`Multimap`], [`search::Bm25`]) are
+//!   set-semantic per record: a transaction's net-positive delta inserts,
+//!   net-negative deletes, regardless of magnitude — no prior state is read,
+//!   keeping mass retraction cheap.
+//! - Last-writer-wins sinks ([`Table`], [`search::Hnsw`]) retain one value per
+//!   key: the final push within a transaction decides its value (positive
+//!   delta) or removal (non-positive).
 //!
 //! [`Scored`]: crate::pipeline::Scored
 
