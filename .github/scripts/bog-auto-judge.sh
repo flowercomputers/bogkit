@@ -98,10 +98,19 @@ EOF
 user_content=$(printf 'PR #%s by @%s\nTitle: %s\n\n--- PR body ---\n%s\n\n--- Diff digest ---\n%s\n' \
   "$PR_NUMBER" "$pr_author" "$pr_title" "$pr_body" "$digest")
 
+# Linux caps a single argv entry at ~128KB (MAX_ARG_STRLEN), so passing the
+# diff digest via --arg dies with "Argument list too long" on any large PR
+# (MAX_DIGEST_CHARS=150000 exceeds the cap). Feed the big strings through
+# files with --rawfile instead — no argv involved.
+sys_f=$(mktemp)
+usr_f=$(mktemp)
+trap 'rm -f "$sys_f" "$usr_f"' EXIT
+printf '%s' "$system_prompt" > "$sys_f"
+printf '%s' "$user_content" > "$usr_f"
 request=$(jq -n \
   --arg model "$MODEL" \
-  --arg system "$system_prompt" \
-  --arg content "$user_content" \
+  --rawfile system "$sys_f" \
+  --rawfile content "$usr_f" \
   '{
     model: $model,
     max_tokens: 4000,
