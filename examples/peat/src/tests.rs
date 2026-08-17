@@ -432,3 +432,35 @@ fn iso_timestamps_round_trip() {
     // date_label is the inverse's date part
     assert_eq!(crate::transcript::date_label(ms), "2026-08-10");
 }
+
+/// Codex rollout adapter: positive-signature detection, message/tool/
+/// compaction mapping, developer-role and reasoning skipped, unknown
+/// formats rejected rather than guessed.
+#[test]
+fn codex_rollout_parses_and_unknown_rejected() {
+    let rollout = r#"{"timestamp":"2026-08-16T20:00:00.000Z","type":"session_meta","payload":{"session_id":"cdx-1","cwd":"/tmp/w"}}
+{"timestamp":"2026-08-16T20:00:01.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"fix the flaky test"}]}}
+{"timestamp":"2026-08-16T20:00:02.000Z","type":"response_item","payload":{"type":"reasoning","content":"hidden"}}
+{"timestamp":"2026-08-16T20:00:03.000Z","type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"injected instructions"}]}}
+{"timestamp":"2026-08-16T20:00:04.000Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"jj describe -m \\\"fold: fix\\\"\"}"}}
+{"timestamp":"2026-08-16T20:00:05.000Z","type":"compacted","payload":{"message":"summary of what the window held"}}
+{"timestamp":"2026-08-16T20:00:06.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"The flaky test is fixed; root cause was an unseeded rng in the harness."}]}}
+"#;
+    let parsed = crate::transcript::parse(rollout, None).expect("codex rollout parses");
+    assert_eq!(parsed.session, "cdx-1");
+    let count = |f: fn(&Event) -> bool| parsed.events.iter().filter(|(_, e)| f(&e.kind)).count();
+    assert_eq!(count(|e| matches!(e, Event::SessionMeta { .. })), 1);
+    assert_eq!(count(|e| matches!(e, Event::UserMsg { .. })), 1, "developer role must be skipped");
+    assert_eq!(count(|e| matches!(e, Event::ToolCall { .. })), 1);
+    assert_eq!(count(|e| matches!(e, Event::Commit { .. })), 1, "jj describe detected");
+    assert_eq!(count(|e| matches!(e, Event::Compaction {})), 1);
+    assert_eq!(count(|e| matches!(e, Event::CompactSummary { .. })), 1);
+    assert_eq!(count(|e| matches!(e, Event::FinalMsg { .. })), 1);
+    assert_eq!(count(|e| matches!(e, Event::Said { .. })), 0, "sole assistant msg became FinalMsg");
+
+    // unknown format: reject, never guess
+    let unknown = r#"{"kind":"mystery","data":1}
+{"kind":"mystery","data":2}
+"#;
+    assert!(crate::transcript::parse(unknown, Some("s")).is_none());
+}

@@ -1,4 +1,18 @@
-//! Claude Code transcript JSONL -> ledger events.
+//! Agent transcripts -> ledger events: one neutral event IR, one adapter
+//! per harness format.
+//!
+//! Formats are detected by POSITIVE signature (a Claude Code line carries
+//! `sessionId`; a Codex rollout opens with `type: "session_meta"`) and an
+//! unrecognized file is an error, never a guess — a new harness silently
+//! parsed as an old one is the worst failure mode. Each adapter makes its
+//! lossy editorial choices (what counts as Said, what is skipped) locally
+//! and documents them; the IR never learns harness vocabulary.
+//!
+//! Seq assignment is part of the ledger contract: ids are a pure function
+//! of the file (`line_index * 16 + block`), which is what makes re-capture
+//! idempotent — adapters may ADD slots in later versions but must never
+//! renumber existing ones. Improving an adapter is therefore safe: fix,
+//! re-capture, and changed mappings replace while new slots insert.
 //!
 //! Transcripts are heterogeneous (`mode`, `file-history-snapshot`, hook
 //! attachments, `user`/`assistant` messages, compaction summaries) and the
@@ -24,12 +38,45 @@ pub struct Parsed {
     pub events: Vec<(EventId, Envelope)>,
 }
 
+/// Detected transcript format, by positive signature only.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Format {
+    ClaudeCode,
+    CodexRollout,
+}
+
+fn detect(lines: &[Value]) -> Option<Format> {
+    if lines
+        .iter()
+        .take(5)
+        .any(|l| l.get("type").and_then(Value::as_str) == Some("session_meta"))
+    {
+        return Some(Format::CodexRollout);
+    }
+    if lines.iter().any(|l| l.get("sessionId").is_some()) {
+        return Some(Format::ClaudeCode);
+    }
+    None
+}
+
 pub fn parse(jsonl: &str, fallback_session: Option<&str>) -> Option<Parsed> {
     let lines: Vec<Value> = jsonl
         .lines()
         .filter(|l| !l.trim().is_empty())
         .filter_map(|l| serde_json::from_str(l).ok())
         .collect();
+    match detect(&lines) {
+        Some(Format::CodexRollout) => return parse_codex(&lines, fallback_session),
+        Some(Format::ClaudeCode) => {}
+        None => {
+            // fallback_session lets an empty/unrecognized file still resolve
+            // for Claude-style parsing of nothing; a nonempty unknown format
+            // must fail loudly
+            if !lines.is_empty() {
+                return None;
+            }
+        }
+    }
 
     let session = lines
         .iter()
@@ -270,6 +317,25 @@ fn file_touch(tool: &str, input: &Value) -> Option<String> {
         .flatten()
 }
 
+/// The `-m "..."` message of a commit-like command, if it is one.
+fn commit_msg_from_cmd(cmd: &str) -> Option<String> {
+    if !cmd.contains("git commit") && !cmd.contains("jj describe") {
+        return None;
+    }
+    Some(
+        cmd.split_once("-m")
+            .map(|(_, rest)| {
+                let rest = rest.trim_start();
+                let quote = rest.chars().next().filter(|c| *c == '"' || *c == '\'');
+                match quote {
+                    Some(q) => rest[1..].split(q).next().unwrap_or("").to_string(),
+                    None => rest.split_whitespace().next().unwrap_or("").to_string(),
+                }
+            })
+            .unwrap_or_default(),
+    )
+}
+
 /// `git commit` in a Bash command -> (hash, message). Hash is best-effort
 /// (empty when unparseable); the message comes from `-m "..."`.
 fn commit_of(tool: &str, input: &Value, line: &Value) -> Option<(String, String)> {
@@ -277,20 +343,7 @@ fn commit_of(tool: &str, input: &Value, line: &Value) -> Option<(String, String)
         return None;
     }
     let cmd = input.get("command")?.as_str()?;
-    if !cmd.contains("git commit") && !cmd.contains("jj describe") {
-        return None;
-    }
-    let message = cmd
-        .split_once("-m")
-        .map(|(_, rest)| {
-            let rest = rest.trim_start();
-            let quote = rest.chars().next().filter(|c| *c == '"' || *c == '\'');
-            match quote {
-                Some(q) => rest[1..].split(q).next().unwrap_or("").to_string(),
-                None => rest.split_whitespace().next().unwrap_or("").to_string(),
-            }
-        })
-        .unwrap_or_default();
+    let message = commit_msg_from_cmd(cmd)?;
     // stdout like "[main abc1234] msg" if the result rode along on this line
     let hash = line
         .get("toolUseResult")
@@ -391,4 +444,214 @@ pub fn local_offset_ms() -> i64 {
 /// or "23:59:59.999"): shared by `obs --at` and `asof`.
 pub fn local_day_ms(date: &str, time: &str) -> Option<u64> {
     iso_to_ms(&format!("{date}T{time}Z")).map(|utc| (utc as i64 - local_offset_ms()) as u64)
+}
+
+/// Codex CLI rollout adapter (`~/.codex/sessions/**/rollout-*.jsonl`).
+///
+/// Lines are `{timestamp, type, payload}`. Editorial choices, made here
+/// and nowhere else: `reasoning` items and `developer`-role messages are
+/// skipped (chain-of-thought and injected instructions, not the work);
+/// `function_call` and `custom_tool_call` are both ToolCalls with the
+/// command extracted from the arguments JSON when present; `compacted`
+/// yields the marker plus the compactor's own summary text.
+fn parse_codex(lines: &[Value], fallback_session: Option<&str>) -> Option<Parsed> {
+    let session = lines
+        .iter()
+        .find(|l| l.get("type").and_then(Value::as_str) == Some("session_meta"))
+        .and_then(|l| l.get("payload")?.get("session_id")?.as_str())
+        .or(fallback_session)?
+        .to_string();
+
+    let mut events: Vec<(EventId, Envelope)> = Vec::new();
+    let mut last_ts: u64 = 0;
+    let mut meta_done = false;
+    let mut final_msg: Option<(u32, u64, &str)> = None;
+
+    for (li, line) in lines.iter().enumerate() {
+        let seq = (li as u32) * SEQ_STRIDE + 2;
+        let ts = line
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .and_then(iso_to_ms)
+            .unwrap_or(last_ts);
+        last_ts = ts;
+        let ty = line.get("type").and_then(Value::as_str).unwrap_or("");
+        let Some(payload) = line.get("payload") else {
+            continue;
+        };
+
+        match ty {
+            "session_meta" if !meta_done => {
+                meta_done = true;
+                events.push((
+                    (session.clone(), seq),
+                    Envelope::new(
+                        &session,
+                        ts,
+                        Event::SessionMeta {
+                            cwd: payload
+                                .get("cwd")
+                                .and_then(Value::as_str)
+                                .unwrap_or("")
+                                .to_string(),
+                            branch: None,
+                            ese_version: crate::event::ese_version(),
+                        },
+                    ),
+                ));
+            }
+            "compacted" => {
+                events.push((
+                    (session.clone(), seq),
+                    Envelope::new(&session, ts, Event::Compaction {}),
+                ));
+                // the summary is payload.message when present, else the
+                // continuation handoff that replaced the window
+                let text = payload
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .filter(|t| !t.trim().is_empty())
+                    .or_else(|| {
+                        payload
+                            .get("replacement_history")?
+                            .as_array()?
+                            .first()?
+                            .get("content")?
+                            .as_array()?
+                            .first()?
+                            .get("text")?
+                            .as_str()
+                    });
+                if let Some(text) = text.filter(|t| !t.trim().is_empty()) {
+                    events.push((
+                        (session.clone(), seq + 1),
+                        Envelope::new(
+                            &session,
+                            ts,
+                            Event::CompactSummary {
+                                text: cap(text, FINAL_MSG_CAP),
+                            },
+                        ),
+                    ));
+                }
+            }
+            "response_item" => match payload.get("type").and_then(Value::as_str) {
+                Some("message") => {
+                    let role = payload.get("role").and_then(Value::as_str).unwrap_or("");
+                    let text = payload
+                        .get("content")
+                        .and_then(Value::as_array)
+                        .map(|blocks| {
+                            blocks
+                                .iter()
+                                .filter_map(|b| b.get("text").and_then(Value::as_str))
+                                .collect::<Vec<_>>()
+                                .join(" ")
+                        })
+                        .unwrap_or_default();
+                    if text.trim().is_empty() {
+                        continue;
+                    }
+                    match role {
+                        "user" => events.push((
+                            (session.clone(), seq),
+                            Envelope::new(
+                                &session,
+                                ts,
+                                Event::UserMsg {
+                                    text: cap(&text, USER_MSG_CAP),
+                                },
+                            ),
+                        )),
+                        "assistant" => {
+                            if text.len() >= SAID_MIN {
+                                events.push((
+                                    (session.clone(), seq),
+                                    Envelope::new(
+                                        &session,
+                                        ts,
+                                        Event::Said {
+                                            text: cap(&text, SAID_CAP),
+                                        },
+                                    ),
+                                ));
+                            }
+                            // borrow for the FinalMsg swap at the end
+                            if let Some(t) = payload
+                                .get("content")
+                                .and_then(Value::as_array)
+                                .and_then(|b| b.first())
+                                .and_then(|b| b.get("text"))
+                                .and_then(Value::as_str)
+                            {
+                                final_msg = Some((seq, ts, t));
+                            }
+                        }
+                        _ => {} // developer role: injected instructions, skipped
+                    }
+                }
+                Some("function_call") | Some("custom_tool_call") => {
+                    let tool = payload
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown");
+                    // arguments is a JSON string; the command usually lives
+                    // under "cmd" or "command"
+                    let args = payload.get("arguments").and_then(Value::as_str);
+                    let cmd: Option<String> = args
+                        .and_then(|a| serde_json::from_str::<Value>(a).ok())
+                        .and_then(|v| {
+                            v.get("cmd")
+                                .or_else(|| v.get("command"))
+                                .and_then(Value::as_str)
+                                .map(String::from)
+                        });
+                    let detail = cmd.clone().or_else(|| args.map(String::from)).unwrap_or_default();
+                    events.push((
+                        (session.clone(), seq),
+                        Envelope::new(
+                            &session,
+                            ts,
+                            Event::ToolCall {
+                                tool: tool.to_string(),
+                                detail: cap(&detail, DETAIL_CAP),
+                                ok: true,
+                            },
+                        ),
+                    ));
+                    if let Some(message) = cmd.as_deref().and_then(commit_msg_from_cmd) {
+                        events.push((
+                            (session.clone(), seq + 1),
+                            Envelope::new(
+                                &session,
+                                ts,
+                                Event::Commit {
+                                    hash: String::new(),
+                                    message: cap(&message, 200),
+                                },
+                            ),
+                        ));
+                    }
+                }
+                _ => {} // reasoning, outputs, agent_message: skipped
+            },
+            _ => {} // event_msg, turn_context, world_state, ...
+        }
+    }
+
+    if let Some((seq, ts, text)) = final_msg {
+        events.retain(|(id, e)| !(id.1 == seq && matches!(e.kind, Event::Said { .. })));
+        events.push((
+            (session.clone(), seq),
+            Envelope::new(
+                &session,
+                ts,
+                Event::FinalMsg {
+                    text: cap(text, FINAL_MSG_CAP),
+                },
+            ),
+        ));
+    }
+
+    Some(Parsed { session, events })
 }
