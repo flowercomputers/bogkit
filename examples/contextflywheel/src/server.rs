@@ -25,13 +25,15 @@ pub fn serve(root: PathBuf, bind: &str) -> Result<()> {
 
 fn respond(request: tiny_http::Request, root: &Path) -> Result<()> {
     let url = request.url().to_owned();
-    if url.starts_with("/api/live") {
+    let route = url.split('?').next().unwrap_or(&url);
+    let selected_root = resolve_session(root, query_param(&url, "session"))?;
+    if route == "/api/live" {
         let after = query_param(&url, "after")
             .and_then(|value| value.parse().ok())
             .unwrap_or(0);
         let deadline = Instant::now() + Duration::from_secs(20);
         let record = loop {
-            if let Some(record) = load_records(root)?
+            if let Some(record) = load_records(&selected_root)?
                 .into_iter()
                 .find(|record| record.step > after)
             {
@@ -50,31 +52,37 @@ fn respond(request: tiny_http::Request, root: &Path) -> Result<()> {
         request.respond(response)?;
         return Ok(());
     }
-    let (body, content_type, status) = if url == "/" {
+    let (body, content_type, status) = if route == "/" {
         (HTML.to_owned(), "text/html; charset=utf-8", 200)
-    } else if url == "/api/timeline" {
+    } else if route == "/api/timeline" {
         (
-            serde_json::to_string(&load_records(root)?)?,
+            serde_json::to_string(&load_records(&selected_root)?)?,
             "application/json",
             200,
         )
-    } else if url == "/api/mission" {
+    } else if route == "/api/mission" {
         (
-            serde_json::to_string(&render_mission(root)?)?,
+            serde_json::to_string(&render_mission(&selected_root)?)?,
             "application/json",
             200,
         )
-    } else if url == "/api/context-snapshots" {
+    } else if route == "/api/sessions" {
         (
-            serde_json::to_string(&load_context_snapshots(root)?)?,
+            serde_json::to_string(&render_sessions(root)?)?,
             "application/json",
             200,
         )
-    } else if let Some(value) = url.strip_prefix("/api/step/") {
+    } else if route == "/api/context-snapshots" {
+        (
+            serde_json::to_string(&load_context_snapshots(&selected_root)?)?,
+            "application/json",
+            200,
+        )
+    } else if let Some(value) = route.strip_prefix("/api/step/") {
         match value
             .parse::<u64>()
             .ok()
-            .and_then(|step| render_history(root, step).ok())
+            .and_then(|step| render_history(&selected_root, step).ok())
         {
             Some(history) => (serde_json::to_string(&history)?, "application/json", 200),
             None => (
@@ -83,11 +91,11 @@ fn respond(request: tiny_http::Request, root: &Path) -> Result<()> {
                 404,
             ),
         }
-    } else if let Some(value) = url.strip_prefix("/api/context/") {
+    } else if let Some(value) = route.strip_prefix("/api/context/") {
         match value
             .parse::<u64>()
             .ok()
-            .and_then(|step| render_context_report(root, step).ok())
+            .and_then(|step| render_context_report(&selected_root, step).ok())
         {
             Some(report) => (serde_json::to_string(&report)?, "application/json", 200),
             None => (
@@ -107,6 +115,53 @@ fn respond(request: tiny_http::Request, root: &Path) -> Result<()> {
             .with_header(header),
     )?;
     Ok(())
+}
+
+fn resolve_session(root: &Path, requested: Option<&str>) -> Result<PathBuf> {
+    let Some(requested) = requested else {
+        return Ok(root.to_path_buf());
+    };
+    let Some(parent) = root.parent() else {
+        return Ok(root.to_path_buf());
+    };
+    for entry in std::fs::read_dir(parent)? {
+        let path = entry?.path();
+        let metadata = std::fs::symlink_metadata(&path)?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            continue;
+        }
+        if path.file_name().and_then(|name| name.to_str()) == Some(requested)
+            && path.join("ledger.jsonl").is_file()
+        {
+            return Ok(path);
+        }
+    }
+    anyhow::bail!("unknown session")
+}
+
+fn render_sessions(root: &Path) -> Result<Vec<serde_json::Value>> {
+    let Some(parent) = root.parent() else {
+        return Ok(vec![]);
+    };
+    let mut sessions = Vec::new();
+    for entry in std::fs::read_dir(parent)? {
+        let path = entry?.path();
+        if !path.join("ledger.jsonl").is_file() {
+            continue;
+        }
+        let records = load_records(&path)?;
+        let state = compile_state(records.iter());
+        sessions.push(json!({
+            "id": path.file_name().and_then(|name| name.to_str()).unwrap_or("mission"),
+            "active": path == root,
+            "objective": state.objective.as_ref().map(|record| record.text.as_str()),
+            "current_belief": state.beliefs.values().next().map(|belief| belief.statement.as_str()),
+            "event_count": records.len(),
+            "completed": records.last().is_some_and(|record| record.kind == EventKind::AgentStop),
+        }));
+    }
+    sessions.sort_by_key(|session| !session["active"].as_bool().unwrap_or(false));
+    Ok(sessions)
 }
 
 fn render_mission(root: &Path) -> Result<serde_json::Value> {

@@ -95,6 +95,8 @@ pub struct ContextSnapshot {
     pub created_at: DateTime<Utc>,
     pub request_step: u64,
     pub event_step: u64,
+    #[serde(default)]
+    pub hook_event: String,
     pub mode: String,
     pub ranking_enabled: bool,
     pub model: String,
@@ -280,7 +282,10 @@ impl Ledger {
         mode: &str,
         ranking_enabled: bool,
         model: &str,
+        hook_event: &str,
     ) -> Result<ContextSnapshot> {
+        let context = redact_and_limit(context);
+        let model = redact_and_limit(model);
         let id = Uuid::new_v4().to_string();
         let mut event = MissionRecord::plain(
             EventKind::ContextSnapshot,
@@ -290,8 +295,9 @@ impl Ledger {
                 "mode": mode,
                 "ranking_enabled": ranking_enabled,
                 "model": model,
-                "context_hash": stable_hash(context),
-                "estimated_tokens": estimate_tokens(context),
+                "hook_event": hook_event,
+                "context_hash": stable_hash(&context),
+                "estimated_tokens": estimate_tokens(&context),
                 "token_count_method": "Estimated at four characters per token",
             })
             .to_string(),
@@ -303,13 +309,14 @@ impl Ledger {
             created_at: event.timestamp,
             request_step,
             event_step: event.step,
+            hook_event: hook_event.to_owned(),
             mode: mode.to_owned(),
             ranking_enabled,
-            model: model.to_owned(),
-            context_hash: stable_hash(context),
-            estimated_tokens: estimate_tokens(context),
+            model,
+            context_hash: stable_hash(&context),
+            estimated_tokens: estimate_tokens(&context),
             token_count_method: "Estimated at four characters per token".into(),
-            context: context.to_owned(),
+            context,
         };
         let mut file = OpenOptions::new()
             .create(true)
@@ -342,11 +349,17 @@ impl Ledger {
         if already_recorded {
             return Ok(None);
         }
-        let from = belief
-            .supersedes
-            .as_deref()
-            .and_then(|id| self.records.iter().find(|record| record.id == id))
-            .map_or("Previous investigation", |record| record.text.as_str());
+        let Some(superseded_id) = belief.supersedes.as_deref() else {
+            return Ok(None);
+        };
+        let Some(from) = self
+            .records
+            .iter()
+            .find(|record| record.id == superseded_id)
+            .map(|record| record.text.as_str())
+        else {
+            return Ok(None);
+        };
         let action_record = MissionRecord::plain(EventKind::ToolCall, action);
         let redirect = MissionRecord::plain(
             EventKind::DecisionRedirect,
@@ -648,6 +661,7 @@ pub fn load_context_snapshots(root: &Path) -> Result<Vec<ContextSnapshot>> {
     if !path.exists() {
         return Ok(vec![]);
     }
+    let records = load_records(root)?;
     BufReader::new(File::open(path)?)
         .lines()
         .enumerate()
@@ -656,6 +670,17 @@ pub fn load_context_snapshots(root: &Path) -> Result<Vec<ContextSnapshot>> {
                 .with_context(|| format!("invalid context snapshot line {}", line_no + 1))?;
             if snapshot.schema_version != SCHEMA_VERSION {
                 bail!("context snapshot schema is unsupported")
+            }
+            if snapshot.context_hash != stable_hash(&snapshot.context) {
+                bail!("context snapshot hash mismatch at line {}", line_no + 1)
+            }
+            let linked = records.iter().any(|record| {
+                record.step == snapshot.event_step
+                    && record.kind == EventKind::ContextSnapshot
+                    && record.text.contains(&snapshot.id)
+            });
+            if !linked || snapshot.request_step >= snapshot.event_step {
+                bail!("context snapshot link is invalid at line {}", line_no + 1)
             }
             Ok(snapshot)
         })
@@ -1091,10 +1116,10 @@ pub fn context_report(records: &[MissionRecord], step: u64) -> Result<serde_json
         "budget": DEFAULT_TOKEN_BUDGET,
         "total_estimated_tokens": total,
         "token_count_method": "Estimated at four characters per token",
-        "selection_method": "BogKit Fold: protected state + evidence links + deterministic recency (BM25 / ESE / ANNy available)",
+        "selection_method": "Protected state + evidence links + deterministic recency",
         "semantic_retrieval_used": false,
         "model_ranking_used": false,
-        "retrieval_source": "BogKit Fold Mission Ledger (BM25 + ESE embeddings + ANNy HNSW)",
+        "retrieval_source": "Mission Ledger replay; semantic retrieval was not used for this prompt",
         "sections": sections,
         "selected": protected.into_iter().chain(beliefs).chain(evidence).chain(history).collect::<Vec<_>>(),
         "excluded": excluded,
@@ -1103,21 +1128,44 @@ pub fn context_report(records: &[MissionRecord], step: u64) -> Result<serde_json
 }
 
 fn redact_and_limit(text: &str) -> String {
-    let mut redacted = Vec::new();
-    for token in text.split_whitespace() {
-        let lower = token.to_ascii_lowercase();
-        if lower.contains("api_key")
-            || lower.contains("apikey")
-            || lower.contains("authorization:")
-            || lower.starts_with("sk-")
-            || lower.starts_with("bearer")
-        {
-            redacted.push("[REDACTED]");
-        } else {
-            redacted.push(token);
+    let mut redacted = String::with_capacity(text.len());
+    let mut redact_following = 0_u8;
+    for chunk in text.split_inclusive(char::is_whitespace) {
+        let token = chunk.trim_end_matches(char::is_whitespace);
+        let whitespace = &chunk[token.len()..];
+        if token.is_empty() {
+            redacted.push_str(chunk);
+            continue;
         }
+        if redact_following > 0 {
+            redacted.push_str("[REDACTED]");
+            redact_following -= 1;
+        } else {
+            let lower = token.to_ascii_lowercase();
+            if lower.contains("api_key")
+                || lower.contains("apikey")
+                || lower.contains("password=")
+                || lower.contains("passwd=")
+                || lower.contains("token=")
+                || lower.contains("secret=")
+                || lower.contains("secret_access_key")
+                || lower.starts_with("github_pat_")
+                || lower.starts_with("sk-")
+            {
+                redacted.push_str("[REDACTED]");
+            } else if lower.contains("authorization:") {
+                redacted.push_str("[REDACTED]");
+                redact_following = 2;
+            } else if lower == "bearer" || lower.starts_with("bearer=") {
+                redacted.push_str("[REDACTED]");
+                redact_following = 1;
+            } else {
+                redacted.push_str(token);
+            }
+        }
+        redacted.push_str(whitespace);
     }
-    let mut value = redacted.join(" ");
+    let mut value = redacted;
     if value.len() > 8_000 {
         value.truncate(value.floor_char_boundary(8_000));
         value.push_str(" [TRUNCATED]");
@@ -1320,17 +1368,39 @@ mod tests {
                 "profiler disproved the database hypothesis",
             ))
             .unwrap();
+        let first = db
+            .revise_belief(
+                "cause",
+                "database latency is the cause",
+                0.55,
+                &[evidence.id],
+                None,
+            )
+            .unwrap();
+        let correction = db
+            .append(MissionRecord::plain(
+                EventKind::Observation,
+                "retry waits dominate the trace",
+            ))
+            .unwrap();
         db.revise_belief(
             "cause",
             "retry timing is the cause",
             0.9,
-            &[evidence.id],
-            None,
+            &[correction.id],
+            first.belief_version,
         )
         .unwrap();
         let exact = "MISSION\nFix timeout\n\nCURRENT BELIEFS\n- retry timing";
         let snapshot = db
-            .record_context_snapshot(2, exact, "deterministic", false, "sonnet")
+            .record_context_snapshot(
+                4,
+                exact,
+                "deterministic",
+                false,
+                "sonnet",
+                "UserPromptSubmit",
+            )
             .unwrap();
         assert_eq!(snapshot.context, exact);
         assert!(snapshot.context_hash.starts_with("fnv1a64:"));
@@ -1348,5 +1418,47 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[test]
+    fn secrets_are_redacted_from_records_and_exact_snapshots() {
+        let (dir, mut db) = ledger();
+        let secret_text = "api_key=TOPSECRET password=PASS123 token=TOK123 Authorization: Bearer ABC123 github_pat_ABC aws_secret_access_key=AWSSECRET";
+        let record = db
+            .append(MissionRecord::plain(EventKind::Observation, secret_text))
+            .unwrap();
+        for secret in [
+            "TOPSECRET",
+            "PASS123",
+            "TOK123",
+            "ABC123",
+            "github_pat_ABC",
+            "AWSSECRET",
+        ] {
+            assert!(!record.text.contains(secret));
+        }
+        let snapshot = db
+            .record_context_snapshot(
+                1,
+                secret_text,
+                "deterministic",
+                false,
+                "sonnet",
+                "UserPromptSubmit",
+            )
+            .unwrap();
+        for secret in [
+            "TOPSECRET",
+            "PASS123",
+            "TOK123",
+            "ABC123",
+            "github_pat_ABC",
+            "AWSSECRET",
+        ] {
+            assert!(!snapshot.context.contains(secret));
+        }
+        let persisted =
+            std::fs::read_to_string(dir.path().join("context-snapshots.jsonl")).unwrap();
+        assert!(!persisted.contains("TOPSECRET"));
     }
 }

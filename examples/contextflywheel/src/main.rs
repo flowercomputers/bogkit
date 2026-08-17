@@ -3,7 +3,9 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
-use contextflywheel::{DEFAULT_TOKEN_BUDGET, EventKind, Ledger, MissionRecord, parse_kind};
+use contextflywheel::{
+    DEFAULT_TOKEN_BUDGET, EventKind, Ledger, MissionRecord, load_context_snapshots, parse_kind,
+};
 use serde_json::{Value, json};
 
 #[derive(Parser)]
@@ -268,40 +270,80 @@ fn run_hook(ledger: &mut Ledger, event: &str) -> Result<()> {
         Some(ledger.append(MissionRecord::plain(kind, text.clone()))?)
     };
     if event == "UserPromptSubmit" {
-        let hybrid = std::env::var("CONTEXTFLYWHEEL_MODE").is_ok_and(|v| v == "hybrid");
-        let rank = std::env::var("CONTEXTFLYWHEEL_RANK").is_ok_and(|v| v == "1");
-        let model = std::env::var("ANTHROPIC_MODEL").unwrap_or_else(|_| "sonnet".into());
-        let context = if hybrid {
-            ledger.render_hybrid_context(
-                &text,
-                DEFAULT_TOKEN_BUDGET,
-                rank,
-                std::env::var("ANTHROPIC_BASE_URL").ok().as_deref(),
-                std::env::var("ANTHROPIC_API_KEY").ok().as_deref(),
-                &model,
-            )
-        } else {
-            ledger.render_context(&text, DEFAULT_TOKEN_BUDGET)
-        };
-        ledger.record_context_snapshot(
+        inject_compiled_context(
+            ledger,
+            "UserPromptSubmit",
+            &text,
             recorded.as_ref().map_or(0, |record| record.step),
-            &context,
-            if hybrid { "hybrid" } else { "deterministic" },
-            rank,
-            &model,
         )?;
-        println!(
-            "{}",
-            serde_json::to_string(
-                &json!({"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":context}})
-            )?
-        );
     } else {
         if event == "PreToolUse" {
             ledger.maybe_record_redirect(&text)?;
         }
+        if event == "PostToolUse" {
+            let latest_belief_step = ledger
+                .records()
+                .iter()
+                .rev()
+                .find(|record| record.kind == EventKind::BeliefRevision)
+                .map(|record| record.step);
+            let latest_snapshot_step = load_context_snapshots(ledger.root())?
+                .last()
+                .map(|snapshot| snapshot.event_step)
+                .unwrap_or(0);
+            if latest_belief_step.is_some_and(|step| step > latest_snapshot_step) {
+                inject_compiled_context(
+                    ledger,
+                    "PostToolUse",
+                    &text,
+                    recorded.as_ref().map_or(0, |record| record.step),
+                )?;
+                return Ok(());
+            }
+        }
         println!("{}", json!({"continue": true}));
     }
+    Ok(())
+}
+
+fn inject_compiled_context(
+    ledger: &mut Ledger,
+    hook_event: &str,
+    query: &str,
+    request_step: u64,
+) -> Result<()> {
+    let hybrid = std::env::var("CONTEXTFLYWHEEL_MODE").is_ok_and(|v| v == "hybrid");
+    let rank = std::env::var("CONTEXTFLYWHEEL_RANK").is_ok_and(|v| v == "1");
+    let model = std::env::var("ANTHROPIC_MODEL").unwrap_or_else(|_| "sonnet".into());
+    let context = if hybrid {
+        ledger.render_hybrid_context(
+            query,
+            DEFAULT_TOKEN_BUDGET,
+            rank,
+            std::env::var("ANTHROPIC_BASE_URL").ok().as_deref(),
+            std::env::var("ANTHROPIC_API_KEY").ok().as_deref(),
+            &model,
+        )
+    } else {
+        ledger.render_context(query, DEFAULT_TOKEN_BUDGET)
+    };
+    let snapshot = ledger.record_context_snapshot(
+        request_step,
+        &context,
+        if hybrid { "hybrid" } else { "deterministic" },
+        rank,
+        &model,
+        hook_event,
+    )?;
+    println!(
+        "{}",
+        serde_json::to_string(&json!({
+            "hookSpecificOutput": {
+                "hookEventName": hook_event,
+                "additionalContext": snapshot.context
+            }
+        }))?
+    );
     Ok(())
 }
 
