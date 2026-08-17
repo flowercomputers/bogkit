@@ -54,7 +54,8 @@ In this directory you'll find a few examples that show bog style databases in va
 - `search` — text search three ways over one document stream: BM25 keyword search, HNSW semantic search over ese embeddings, and hybrid rank fusion. A good base for agent memory or document search projects. `cargo run -p search`
 - `figmog` — a local mirror of a Figma file: sync once, then search, walk, and
   query components/styles/variables with zero API calls, and an MCP server
-  (`figmog serve`). `cargo run -p figmog -- --help`
+  (`figmog serve`), with a built-in load-test demo (`figmog bench`).
+  `cargo run -p figmog -- --help`
 
 ## More about Bog
 Bog is a database runtime that makes every attempt to do as much work as possible as early as possible, to make reads incredibly fast. This means compiling queries into functions that eagerly update their output as mutations occur.

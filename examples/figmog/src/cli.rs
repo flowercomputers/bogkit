@@ -176,6 +176,29 @@ enum Cmd {
         #[arg(long)]
         y: f64,
     },
+    /// Self-contained load-test demo (build design §13): synthetic corpus
+    /// (or a real file's, given one), cold sync, no-churn re-pull, and an
+    /// MCP serve load test over real stdio, plus (real-file mode) a Figma
+    /// API comparison — no mirror/`--db` required.
+    Bench {
+        /// Figma file key or figma.com URL — fetches once (one Tier-1
+        /// call) and benches against the real file. Omitted: a
+        /// deterministic synthetic corpus.
+        file: Option<String>,
+        #[arg(long, default_value = "10000")]
+        nodes: usize,
+        #[arg(long, default_value = "5000")]
+        calls: usize,
+        /// Real-file mode only: number of `GET /nodes` API-comparison calls.
+        #[arg(long, default_value = "5")]
+        api_calls: usize,
+        /// Real-file mode only: skip the API-comparison phase entirely.
+        #[arg(long)]
+        skip_api: bool,
+        /// Leave the temp store on disk and print its path.
+        #[arg(long)]
+        keep: bool,
+    },
 }
 
 /// Parse `argv`, dispatch, and return the process exit code (0 on success,
@@ -197,6 +220,31 @@ pub fn run() -> i32 {
 }
 
 fn dispatch(cli: Cli) -> Result<(), String> {
+    // `bench` needs no mirror/db (it builds its own temp store) — handled
+    // here, before `resolve_db`, exactly like the note on `open_store!`'s
+    // unnameable pipeline type below explains for everything else. Matched
+    // by reference so a non-match leaves `cli` untouched for the rest of
+    // this function.
+    if let Cmd::Bench {
+        file,
+        nodes,
+        calls,
+        api_calls,
+        skip_api,
+        keep,
+    } = &cli.cmd
+    {
+        return cmd_bench(
+            file.clone(),
+            *nodes,
+            *calls,
+            *api_calls,
+            *skip_api,
+            *keep,
+            cli.json,
+        );
+    }
+
     let db = resolve_db(&cli)?;
     match cli.cmd {
         Cmd::Pull {
@@ -318,7 +366,8 @@ fn dispatch(cli: Cli) -> Result<(), String> {
                 | Cmd::ImportVariables { .. }
                 | Cmd::Serve { .. }
                 | Cmd::Tools { .. }
-                | Cmd::Call { .. } => {
+                | Cmd::Call { .. }
+                | Cmd::Bench { .. } => {
                     unreachable!("handled above")
                 }
             }
@@ -719,6 +768,43 @@ fn cmd_import_variables(db: &Db, path: PathBuf, json: bool) -> Result<(), String
         );
     } else {
         println!("imported {imported} variables");
+    }
+    Ok(())
+}
+
+/// `figmog bench [file] [--nodes N] [--calls M] [--api-calls K] [--skip-api]
+/// [--keep]` (build design §13). Needs no resolved `Db` — see `dispatch`'s
+/// early handling — so it never touches `.figmog/current` or `--db`.
+#[allow(clippy::too_many_arguments)]
+fn cmd_bench(
+    file: Option<String>,
+    nodes: usize,
+    calls: usize,
+    api_calls: usize,
+    skip_api: bool,
+    keep: bool,
+    json: bool,
+) -> Result<(), String> {
+    let file = file
+        .map(|f| parse_file_ref(&f).ok_or_else(|| format!("not a Figma file key or URL: {f}")))
+        .transpose()?;
+    let exe = std::env::current_exe().map_err(|e| format!("resolving current exe: {e}"))?;
+    let report = crate::bench::run(crate::bench::BenchOpts {
+        nodes,
+        calls,
+        keep,
+        exe,
+        file,
+        api_calls,
+        skip_api,
+    })?;
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?
+        );
+    } else {
+        crate::bench::print_human(&report);
     }
     Ok(())
 }

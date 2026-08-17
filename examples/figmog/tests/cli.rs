@@ -506,3 +506,39 @@ fn cli_pull_evicts_stale_cache_rows_on_version_change() {
         "the v1-tagged cache row must be evicted by the v2 `figmog pull`"
     );
 }
+
+/// End-to-end smoke for `figmog bench` (build design §13), synthetic-mode
+/// only (no `FIGMA_TOKEN` in CI): a small corpus/call count keeps this fast
+/// while still exercising every phase — corpus generation, cold sync,
+/// no-churn re-pull, and a real MCP `serve` child driven over stdio.
+#[test]
+fn bench_e2e_synthetic_json_report() {
+    let out = Command::cargo_bin("figmog")
+        .unwrap()
+        .args(["bench", "--nodes", "300", "--calls", "60", "--json"])
+        .assert()
+        .success();
+    let output = out.get_output();
+
+    // stdout purity: --json means exactly one JSON object, nothing else.
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap_or_else(|e| {
+        panic!("stdout was not exactly one JSON object: {e}\nstdout: {stdout}")
+    });
+
+    assert_eq!(v["source"], serde_json::json!("synthetic"));
+    assert_eq!(v["corpus"]["nodes"], serde_json::json!(300));
+    assert_eq!(v["repull"]["churn_zero"], serde_json::json!(true));
+    assert_eq!(v["load"]["total_calls"], serde_json::json!(60));
+    assert!(
+        v["api"].is_null(),
+        "synthetic mode never runs the API comparison phase"
+    );
+
+    let per_tool = v["load"]["per_tool"].as_array().expect("per_tool array");
+    assert!(!per_tool.is_empty());
+    for tool in per_tool {
+        let p50 = tool["p50_ms"].as_f64().expect("p50_ms is a number");
+        assert!(p50 >= 0.0, "p50 should be non-negative: {tool}");
+    }
+}

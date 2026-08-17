@@ -50,6 +50,7 @@ store location (default `.figmog/<file-key>/db`).
 | `figmog text [--page <id>]` | by_type + nodes | every TEXT node's `(id, characters, page_id)`, sorted by id |
 | `figmog where --pointer </p> [--equals <json>] [--page <id>]` | nodes | nodes whose raw JSON matches an RFC 6901 `pointer`, optionally filtered by `equals` (parsed as JSON, falling back to a bare string so `--equals VERTICAL` works) |
 | `figmog at --x N --y N` | nodes | nodes whose absolute bounds contain the point, sorted by area ascending (deepest/smallest first) |
+| `figmog bench [file] [--nodes N] [--calls M] [--api-calls K] [--skip-api] [--keep]` | — | self-contained load-test demo (see "Demo: load-testing the server" below) — needs no mirror/`--db` |
 
 Node ids accept both `12:34` and `12-34` forms everywhere. Auth is a
 personal access token from `FIGMA_TOKEN`. Since `pull`/`watch` are the only
@@ -297,6 +298,84 @@ mirror; anyone with a paid seat can pipe a proxied `get_variable_defs`
 call's output into it by hand. Figma's *remote* MCP server (as opposed to
 the local desktop one figmog proxies) caps Starter users at 6 tool calls
 a *month* and isn't something figmog talks to at all.
+
+## Demo: load-testing the server
+
+`figmog bench` makes the value proposition measurable without needing a
+real Figma file or token — one self-contained command:
+
+```console
+$ cargo run --release -p figmog -- bench
+```
+
+It runs four phases against a fresh temp store (cleaned up afterward
+unless `--keep`), all `Instant`-timed:
+
+1. **Corpus** — a deterministic synthetic Figma file (`--nodes`, default
+   10000): pages of auto-layout frames, TEXT nodes drawn from a fixed
+   64-word pool (so BM25 has real queries), a "Button" `COMPONENT_SET`
+   with variants and INSTANCE nodes referencing them, fill/text styles,
+   and `boundVariables` bindings. A seeded LCG makes it byte-identical
+   across runs of the same `--nodes` — no wall-clock, no `rand` dependency.
+2. **Cold sync** — `flatten` + `sync` the corpus into the temp store via
+   the library (not a subprocess).
+3. **No-churn re-pull** — `sync` the identical corpus again and assert in
+   code that churn is zero: the engine's headline invariant, timed.
+4. **Serve load** — spawn the real `figmog serve --no-upstream --no-watch`
+   binary and drive it over its actual stdio pipe with `--calls` (default
+   5000) tool calls in a fixed rotating mix (`figmog_search`,
+   `figmog_node`, `figmog_where`, `figmog_stats`, `figmog_tree`,
+   `figmog_instances`) — every parameter (search words, node ids, the
+   instances target) is *derived* from the corpus's own flattened
+   records, not hardcoded. Sequential over one pipe, matching the
+   server's real single-threaded loop, so the numbers are honest.
+
+Sample output (this machine: Apple M4, 16GB, dev profile — `cargo run -p
+figmog -- bench --nodes 10000 --calls 5000`; dev profile is `opt-level =
+3` in this workspace, so the numbers are respectable even without
+`--release`):
+
+```
+corpus  [synthetic]  10000 nodes, 2391449 bytes, 44.7ms
+cold sync    37.3ms flatten + 98.9ms sync, 10005 records (101140 records/s)
+re-pull      7.0ms, churn zero: true
+
+tool                  calls   p50 (ms)   p95 (ms)   p99 (ms)   max (ms)
+figmog_search           834      0.399      0.531      0.911      3.654
+figmog_node             834      0.043      0.058      0.152      8.374
+figmog_where            833     15.302     17.161     25.223     48.124
+figmog_stats            833     24.089     27.427     47.298    160.400
+figmog_tree             833      3.971      5.014      9.264     20.122
+figmog_instances        833      0.749      0.903      1.647      4.295
+
+figmog served 5000 queries in 38.4s (130 req/s). Figma's Tier-1 API budget on a free plan: ~10 file requests per MINUTE.
+```
+
+(`figmog_node` — an indexed point lookup — is the fastest tool by a wide
+margin; `figmog_where`/`figmog_stats` scan every node and are
+correspondingly slower, but still complete a 5000-call load test in
+under 40 seconds against a 10000-node file. All of it is local: zero
+Figma API calls, zero rate-limit exposure.)
+
+**Against a real file** (`figmog bench <file-url-or-key>`, needs
+`FIGMA_TOKEN`): the corpus becomes the real file — fetched once (exactly
+one Tier-1 call, plus the same opportunistic Enterprise `variables_local`
+call `pull` makes), reused in memory for the re-pull phase (no second
+fetch) — and the load test's query mix derives its parameters from
+whatever's actually in that file (falling back gracefully, e.g. dropping
+`figmog_instances` from the mix with a stderr note if the file has no
+components). Unless `--skip-api`, a fifth phase follows the serve load:
+`--api-calls` (default 5) sequential `GET /v1/files/:key/nodes?ids=`
+calls — Figma's native equivalent of `figmog_node` — timed the same way,
+plus one `GET /meta` call for reference, so the report can show
+`figmog_node` p50 next to the real API's p50 side by side, with a
+speedup factor and the budget math (how long the same `--calls` load
+test would take at Figma's ~10 Tier-1 requests/minute). **This spends
+real rate-limit budget**: 1 file fetch + 1 opportunistic
+`variables_local` + `K` `/nodes` calls + 1 `/meta` call — the report
+states every call it made; a 429 mid-phase is recorded (with its
+`Retry-After`) and ends the phase gracefully rather than failing the
+whole bench.
 
 ## Manual live check
 
