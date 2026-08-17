@@ -248,7 +248,7 @@ pub fn sess_step(acc: &mut SessStats, e: &Envelope, delta: isize) {
 /// needed (`KeyedStream::new(path, peat_pipeline!())`).
 ///
 /// Reader shape (mirrors the sink tree):
-/// `(days, files, (kw, vec, texts), (subjects, evidence), sessions)`
+/// `(days, files, (kw, vec, texts), (subjects, evidence), sessions, ledger)`
 #[macro_export]
 macro_rules! peat_pipeline {
     () => {{
@@ -297,6 +297,10 @@ macro_rules! peat_pipeline {
                 p::sess_row,
                 Aggregate::new("sess", p::sess_step, terminal::Table::new("sessions_tbl")),
             ),
+            // ledger mirror: the full event stream as a point-readable,
+            // iterable table — what makes `asof` replay possible without
+            // re-parsing transcripts
+            terminal::Table::new("ledger"),
         )
     }};
 }

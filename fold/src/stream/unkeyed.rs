@@ -81,11 +81,21 @@ impl<D: Clone, P: Push<D>> Stream<D, P> {
         // tx drops here
     }
 
-    /// Fsync all committed state to disk.
+    /// Fsync all committed state to disk and flush memtables so the journal
+    /// can be retired.
     ///
     /// Commits are durable against process crashes as soon as `wtx` returns;
     /// checkpointing additionally hardens them against OS/power failure.
+    /// Flushing also bounds reopen cost: without it the journal grows for
+    /// the lifetime of the database and is replayed in full on every open.
     pub fn checkpoint(&mut self) {
+        for name in self.store.list_keyspace_names() {
+            let ks = self
+                .store
+                .keyspace(name.as_ref(), fjall::KeyspaceCreateOptions::default)
+                .unwrap();
+            ks.as_ref().rotate_memtable_and_wait().unwrap();
+        }
         self.store.persist(fjall::PersistMode::SyncAll).unwrap();
     }
 

@@ -71,7 +71,7 @@ fn tool(session: &str, n: u32, ts: u64, ok: bool) -> (EventId, Envelope) {
 /// Keyword hits for `probe` (exact posting semantics — text-level).
 macro_rules! find_kw {
     ($st:expr, $probe:expr) => {
-        $st.rtx(|(_, _, (kw, _, _), _, _)| {
+        $st.rtx(|(_, _, (kw, _, _), _, _, _)| {
             kw.search($probe, 10)
                 .into_iter()
                 .map(|h| h.val)
@@ -86,7 +86,7 @@ macro_rules! find_kw {
 /// the old text — the revised doc must lose to the control.
 macro_rules! nearest {
     ($st:expr, $probe:expr) => {
-        $st.rtx(|(_, _, (_, vec, _), _, _)| {
+        $st.rtx(|(_, _, (_, vec, _), _, _, _)| {
             vec.search(&ese::encode_single($probe))
                 .first()
                 .map(|h| h.val.clone())
@@ -232,7 +232,7 @@ fn replay_prefix_matches_independent_prediction() {
         });
         let (want_days, want_subj) = predict(prefix);
 
-        let (got_days, got_subj) = st.rtx(|(days, _, _, (subjects, _), _)| {
+        let (got_days, got_subj) = st.rtx(|(days, _, _, (subjects, _), _, _)| {
             let d: BTreeMap<u64, (i64, i64)> = days
                 .iter()
                 .map(|(k, v): (u64, DayStats)| (k, (v.tools, v.fails)))
@@ -270,7 +270,7 @@ fn batching_is_unobservable() {
         });
     }
 
-    let a = one.rtx(|(days, _, _, (subjects, _), _)| {
+    let a = one.rtx(|(days, _, _, (subjects, _), _, _)| {
         (
             days.iter().collect::<BTreeMap<u64, DayStats>>().len(),
             subjects
@@ -279,7 +279,7 @@ fn batching_is_unobservable() {
                 .collect::<BTreeMap<_, _>>(),
         )
     });
-    let b = many.rtx(|(days, _, _, (subjects, _), _)| {
+    let b = many.rtx(|(days, _, _, (subjects, _), _, _)| {
         (
             days.iter().collect::<BTreeMap<u64, DayStats>>().len(),
             subjects
@@ -308,11 +308,55 @@ fn equal_timestamp_obs_resolve_by_seq() {
                 &obs("s1", 1, 5000, "staging", "second claim").1,
             );
         });
-        let text = st.rtx(|(_, _, _, (subjects, _), _)| {
+        let text = st.rtx(|(_, _, _, (subjects, _), _, _)| {
             subjects.get(&"staging".to_string()).map(|s: SubjStats| s.text)
         });
         assert_eq!(text.as_deref(), Some("second claim"));
     }
+}
+
+/// The asof contract at the view level: folding only the events at-or-
+/// before a cutoff yields the belief state OF that day — the later
+/// revision does not exist there.
+#[test]
+fn prefix_fold_reconstructs_past_beliefs() {
+    let full = open!(tmp());
+    let mut full = full;
+    full.wtx(|tx| {
+        tx.upsert(
+            &("s1".to_string(), OBS_SEQ_BASE),
+            &obs("s1", 0, DAY_MS, "staging", "on the raspberry pi").1,
+        );
+        tx.upsert(
+            &("s1".to_string(), OBS_SEQ_BASE + 1),
+            &obs("s1", 1, 3 * DAY_MS, "staging", "moved to a cloud vm").1,
+        );
+    });
+    // read the ledger mirror back, cut at day 2, fold into a scratch db
+    let cutoff = 2 * DAY_MS;
+    let prefix: Vec<(EventId, Envelope)> = full.rtx(|(_, _, _, _, _, ledger)| {
+        ledger
+            .iter()
+            .filter(|(_, e): &(EventId, Envelope)| e.ts_ms <= cutoff)
+            .collect()
+    });
+    assert_eq!(prefix.len(), 1);
+    let mut past = open!(tmp());
+    past.wtx(|tx| {
+        for (id, e) in &prefix {
+            tx.upsert(id, e);
+        }
+    });
+    let (then, now) = (
+        past.rtx(|(_, _, _, (subjects, _), _, _)| {
+            subjects.get(&"staging".to_string()).map(|s: SubjStats| s.text)
+        }),
+        full.rtx(|(_, _, _, (subjects, _), _, _)| {
+            subjects.get(&"staging".to_string()).map(|s: SubjStats| s.text)
+        }),
+    );
+    assert_eq!(then.as_deref(), Some("on the raspberry pi"));
+    assert_eq!(now.as_deref(), Some("moved to a cloud vm"));
 }
 
 // ------------------------------------------------------------ capture path
@@ -345,7 +389,7 @@ fn capture_fixture_parses_and_is_idempotent() {
             tx.upsert(id, e);
         }
     });
-    let once = st.rtx(|(days, _, _, _, sessions)| {
+    let once = st.rtx(|(days, _, _, _, sessions, _)| {
         (
             days.iter().collect::<BTreeMap<u64, DayStats>>().len(),
             sessions.iter().count(),
@@ -356,7 +400,7 @@ fn capture_fixture_parses_and_is_idempotent() {
             tx.upsert(id, e);
         }
     });
-    let twice = st.rtx(|(days, _, _, _, sessions)| {
+    let twice = st.rtx(|(days, _, _, _, sessions, _)| {
         (
             days.iter().collect::<BTreeMap<u64, DayStats>>().len(),
             sessions.iter().count(),

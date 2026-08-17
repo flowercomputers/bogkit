@@ -65,6 +65,15 @@ enum Cli {
         #[arg(long)]
         json: bool,
     },
+    /// Time travel: the brief as it would have read at the end of DATE.
+    /// Replays the ledger prefix through the same deterministic pipeline.
+    Asof {
+        /// YYYY-MM-DD (UTC day boundary)
+        date: String,
+        task: Vec<String>,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn db_path() -> PathBuf {
@@ -182,7 +191,7 @@ fn main() {
                 });
 
             // near-subject hint: cheap drift guard, never blocking
-            let near: Vec<String> = st.rtx(|(_, _, _, (subjects, _), _)| {
+            let near: Vec<String> = st.rtx(|(_, _, _, (subjects, _), _, _)| {
                 subjects
                     .iter()
                     .filter(|(s, _): &(String, SubjStats)| {
@@ -213,7 +222,7 @@ fn main() {
             st.wtx(|tx| {
                 tx.upsert(&(session.clone(), seq), &env);
             });
-            let count = st.rtx(|(_, _, _, (subjects, _), _)| {
+            let count = st.rtx(|(_, _, _, (subjects, _), _, _)| {
                 subjects
                     .get(&subject)
                     .map(|s: SubjStats| s.count)
@@ -225,7 +234,7 @@ fn main() {
 
         Cli::Brief { task, json } => {
             let query = task.join(" ");
-            let brief = st.rtx(|(days, files, (kw, vec, texts), (subjects, _), sessions)| {
+            let brief = st.rtx(|(days, files, (kw, vec, texts), (subjects, _), sessions, _ledger)| {
                 assemble(
                     &query,
                     now_ms(),
@@ -243,6 +252,59 @@ fn main() {
             } else {
                 print!("{}", render(&brief));
             }
+        }
+
+        Cli::Asof { date, task, json } => {
+            let Some(cutoff) = transcript::iso_to_ms(&format!("{date}T23:59:59.999Z")) else {
+                eprintln!("peat: bad date {date:?}; expected YYYY-MM-DD");
+                std::process::exit(1);
+            };
+            // the ledger mirror is what makes this possible: read every
+            // event at-or-before the cutoff...
+            let events: Vec<(EventId, Envelope)> =
+                st.rtx(|(_, _, _, _, _, ledger)| {
+                    ledger
+                        .iter()
+                        .filter(|(_, e): &(EventId, Envelope)| e.ts_ms <= cutoff)
+                        .collect()
+                });
+            drop(st);
+            // ...and fold that prefix through the SAME pipeline into a
+            // scratch database. Determinism (oracle 2) is what makes the
+            // result the truth of that day rather than a reconstruction.
+            let scratch = std::env::temp_dir().join(format!("peat-asof-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&scratch);
+            let mut past =
+                KeyedStream::<EventId, Envelope, _>::new(&scratch, peat_pipeline!());
+            past.wtx(|tx| {
+                for (id, e) in &events {
+                    tx.upsert(id, e);
+                }
+            });
+            let query = task.join(" ");
+            let mut brief = past.rtx(
+                |(days, files, (kw, vec, texts), (subjects, _), sessions, _ledger)| {
+                    assemble(
+                        &query,
+                        cutoff,
+                        &days,
+                        &files,
+                        |q, n| kw.search(q, n),
+                        |v| vec.search(v),
+                        |id| texts.get(id),
+                        &subjects,
+                        &sessions,
+                    )
+                },
+            );
+            brief.today = format!("{date} · as of that day · {} events", events.len());
+            if json {
+                println!("{}", serde_json::to_string_pretty(&brief).unwrap());
+            } else {
+                print!("{}", render(&brief));
+            }
+            drop(past);
+            let _ = std::fs::remove_dir_all(&scratch);
         }
     }
 }
