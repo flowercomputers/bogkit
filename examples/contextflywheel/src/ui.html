@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>ContextFlywheel</title>
+  <style>
+    :root{--ink:#1d1d1f;--muted:#6e6e73;--line:#e5e5e7;--soft:#f5f5f7;--green:#168447;--green-soft:#eef8f1;--amber:#b56700;--red:#d92d20;--radius:14px;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Helvetica Neue",sans-serif;color:var(--ink);background:#fff;font-synthesis:none}
+    *{box-sizing:border-box}body{margin:0;background:#fff}button,input{font:inherit}button{color:inherit}.mono{font-family:"SFMono-Regular",Consolas,monospace;font-size:.78rem}.muted{color:var(--muted)}
+    .topbar{height:72px;display:grid;grid-template-columns:280px minmax(280px,500px) 1fr;align-items:center;gap:24px;padding:0 28px;border-bottom:1px solid var(--line);position:sticky;top:0;background:rgba(255,255,255,.94);backdrop-filter:blur(18px);z-index:10}.brand{font-size:1.5rem;font-weight:650;letter-spacing:-.035em}.search{height:42px;border:1px solid var(--line);border-radius:12px;padding:0 16px 0 42px;background:var(--soft) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' fill='none' stroke='%236e6e73' stroke-width='1.8'%3E%3Ccircle cx='8' cy='8' r='5.5'/%3E%3Cpath d='m12 12 4 4'/%3E%3C/svg%3E") no-repeat 14px center;outline:none;width:100%}.search:focus{background-color:#fff;border-color:#a8a8ad;box-shadow:0 0 0 3px rgba(0,0,0,.05)}.top-actions{justify-self:end;display:flex;align-items:center;gap:18px}.live{display:flex;align-items:center;gap:8px;color:var(--green);font-size:.82rem;font-weight:650;letter-spacing:.04em}.dot{width:8px;height:8px;border-radius:50%;background:currentColor}.icon-btn{width:40px;height:40px;border:1px solid var(--line);border-radius:12px;background:#fff;font-size:1.45rem;cursor:pointer}.icon-btn:hover{background:var(--soft)}
+    .workspace{height:calc(100vh - 72px);display:grid;grid-template-columns:minmax(230px,20%) minmax(520px,1fr)}.workspace.details-open{grid-template-columns:minmax(230px,18%) minmax(480px,1fr) minmax(300px,24%)}.sessions,.inspector{padding:34px 20px;border-right:1px solid var(--line);overflow:auto}.inspector{border-right:0;border-left:1px solid var(--line);padding:40px 34px}.inspector[hidden]{display:none}.session-head{display:flex;align-items:center;justify-content:space-between;margin:0 8px 28px}.session-head h2,.inspector h2{font-size:1.45rem;letter-spacing:-.03em;margin:0}.session-row{width:100%;display:grid;grid-template-columns:40px 1fr 9px;gap:12px;align-items:center;text-align:left;border:0;border-radius:13px;background:#fff;padding:15px 14px;margin-bottom:8px;cursor:pointer}.session-row:hover{background:var(--soft)}.session-row.selected{background:var(--green-soft);box-shadow:inset 3px 0 var(--green)}.session-icon{width:38px;height:38px;border:1px solid var(--line);border-radius:11px;display:grid;place-items:center;color:var(--green);font-size:1.15rem}.session-copy strong{display:block;font-size:.95rem;margin-bottom:5px}.session-copy span{display:block;font-size:.82rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.status{width:8px;height:8px;border-radius:50%;background:var(--green)}.session-empty{margin:28px 14px;color:var(--muted);font-size:.82rem;line-height:1.5}
+    .main{padding:38px 44px 70px;overflow:auto}.mission-head{display:flex;align-items:start;justify-content:space-between;gap:24px}.mission-head h1{font-size:2rem;line-height:1.1;letter-spacing:-.045em;margin:0 0 10px}.mission-head p{margin:0;color:var(--muted);max-width:660px}.mission-actions{display:flex;align-items:center;gap:16px}.running{display:flex;align-items:center;gap:8px;font-size:.88rem}.pause{height:40px;padding:0 16px;border:1px solid var(--line);border-radius:11px;background:#fff;font-weight:600}.belief-bar{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:14px;margin:28px 0;padding:18px 20px;background:var(--soft);border-radius:var(--radius);font-size:.92rem}.belief-label{color:var(--muted)}.belief-value{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.confidence{color:var(--green);font-weight:650}.timeline-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}.timeline-head h2{font-size:1.28rem;margin:0}.timeline-actions{position:relative;display:flex;align-items:center;gap:8px}.segment{display:flex;padding:3px;border-radius:10px;background:var(--soft)}.segment button{border:0;background:transparent;border-radius:8px;padding:7px 11px;font-size:.78rem;color:var(--muted);cursor:pointer}.segment button.active{background:#fff;color:var(--ink);box-shadow:0 1px 4px rgba(0,0,0,.1)}.settings-btn{width:34px;height:34px;border:0;border-radius:10px;background:var(--soft);cursor:pointer}.settings{position:absolute;right:0;top:42px;width:240px;padding:10px;background:rgba(255,255,255,.98);border:1px solid var(--line);border-radius:14px;box-shadow:0 14px 40px rgba(0,0,0,.12);z-index:5}.settings[hidden]{display:none}.settings strong{display:block;padding:8px 10px 10px;font-size:.8rem}.setting{display:flex;justify-content:space-between;align-items:center;padding:10px;border-radius:9px;font-size:.84rem}.setting:hover{background:var(--soft)}.setting input{accent-color:var(--green)}.timeline-note{min-height:36px;color:var(--muted);font-size:.8rem;display:flex;align-items:center;justify-content:space-between}.show-all-link{border:0;background:none;color:var(--green);font-size:inherit;cursor:pointer}.new-events{border:0;border-radius:999px;padding:7px 12px;background:var(--green-soft);color:var(--green);font-size:.76rem;font-weight:600;display:none}.timeline{position:relative}.timeline:before{content:"";position:absolute;left:16px;top:18px;bottom:18px;width:1px;background:#dedee1}.event{position:relative;display:grid;grid-template-columns:34px 1fr 70px 18px;gap:14px;align-items:center;width:100%;min-height:72px;padding:11px 8px;border:0;border-radius:12px;background:#fff;text-align:left;cursor:pointer}.event:hover{background:var(--soft)}.event.active{background:var(--green-soft)}.node{position:relative;z-index:1;width:28px;height:28px;border-radius:50%;background:var(--soft);display:grid;place-items:center;font-weight:650;font-size:.72rem}.event.active .node,.event.current .node{background:#d9f1df;color:var(--green)}.event-copy strong{display:block;font-size:.92rem;margin-bottom:4px}.event-copy span{display:block;color:var(--muted);font-size:.84rem;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.event time{font-size:.74rem;color:var(--muted);justify-self:end}.chevron{font-size:1rem;color:#a0a0a5}
+    .inspector-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:32px}.close{border:0;background:none;font-size:1.4rem;color:var(--muted)}.statement{font-size:1.42rem;line-height:1.35;font-weight:600;letter-spacing:-.025em;margin:0 0 26px}.state-line{display:grid;grid-template-columns:1fr 1fr;border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:20px 0;margin-bottom:6px}.state-line span{display:block;color:var(--muted);font-size:.78rem;margin-bottom:7px}.state-line strong{font-size:.95rem;color:var(--green)}.state-line>div+div{border-left:1px solid var(--line);padding-left:24px}.detail-section{padding:24px 0;border-bottom:1px solid var(--line)}.detail-section h3{font-size:.88rem;margin:0 0 11px}.detail-section p{font-size:.9rem;color:#515154;line-height:1.55;margin:0}.evidence-row{display:flex;align-items:center;gap:10px;padding:8px 0;font-size:.88rem}.evidence-mark{color:var(--green)}.inspector-actions{display:flex;gap:10px;padding-top:24px}.text-btn{border:0;background:var(--soft);border-radius:10px;padding:10px 13px;font-size:.82rem;cursor:pointer}.text-btn:hover{background:#eaeaed}
+    .layer-label{font-size:.7rem;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}.constraint-list{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px}.constraint-chip{font-size:.76rem;padding:6px 9px;border:1px solid var(--line);border-radius:999px;color:#515154}.understanding{margin:26px 0 18px;padding:22px;border:1px solid var(--line);border-radius:var(--radius)}.understanding-head{display:flex;align-items:start;justify-content:space-between;gap:20px}.understanding h2{font-size:1.15rem;margin:0 0 8px}.understanding-belief{font-size:1.08rem;font-weight:620;line-height:1.4;max-width:760px}.context-btn{flex:none;border:0;border-radius:10px;padding:10px 13px;background:var(--ink);color:#fff;font-size:.8rem;font-weight:600;cursor:pointer}.understanding-grid{display:grid;grid-template-columns:1fr 1fr;gap:28px;border-top:1px solid var(--line);margin-top:18px;padding-top:17px}.understanding-grid h3{font-size:.75rem;color:var(--muted);margin:0 0 7px}.understanding-grid p{font-size:.87rem;line-height:1.45;margin:0}.belief-change{margin:0 0 24px;padding:22px;border-radius:var(--radius);background:var(--green-soft);border:1px solid #d9ecdf}.change-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}.change-head strong{font-size:.72rem;letter-spacing:.09em;color:var(--green)}.change-grid{display:grid;grid-template-columns:1fr 1fr;gap:0}.change-cell{padding:0 20px 18px 0}.change-cell:nth-child(even){padding-left:20px;border-left:1px solid #cfe4d5}.change-cell:nth-child(n+3){padding-top:18px;border-top:1px solid #cfe4d5}.change-cell small{display:block;color:var(--muted);font-size:.72rem;margin-bottom:7px}.change-cell p{margin:0;font-size:.88rem;line-height:1.45}.working-status{display:flex;align-items:center;gap:9px;margin:0 0 22px;padding:11px 14px;border-radius:10px;background:var(--soft);font-size:.8rem;color:#515154}.working-status .dot{color:var(--green)}
+    .context-dialog{width:min(720px,calc(100vw - 32px));max-height:84vh;border:0;border-radius:18px;padding:0;box-shadow:0 24px 80px rgba(0,0,0,.2)}.context-dialog::backdrop{background:rgba(0,0,0,.22);backdrop-filter:blur(3px)}.context-content{padding:28px}.context-head{display:flex;justify-content:space-between;align-items:start}.context-head h2{margin:0 0 5px;font-size:1.35rem}.context-head p{margin:0;color:var(--muted);font-size:.8rem}.token-table{margin:24px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}.token-row{display:flex;justify-content:space-between;padding:10px 0;font-size:.85rem}.token-row.total{font-weight:650;border-top:1px solid var(--line)}.memory-list{max-height:230px;overflow:auto}.memory-item{padding:11px 0;border-bottom:1px solid var(--line)}.memory-item strong{display:block;font-size:.82rem;margin-bottom:4px}.memory-item span{display:block;color:var(--muted);font-size:.78rem;line-height:1.35}.context-flags{display:flex;flex-wrap:wrap;gap:7px;margin:16px 0}.flag{font-size:.72rem;padding:6px 8px;background:var(--soft);border-radius:8px}.flag.good{background:var(--green-soft);color:var(--green)}
+    .loading,.error{padding:24px;color:var(--muted)}.pulse{animation:pulse 1.6s ease-out 2}@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(22,132,71,.28)}100%{box-shadow:0 0 0 12px transparent}}@media(prefers-reduced-motion:reduce){*{animation:none!important;scroll-behavior:auto!important}}
+    button:focus-visible,input:focus-visible,.event:focus-visible,.session-row:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+    .pipeline{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:0 0 18px}.stage{min-height:64px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--muted);font-size:.75rem;line-height:1.35}.stage.done{color:var(--green);background:var(--green-soft);border-color:#d9ecdf}.stage.current{box-shadow:inset 0 0 0 1px var(--green)}.stage b{display:block;font-size:.7rem;letter-spacing:.04em;text-transform:uppercase;margin-bottom:4px}
+    .outcome{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:0 0 18px;padding:14px 16px;border:1px solid var(--line);border-radius:var(--radius)}.outcome.pass{background:var(--green-soft);border-color:#d9ecdf}.outcome strong{font-size:1.02rem}.outcome span{color:var(--muted);font-size:.82rem}
+    .compare{margin:0 0 24px;padding:22px;border:1px solid var(--line);border-radius:var(--radius)}.compare-grid{display:grid;grid-template-columns:1fr 1fr;gap:28px}.compare h3{margin:0 0 8px;font-size:.88rem}.compare p,.compare li{margin:0;font-size:.84rem;line-height:1.45;color:#515154}.compare ul{margin:8px 0 0;padding-left:18px}.belief-change[hidden],.outcome[hidden],.compare[hidden]{display:none}
+    .raw-block{margin-top:12px}.raw-block summary{cursor:pointer;font-size:.8rem;color:var(--muted)}.raw-block pre{white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto;background:var(--soft);padding:12px;border-radius:10px;font-size:.74rem}
+    .dialog-section{margin-top:22px}.dialog-section h3{font-size:.88rem;margin:0 0 10px}
+    @media(max-width:1000px){.topbar{grid-template-columns:1fr minmax(220px,420px) auto}.workspace,.workspace.details-open{grid-template-columns:220px 1fr}.inspector{position:fixed;right:0;top:72px;bottom:0;width:min(390px,90vw);background:#fff;z-index:8;box-shadow:-16px 0 35px rgba(0,0,0,.08)}.main{padding:34px 30px}.pipeline{grid-template-columns:1fr 1fr}}
+    @media(max-width:720px){.topbar{height:auto;min-height:68px;grid-template-columns:1fr auto;padding:14px 18px}.search{grid-column:1/-1;grid-row:2}.workspace{height:auto;display:block}.sessions{border:0;padding:24px 18px}.session-row:not(.selected),.session-empty{display:none}.main{padding:28px 18px}.mission-actions .pause{display:none}.event{grid-template-columns:38px 1fr 20px}.event time{display:none}.inspector{top:0;width:100%;display:none}.inspector.open{display:block}.top-actions{gap:12px}.pipeline,.compare-grid,.understanding-grid,.change-grid{grid-template-columns:1fr}.change-cell:nth-child(even){padding-left:0;border-left:0}}
+  </style>
+</head>
+<body>
+  <header class="topbar"><div class="brand">ContextFlywheel</div><input class="search" id="search" aria-label="Search timeline" placeholder="Search sessions, tools, beliefs…"><div class="top-actions"><span class="live" aria-live="polite"><i class="dot"></i><span id="connection">LIVE</span></span><button class="icon-btn" type="button" aria-label="New session">+</button></div></header>
+  <main class="workspace">
+    <aside class="sessions" aria-label="Sessions"><div class="session-head"><h2>Sessions</h2><button class="icon-btn" aria-label="New session">+</button></div><div id="session-list"><div class="loading">Loading session…</div></div></aside>
+    <section class="main"><div class="mission-head"><div><div class="layer-label">Mission</div><h1 id="mission-title">Mission</h1><p id="objective">Loading objective…</p><div class="constraint-list" id="constraints"></div></div><div class="mission-actions"><span class="running"><i class="dot" style="color:var(--green)"></i><span id="mission-status">Running</span></span><button class="pause" type="button">Ⅱ&nbsp; Pause</button></div></div><section class="understanding"><div class="understanding-head"><div><div class="layer-label">Current understanding</div><h2>What the agent believes now</h2><div class="understanding-belief" id="current-belief">None recorded</div></div><button class="context-btn" id="current-context" type="button">Context sent to Qwen</button></div><div class="understanding-grid"><div><h3>WHY</h3><p id="current-why">Waiting for supporting evidence.</p></div><div><h3>NEXT ACTION</h3><p id="next-action">Waiting for the agent.</p></div></div><span class="confidence" id="current-confidence">—</span></section><section class="belief-change" id="belief-change" hidden><div class="change-head"><strong>BELIEF CHANGED</strong><span class="muted mono" id="change-version"></span></div><div class="change-grid"><div class="change-cell"><small>Before</small><p id="change-before"></p></div><div class="change-cell"><small>Evidence</small><p id="change-evidence"></p></div><div class="change-cell"><small>Now</small><p id="change-now"></p></div><div class="change-cell"><small>Behavioral effect</small><p id="change-effect"></p></div></div></section><div class="pipeline" id="pipeline" aria-label="Mission live state"></div><div class="working-status" aria-live="polite"><i class="dot"></i><span id="working-status">Loading mission state…</span></div><div class="outcome" id="outcome" hidden><div><strong id="outcome-title"></strong><span id="outcome-note"></span></div></div><section class="compare" id="compare-panel" hidden><div class="layer-label">Measured from this ledger</div><div class="compare-grid"><div><h3>Raw transcript</h3><p id="compare-raw"></p></div><div><h3>ContextFlywheel</h3><p id="compare-compiled"></p></div></div><ul id="compare-notes"></ul></section><div class="timeline-head"><div><div class="layer-label">Important changes</div><h2>Causal timeline</h2></div><div class="timeline-actions"><button class="new-events" id="new-events" type="button">0 new events</button><div class="segment" aria-label="Timeline view"><button id="summary-view" class="active" type="button" aria-pressed="true">Important</button><button id="all-view" type="button" aria-pressed="false">Full trace</button></div><button class="settings-btn" id="settings-button" type="button" aria-label="Timeline settings" aria-expanded="false" aria-controls="settings">•••</button><div class="settings" id="settings" hidden><strong>Timeline settings</strong><label class="setting"><span>Show tool activity</span><input id="show-tools" type="checkbox"></label><label class="setting"><span>Auto-follow updates</span><input id="auto-follow" type="checkbox" checked></label></div></div></div><div class="timeline-note"><span id="timeline-note">Showing important decisions and evidence.</span><button class="show-all-link" id="show-hidden" type="button"></button></div><div class="timeline" id="timeline"><div class="loading">Loading timeline…</div></div></section>
+    <aside class="inspector" id="inspector" hidden><div class="inspector-head"><h2 id="detail-title">Selected step</h2><button class="close" id="close-detail" type="button" aria-label="Close details">×</button></div><p class="statement" id="detail-statement"></p><div class="state-line"><div><span>Confidence</span><strong id="detail-confidence">—</strong></div><div><span>Status</span><strong id="detail-status">Recorded</strong></div></div><section class="detail-section"><h3>Why it matters</h3><p id="detail-why"></p></section><section class="detail-section"><h3>Supporting evidence</h3><div id="detail-evidence"></div></section><section class="detail-section"><h3>Next</h3><p id="detail-next"></p></section><details class="raw-block" id="raw-events"><summary>Raw immutable events</summary><pre class="mono" id="raw-event-text"></pre></details><div class="inspector-actions"><button class="text-btn" id="view-context" type="button">View full context</button><button class="text-btn" id="compare" type="button">Compare previous</button></div></aside>
+  </main>
+  <dialog class="context-dialog" id="context-dialog" aria-labelledby="context-title"><div class="context-content"><div class="context-head"><div><h2 id="context-title">Context sent to Qwen</h2><p id="context-method"></p></div><button class="close" id="close-context" type="button" aria-label="Close context">×</button></div><div class="token-table" id="token-table"></div><div class="context-flags" id="context-flags"></div><div class="dialog-section" id="captured-section" hidden><h3>Exact captured injection</h3><details class="raw-block"><summary id="captured-summary">Open exact context</summary><pre class="mono" id="captured-context"></pre></details></div><div class="dialog-section"><h3>Selected memories</h3><div class="memory-list" id="memory-list"></div></div><div class="dialog-section"><h3>Excluded stale beliefs</h3><div class="memory-list" id="excluded-list"></div></div></div></dialog>
+  <script>
+    const state={records:[],mission:null,selected:null,query:'',mode:'summary',showTools:false,autoFollow:true,pending:0};
+    const $=id=>document.getElementById(id);
+    const esc=value=>{const div=document.createElement('div');div.textContent=value??'';return div.innerHTML};
+    const labels={objective:'Objective',constraint:'Constraint',permission:'Permission',observation:'Observation',tool_call:'Tool started',tool_result:'Evidence',tool_failure:'Tool failed',belief_revision:'Belief revised',failed_approach:'Approach failed',blocker:'Blocked',checkpoint:'Checkpoint',user_prompt:'User request',context_snapshot:'Context captured',decision_redirect:'Agent redirected',compaction:'Context compacted',agent_stop:'Session completed'};
+    const summaries={objective:'Mission defined',constraint:'Operating constraint recorded',permission:'Permissions established',observation:'New observation',tool_call:'Tool execution started',tool_result:'Tool evidence recorded',tool_failure:'Tool execution failed',belief_revision:'Belief revised from evidence',failed_approach:'A previous approach did not work',blocker:'Progress needs attention',checkpoint:'Mission state saved',user_prompt:'New instruction received',context_snapshot:'Exact injected context persisted with provenance',decision_redirect:'A belief revision changed the next action',compaction:'Working context was compacted',agent_stop:'Agent stopped'};
+    const stages=[['evidence_recorded','Evidence recorded'],['belief_evaluated','Belief evaluated'],['context_compiled','Context compiled'],['agent_redirected','Agent redirected']];
+    function beliefRecords(){return state.records.filter(r=>r.kind==='belief_revision')}
+    function currentBelief(){return beliefRecords().at(-1)}
+    function titleFor(record){if(record.kind==='belief_revision')return `Belief v${record.belief_version||1}`;return labels[record.kind]||record.kind.replaceAll('_',' ')}
+    function summarize(text,max=112){const clean=(text||'').replace(/\s+/g,' ').trim();const first=clean.match(/^(.{24,}?[.!?])(?:\s|$)/)?.[1]||clean;return first.length>max?first.slice(0,max-1).trimEnd()+'…':first}
+    function shortText(record){return summarize(record?.text||'',112)}
+    function pct(confidence){return confidence==null?'—':`${Math.round(confidence/10)}%`}
+    function renderSession(){
+      const mission=state.mission||{};
+      const obj=mission.objective||'';
+      const belief=mission.current_belief;
+      const previous=mission.previous_belief;
+      const evidence=mission.evidence||[];
+      const complete=!!mission.completed;
+      $('mission-title').textContent=/timeout|checkout/i.test(obj)?'Timeout Investigation':'Active Mission';
+      $('objective').textContent=obj?summarize(obj,160):'No objective recorded';
+      $('constraints').innerHTML=(mission.constraints||[]).concat(mission.permission?[mission.permission]:[]).map(text=>`<span class="constraint-chip">${esc(summarize(text,72))}</span>`).join('');
+      $('current-belief').textContent=belief?summarize(belief.text,220):'None recorded';
+      $('current-belief').title=belief?.text||'';
+      $('current-confidence').textContent=belief?`${pct(belief.confidence)} confidence`:'—';
+      $('current-why').textContent=evidence.length?evidence.map(item=>summarize(item.text,120)).join(' · '):'Waiting for supporting evidence.';
+      $('next-action').textContent=mission.next_action||'Waiting for the agent.';
+      $('mission-status').textContent=complete?'Completed':'Running';
+      $('session-list').innerHTML=`<button class="session-row selected" type="button"><span class="session-icon">⌁</span><span class="session-copy"><strong>${esc($('mission-title').textContent)}</strong><span>${esc(summarize(belief?.text||obj||'Waiting for activity',72))}</span></span><i class="status"></i></button><p class="session-empty">Additional sessions will appear here when their ledgers are connected.</p>`;
+      renderBeliefChange(previous,belief,evidence,mission.behavioral_effect);
+      renderPipeline(mission.pipeline||{});
+      renderOutcome(mission.baseline_outcome,mission.verified_outcome);
+      renderComparison(mission.comparison,mission.context,mission.experiment);
+    }
+    function renderBeliefChange(previous,belief,evidence,effect){
+      if(!belief){$('belief-change').hidden=true;return}
+      $('belief-change').hidden=false;
+      $('change-version').textContent=previous?`v${previous.version} → v${belief.version}`:`v${belief.version}`;
+      $('change-before').textContent=previous?summarize(previous.text,180):'No prior versioned belief.';
+      $('change-evidence').textContent=evidence.length?evidence.map(item=>summarize(item.text,140)).join(' · '):'No linked evidence.';
+      $('change-now').textContent=summarize(belief.text,180);
+      $('change-effect').textContent=effect||'Waiting for the agent’s next action.';
+    }
+    function renderPipeline(pipeline){
+      const current=pipeline.current||'waiting';
+      $('pipeline').innerHTML=stages.map(([key,label])=>{
+        const done=!!pipeline[key];
+        const isCurrent=current===label.toLowerCase();
+        return `<div class="stage${done?' done':''}${isCurrent?' current':''}"><b>${esc(label)}</b>${done?'Complete':'Not yet'}</div>`;
+      }).join('');
+      $('working-status').textContent=stages.filter(([key])=>pipeline[key]).map(([,label])=>label).join(' → ')||'Waiting for the first ledger event.';
+    }
+    function renderOutcome(baseline,verified){
+      const outcome=verified||baseline;
+      if(!outcome){$('outcome').hidden=true;return}
+      $('outcome').hidden=false;
+      $('outcome').classList.toggle('pass',!!outcome.ok);
+      $('outcome-title').textContent=`${outcome.passed}/${outcome.ran} tests ${outcome.ok?'passed':'recorded'}`;
+      $('outcome-note').textContent=verified&&baseline&&baseline.source_step!==verified.source_step
+        ?`Baseline at step ${baseline.source_step}: ${baseline.passed}/${baseline.ran}. Verified at step ${verified.source_step}.`
+        :`Parsed from ledger step ${outcome.source_step}.`;
+    }
+    function renderComparison(comparison,context,experiment){
+      if(!comparison){$('compare-panel').hidden=true;return}
+      $('compare-panel').hidden=false;
+      const compiled=comparison.compiled_estimated_tokens??context?.total_estimated_tokens;
+      const selected=comparison.selected_count??context?.selected?.length??0;
+      const excluded=comparison.excluded_stale_beliefs??context?.excluded?.length??0;
+      $('compare-raw').textContent=`${comparison.raw_event_count} events, ${Number(comparison.raw_estimated_tokens).toLocaleString()} estimated tokens, ${comparison.tool_calls} tool calls. Full payloads stay in the ledger.`;
+      $('compare-compiled').textContent=compiled==null
+        ?'Compiled context is not available yet.'
+        :`${Number(compiled).toLocaleString()} estimated tokens selected (${selected} memories) against a ${Number(comparison.budget||8000).toLocaleString()} token budget. ${excluded} superseded belief${excluded===1?'':'s'} excluded.`;
+      const notes=[`${comparison.token_count_method}. Source: ${comparison.source}.`];
+      if(Array.isArray(experiment)&&experiment.length){
+        const modes=[...new Set(experiment.map(row=>row.mode))];
+        notes.push(...modes.map(mode=>{
+          const rows=experiment.filter(row=>row.mode===mode);
+          return `${mode}: ${rows.filter(row=>row.success).length}/${rows.length} successful runs, avg ${Math.round(rows.reduce((sum,row)=>sum+row.runtime_seconds,0)/rows.length)}s.`;
+        }));
+      }
+      $('compare-notes').innerHTML=notes.map(note=>`<li>${esc(note)}</li>`).join('');
+    }
+    function toolName(record){return record.text.match(/^([^\s:]+)(?: result| failed|\s)/)?.[1]||'Tool'}
+    function buildActivities(){
+      const structural=new Set(['objective','constraint','permission']);
+      const activities=[]; const pending=[];
+      for(const record of state.records.filter(r=>!structural.has(r.kind))){
+        if(record.kind==='tool_call'){
+          const activity={step:record.step,timestamp:record.timestamp,kind:'tool_activity',tool:toolName(record),text:record.text,members:[record],status:'Running'};
+          activities.push(activity); pending.push(activity); continue;
+        }
+        if(['tool_result','tool_failure'].includes(record.kind)){
+          const name=toolName(record);
+          const match=pending.find(a=>a.tool===name);
+          if(match){match.members.push(record);match.status=record.kind==='tool_failure'?'Failed':'Completed';pending.splice(pending.indexOf(match),1);continue}
+        }
+        activities.push({...record,members:[record]});
+      }
+      return activities;
+    }
+    function activityTitle(activity){
+      if(activity.kind!=='tool_activity')return titleFor(activity);
+      const calls=activity.members.filter(r=>r.kind==='tool_call').length;
+      return calls>1?`${activity.tool} · ${calls} actions`:activity.tool;
+    }
+    function activityText(activity){
+      if(activity.kind!=='tool_activity')return shortText(activity);
+      const failures=activity.members.filter(r=>r.kind==='tool_failure').length;
+      const results=activity.members.filter(r=>r.kind==='tool_result').length;
+      return failures?`${failures} failed · Open to inspect the raw error`:`${activity.status}${results?` · ${results} result${results===1?'':'s'}`:''}`;
+    }
+    function isSummary(activity){
+      return new Set(['observation','user_prompt','belief_revision','decision_redirect','failed_approach','blocker','checkpoint','agent_stop']).has(activity.kind)
+        || (activity.kind==='tool_activity'&&activity.members.some(r=>/Ran \d+ tests/.test(r.text)));
+    }
+    function visibleRecords(){
+      const query=state.query.toLowerCase();
+      return buildActivities().filter(a=>(state.mode==='all'||isSummary(a)||(state.showTools&&a.kind==='tool_activity'))&&(!query||`${a.kind} ${a.text} ${(a.members||[]).map(r=>r.text).join(' ')} ${a.belief_key||''}`.toLowerCase().includes(query)));
+    }
+    function renderTimeline(animateLast=false){
+      const rows=visibleRecords();
+      const total=buildActivities().length;
+      const hidden=Math.max(0,total-rows.length);
+      $('timeline-note').textContent=state.mode==='summary'?'One row per meaningful moment. Evidence is attached to the belief it changed.':'Tool calls and results are grouped into single activities.';
+      $('show-hidden').textContent=hidden?`${hidden} activities hidden · Show all`:'';
+      if(!rows.length){$('timeline').innerHTML='<div class="loading">No matching timeline events.</div>';return}
+      $('timeline').innerHTML=rows.map((r,index)=>`<button class="event ${state.selected?.step===r.step?'active':''} ${index===rows.length-1?'current':''} ${animateLast&&index===rows.length-1?'pulse':''}" data-step="${r.step}" type="button"><span class="node">${index+1}</span><span class="event-copy"><strong>${esc(activityTitle(r))}</strong><span>${esc(activityText(r))}</span></span><time>${new Date(r.timestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</time><span class="chevron">›</span></button>`).join('');
+      document.querySelectorAll('.event').forEach(button=>button.onclick=()=>selectStep(Number(button.dataset.step)));
+    }
+    function evidenceFor(record){const ids=new Set(record?.evidence_ids||[]);return state.records.filter(r=>ids.has(r.id))}
+    function closeInspector(){$('inspector').hidden=true;$('inspector').classList.remove('open');document.querySelector('.workspace').classList.remove('details-open');state.selected=null;renderTimeline()}
+    function selectStep(step){
+      const record=buildActivities().find(r=>r.step===step)||state.records.find(r=>r.step===step);
+      if(!record)return;
+      state.selected=record;
+      renderTimeline();
+      $('inspector').hidden=false;$('inspector').classList.add('open');document.querySelector('.workspace').classList.add('details-open');
+      $('detail-title').textContent=activityTitle(record);
+      $('detail-statement').textContent=record.kind==='tool_activity'?activityText(record):summarize(record.text,260);
+      $('detail-statement').title=record.text||'';
+      $('detail-confidence').textContent=pct(record.confidence);
+      $('detail-status').textContent=record.kind==='belief_revision'?(record.id===currentBelief()?.id?'Current':'Historical'):(record.status||'Recorded');
+      const evidence=record.kind==='tool_activity'?record.members.filter(r=>r.kind!=='tool_call'):evidenceFor(record);
+      $('detail-why').textContent=record.kind==='belief_revision'?(evidence.length?'The supporting evidence below produced this version of the belief.':'This was the agent’s best explanation at that moment.'):record.kind==='tool_activity'?`${record.members.filter(r=>r.kind==='tool_call').length} grouped tool action${record.members.filter(r=>r.kind==='tool_call').length===1?'':'s'} with matching results.`:(summaries[record.kind]||'This event changed the mission state.');
+      $('detail-evidence').innerHTML=evidence.length?evidence.map(e=>`<div class="evidence-row"><span class="evidence-mark">${e.kind==='tool_failure'?'!':'✓'}</span><span>${esc(shortText(e))}</span></div>`).join(''):'<p class="muted">No linked evidence for this step.</p>';
+      $('detail-next').textContent=record.kind==='belief_revision'?(state.mission?.behavioral_effect||'Open the next important moment to see what changed.'):'Open the next important moment to see what changed.';
+      const raw=(record.members||[record]).map(item=>`step ${item.step} ${item.kind}\n${item.text}`).join('\n\n');
+      $('raw-event-text').textContent=raw;
+    }
+    function setMode(mode){state.mode=mode;$('summary-view').classList.toggle('active',mode==='summary');$('all-view').classList.toggle('active',mode==='all');$('summary-view').setAttribute('aria-pressed',mode==='summary');$('all-view').setAttribute('aria-pressed',mode==='all');renderTimeline()}
+    function renderContext(report){
+      const sections=[['protected_state','Protected state'],['current_beliefs','Current beliefs'],['supporting_evidence','Supporting evidence'],['relevant_history','Relevant history']];
+      $('context-method').textContent=`${report.selection_method} · ${report.retrieval_source||'Mission Ledger'} · ${report.token_count_method}`;
+      $('token-table').innerHTML=sections.map(([key,name])=>`<div class="token-row"><span>${name}</span><strong>${Number(report.sections?.[key]||0).toLocaleString()} tokens</strong></div>`).join('')+`<div class="token-row total"><span>Total</span><strong>${Number(report.total_estimated_tokens).toLocaleString()} / ${Number(report.budget).toLocaleString()}</strong></div>`;
+      $('context-flags').innerHTML=`<span class="flag">Source: ${esc(report.retrieval_source||'ledger')}</span><span class="flag">Semantic: ${report.semantic_retrieval_used?'used':'not used'}</span><span class="flag">Model ranking: ${report.model_ranking_used?'used':'not used'}</span><span class="flag good">Superseded beliefs excluded</span>`;
+      $('memory-list').innerHTML=(report.selected||[]).length?(report.selected||[]).map(item=>`<div class="memory-item"><strong>${esc(summarize(item.text,140))}</strong><span>${esc(item.reason)} · ${esc(item.source)}</span></div>`).join(''):'<p class="muted">No memories selected.</p>';
+      $('excluded-list').innerHTML=(report.excluded||[]).length?(report.excluded||[]).map(item=>`<div class="memory-item"><strong>${esc(summarize(item.text,140))}</strong><span>${esc(item.reason)}</span></div>`).join(''):'<p class="muted">No superseded beliefs to exclude.</p>';
+      const captured=state.mission?.captured_context;
+      const capturedSection=$('captured-section');
+      if(capturedSection){
+        capturedSection.hidden=!captured?.context;
+        if(captured?.context){
+          const body=$('captured-context');
+          const summary=$('captured-summary');
+          if(body)body.textContent=captured.context;
+          if(summary)summary.textContent=`Exact ${captured.mode||'deterministic'} injection · ${captured.context_hash||''} · ${captured.estimated_tokens??'—'} estimated tokens`;
+        }
+      }
+    }
+    async function openContext(step){
+      if(!step)return;
+      try{
+        if(state.mission?.context?.step===step){renderContext(state.mission.context);$('context-dialog').showModal();return}
+        const response=await fetch(`/api/context/${step}`);
+        if(!response.ok)throw new Error('Compiled context is unavailable for this step.');
+        renderContext(await response.json());
+        $('context-dialog').showModal();
+      }catch(error){$('memory-list').innerHTML=`<div class="error">${esc(error.message)}</div>`;$('context-dialog').showModal()}
+    }
+    async function refreshMission(){
+      const response=await fetch('/api/mission');
+      if(response.ok)state.mission=await response.json();
+      renderSession();
+    }
+    async function load(){
+      try{
+        const [timeline,mission]=await Promise.all([fetch('/api/timeline'),fetch('/api/mission')]);
+        if(!timeline.ok)throw new Error('Timeline unavailable');
+        state.records=await timeline.json();
+        state.mission=mission.ok?await mission.json():null;
+        renderSession(); renderTimeline(); connect();
+      }catch(error){$('timeline').innerHTML=`<div class="error">${esc(error.message)}</div>`;$('connection').textContent='OFFLINE'}
+    }
+    async function connect(){
+      let after=state.records.at(-1)?.step||0;
+      for(;;){
+        try{
+          const response=await fetch(`/api/live?after=${after}`,{cache:'no-store'});
+          if(response.status===204){$('connection').textContent='LIVE';continue}
+          if(!response.ok)throw new Error('Live updates unavailable');
+          const record=await response.json();
+          after=Math.max(after,record.step);
+          if(state.records.some(r=>r.step===record.step))continue;
+          state.records.push(record); state.pending+=1;
+          $('new-events').style.display='block';
+          $('new-events').textContent=`${state.pending} new`;
+          await refreshMission(); renderTimeline(true);
+          if(state.autoFollow&&isSummary(record))document.querySelector('.main').scrollTo({top:document.querySelector('.main').scrollHeight,behavior:'smooth'});
+          $('connection').textContent='LIVE';
+        }catch(error){$('connection').textContent='RECONNECTING';await new Promise(resolve=>setTimeout(resolve,1500))}
+      }
+    }
+    function closeOverlays(){$('settings').hidden=true;$('settings-button').setAttribute('aria-expanded','false');if($('context-dialog').open)$('context-dialog').close();if(!$('inspector').hidden)closeInspector()}
+    $('search').addEventListener('input',event=>{state.query=event.target.value;renderTimeline()});
+    $('summary-view').onclick=()=>setMode('summary');
+    $('all-view').onclick=()=>setMode('all');
+    $('show-hidden').onclick=()=>setMode('all');
+    $('show-tools').onchange=event=>{state.showTools=event.target.checked;renderTimeline()};
+    $('auto-follow').onchange=event=>state.autoFollow=event.target.checked;
+    $('settings-button').onclick=()=>{const panel=$('settings');panel.hidden=!panel.hidden;$('settings-button').setAttribute('aria-expanded',!panel.hidden)};
+    $('new-events').onclick=()=>{state.pending=0;$('new-events').style.display='none';document.querySelector('.main').scrollTo({top:document.querySelector('.main').scrollHeight,behavior:'smooth'})};
+    $('close-detail').onclick=closeInspector;
+    $('current-context').onclick=()=>openContext(state.mission?.last_step||currentBelief()?.step||state.records.at(-1)?.step);
+    $('view-context').onclick=()=>openContext(state.selected?.step||state.mission?.last_step);
+    $('close-context').onclick=()=>$('context-dialog').close();
+    $('compare').onclick=()=>{$('belief-change').hidden=false;$('belief-change').scrollIntoView({behavior:'smooth',block:'nearest'})};
+    document.addEventListener('keydown',event=>{if(event.key==='Escape')closeOverlays()});
+    document.addEventListener('click',event=>{if(!$('settings').hidden&&!event.target.closest('#settings')&&!event.target.closest('#settings-button')){$('settings').hidden=true;$('settings-button').setAttribute('aria-expanded','false')}});
+    load();
+  </script>
+</body>
+</html>
