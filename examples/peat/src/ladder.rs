@@ -75,6 +75,20 @@ impl Civil {
     }
 }
 
+/// "aug 10–15" / "aug 10 – sep 2" / "may 29 2026 – aug 2 2026" as spans need.
+pub fn span_label(s: Civil, e: Civil) -> String {
+    if s == e {
+        return String::new();
+    }
+    if (s.y, s.m) == (e.y, e.m) {
+        format!("{} {}–{}", MONTHS[s.m as usize - 1], s.d, e.d)
+    } else if s.y == e.y {
+        format!("{} {} – {} {}", MONTHS[s.m as usize - 1], s.d, MONTHS[e.m as usize - 1], e.d)
+    } else {
+        format!("{} {} {} – {} {} {}", MONTHS[s.m as usize - 1], s.d, s.y, MONTHS[e.m as usize - 1], e.d, e.y)
+    }
+}
+
 const MONTHS: [&str; 12] = [
     "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
 ];
@@ -177,7 +191,7 @@ pub fn bands(
                 oldest,
                 end,
                 "earlier".into(),
-                format!("{} {} {} – {} {} {}", MONTHS[s.m as usize - 1], s.d, s.y, MONTHS[e.m as usize - 1], e.d, e.y),
+                span_label(s, e),
                 format!(
                     "peat {:04}-{:02}-{:02}..{:04}-{:02}-{:02}",
                     s.y, s.m, s.d, e.y, e.m, e.d
@@ -201,10 +215,14 @@ pub fn bands(
             }
             2 | 3 => {
                 let start = c.month_start().bucket();
+                let clipped = start < oldest || c.d < 28;
+                let span = clipped
+                    .then(|| span_label(Civil::from_bucket(start.max(oldest)), c))
+                    .unwrap_or_default();
                 (
                     start,
                     MONTHS[c.m as usize - 1].to_string(),
-                    String::new(),
+                    span,
                     format!("peat {:04}-{:02}", c.y, c.m),
                 )
             }

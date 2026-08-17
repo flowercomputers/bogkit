@@ -160,9 +160,21 @@ pub fn add_style_filters(env: &mut minijinja::Environment<'_>) {
     // display-time truncation lives HERE, not in the JSON — --json is the
     // API and carries full text; templates opt into clipping
     env.add_filter("clip", |s: String, n: usize| clip(&s, n));
+    env.add_filter("k", |n: i64| knum(n));
 }
 
 // ---- display formatting, shared by every verb ----
+
+/// Humanize a count: 14036 → "14.0k". Display-only; JSON stays numeric.
+pub fn knum(n: i64) -> String {
+    if n.abs() >= 10_000 {
+        format!("{:.0}k", n as f64 / 1000.0)
+    } else if n.abs() >= 1_000 {
+        format!("{:.1}k", n as f64 / 1000.0)
+    } else {
+        n.to_string()
+    }
+}
 
 /// Whitespace-collapse and truncate to `max` chars with an ellipsis.
 /// Display-only: JSON output never clips.

@@ -1,13 +1,11 @@
 //! peat — agent memory as a fold.
 //!
 //! Agents deposit events (mechanical session exhaust + small observations);
-//! every readable surface is a materialized fold view. `capture` ingests a
-//! Claude Code transcript at session end, `obs` records one observation,
-//! `brief` assembles a session-start orientation from one snapshot.
-//!
-//!   peat capture <transcript.jsonl>     # Stop hook
-//!   peat obs <subject> <text...>        # the one judgment step
-//!   peat brief [task words...]          # `SessionStart` hook (stdout -> context)
+//! every readable surface is a materialized fold view. Hooks run `capture`
+//! at every session boundary (Stop, PreCompact, SessionEnd) and inject
+//! `brief` stdout at SessionStart; the agent-facing surface is bare
+//! `peat` (orient), `peat <thing>` (look closer, dispatched by shape),
+//! and `peat obs` (the one judgment step).
 //!
 //! Wall-clock time is read only at the capture/render boundary (obs
 //! timestamps, brief age labels) — never inside any fold path, so the
@@ -67,18 +65,32 @@ impl Filter {
 #[derive(Parser)]
 #[command(
     name = "peat",
-    about = "agent memory as a fold over bogkit",
+    about = "agent memory as a fold",
+    long_about = "agent memory as a fold\n\n\
+Sessions deposit events into one append-forever ledger; every readable\n\
+surface is an incrementally maintained view over it. Bare `peat` orients;\n\
+`peat <thing>` looks closer, inferring what you mean from its shape; and\n\
+every line of every read ends in the exact command that goes one level\n\
+deeper.",
+    after_help = "READING BY SHAPE:\n  \
+peat                       the brief (what hooks inject at session start)\n  \
+peat 2026-w33              a window: w33, 2026-07, 2026-08-14, q3, 2026, a..b\n  \
+peat 36f96b8d [seq]        a session by id prefix; one event with seq\n  \
+peat fm18                  a subject's full evidence trail (exact name)\n  \
+peat fold hnsw fix         anything else: hybrid keyword+semantic search\n\n\
+DEPOSITING:\n  \
+peat obs staging \"deploys go through the blue env first\" --from 1042\n\n\
+Subcommands are the explicit spellings of the same reads; hooks use them.",
     args_conflicts_with_subcommands = true
 )]
 struct Cli {
-    /// A place or a question: a window (w33, 2026-07, 2026-08-14, q3,
-    /// 2026, a..b), a session id prefix (+ optional seq), or search words.
-    /// Bare `peat` prints the brief. The output of every read ends in the
-    /// command that looks one level deeper.
+    /// What to look at — see READING BY SHAPE below (empty: the brief)
     query: Vec<String>,
+    /// Full structured output (the API form; never clipped, never styled)
     #[arg(long, global = true)]
     json: bool,
-    /// Max bands in the brief's "further back" ladder
+    /// How many summary lines the brief compresses the older past into
+    /// (whole history always covered; default 8, or PEAT_BRIEF_BUDGET)
     #[arg(long)]
     budget: Option<usize>,
     #[command(subcommand)]
@@ -87,7 +99,9 @@ struct Cli {
 
 #[derive(clap::Subcommand)]
 enum Cmd {
-    /// Ingest a Claude Code transcript (idempotent; run from the Stop hook)
+    /// Ingest a session transcript — Claude Code JSONL or Codex rollout,
+    /// auto-detected. Idempotent: hooks re-run it at Stop, PreCompact, and
+    /// SessionEnd; re-capture ingests only the delta
     Capture {
         transcript: PathBuf,
         /// Session id if the transcript doesn't carry one
@@ -98,7 +112,8 @@ enum Cmd {
         #[arg(long)]
         final_msg: Option<String>,
     },
-    /// Record one observation about a subject
+    /// Deposit one judged claim about a subject (the only writing verb
+    /// an agent runs by hand)
     Obs {
         subject: String,
         /// The claim, as one short sentence
@@ -113,16 +128,19 @@ enum Cmd {
         #[arg(long)]
         at: Option<String>,
     },
-    /// Print a session-start orientation (stdout is injected as context)
+    /// The orientation `peat` prints bare: digest, temporal ladder, last
+    /// session, beliefs (SessionStart hooks inject its stdout as context)
     Brief {
         task: Vec<String>,
         #[arg(long)]
         json: bool,
-        /// Max bands in the "further back" ladder (PEAT_BRIEF_BUDGET; default 8)
+        /// How many summary lines to compress the older past into
+        /// (whole history always covered; default 8, or PEAT_BRIEF_BUDGET)
         #[arg(long)]
         budget: Option<usize>,
     },
-    /// Search memory: hybrid keyword + semantic recall, hits only
+    /// Search memory (what `peat <words>` runs): hybrid keyword+semantic,
+    /// each hit tagged [kind · age] and addressed
     Recall {
         query: Vec<String>,
         /// Max hits to print
@@ -136,25 +154,27 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
-    /// Dump the raw ledger, oldest first, auto-paged on a terminal
+    /// The raw ledger floor, oldest first, auto-paged on a terminal
     Events {
         #[command(flatten)]
         filter: Filter,
         #[arg(long)]
         json: bool,
     },
-    /// List every subject in the claims register
+    /// The claims register: every subject, newest-wins text, support
     Subjects {
         #[arg(long)]
         json: bool,
     },
-    /// One session (id prefix), or one event in full when seq is given
+    /// One session's overview (what `peat <prefix>` runs), or one event
+    /// in full with its citers when seq is given
     Show {
         /// Session id (prefix ok)
         session: String,
         seq: Option<u32>,
     },
-    /// Look at one window of time: digest, children, and what was said
+    /// One window of time (what `peat <window>` runs): digest, children
+    /// one rung finer, and what was said inside it
     Zoom {
         /// w33, 2026-w33, 2026-07, 2026-08-14, q3, 2026, or a..b
         window: String,
@@ -201,6 +221,20 @@ macro_rules! make_brief {
     };
 }
 
+/// The command that reads a subject's full trail: bare `peat <name>` when
+/// the name is one shell-safe token, the explicit flag form otherwise.
+pub fn subject_handle_pub(name: &str) -> String {
+    subject_handle(name)
+}
+
+fn subject_handle(name: &str) -> String {
+    if name.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c)) {
+        format!("▸ peat {name}")
+    } else {
+        format!("▸ peat recall --subject {name:?}")
+    }
+}
+
 /// The brief's band budget: flag beats env beats default.
 fn band_budget(flag: Option<usize>) -> usize {
     flag.or_else(|| std::env::var("PEAT_BRIEF_BUDGET").ok().and_then(|v| v.parse().ok()))
@@ -237,6 +271,20 @@ fn main() {
                 Cmd::Show {
                     session: q[0].clone(),
                     seq: q.get(1).and_then(|s| s.parse().ok()),
+                }
+            } else if q.len() == 1
+                && st.rtx(|(_, _, _, (subjects, _), _, _)| {
+                    subjects.get(&q[0]).is_some() as bool
+                })
+            {
+                // an exact subject name reads its full evidence trail —
+                // the expansion path every clipped belief line points at
+                Cmd::Recall {
+                    query: vec![],
+                    limit: 12,
+                    filter: Default::default(),
+                    subject: Some(q[0].clone()),
+                    json: cli.json,
                 }
             } else {
                 let words = q.join(" ");
@@ -355,6 +403,12 @@ beside the shared db); pass --session",
             // and per-command rotation emits one-row SSTs across every
             // keyspace (L0 shredding — fjall stalls writes at 20 L0 runs).
             // Bulk capture checkpoints; the journal absorbs single events.
+            if text.join(" ").chars().count() > 240 {
+                ui::note(
+                    "long for a claim — briefs clip at ~120 chars (trails read whole); \
+consider splitting into separate observations",
+                );
+            }
             ui::note(&format!("recorded → {subject} (support {count})"));
         }
 
@@ -435,8 +489,7 @@ beside the shared db); pass --session",
                         "  {} {} {}",
                         ui::dim(&format!("[{}{} · {}]", h.kind, cited, h.age)),
                         clip(&h.text, 200),
-                        // the hit's address — paste into `peat show <sess> <seq>`
-                        ui::dim(&format!("({} {})", h.session, h.seq)),
+                        ui::dim(&format!("▸ peat {} {}", h.session, h.seq)),
                     );
                 }
             }
@@ -513,7 +566,11 @@ beside the shared db); pass --session",
                             if s.cited { "" } else { ", uncited" },
                             age_label(now, s.last_ms)
                         )),
-                        clip(&s.text, 140)
+                        format!(
+                            "{}  {}",
+                            clip(&s.text, 120),
+                            ui::dim(&subject_handle(&name))
+                        )
                     );
                 }
             }
@@ -546,12 +603,17 @@ beside the shared db); pass --session",
                     std::process::exit(1);
                 };
                 let place = s.cwd.rsplit('/').next().unwrap_or(&s.cwd);
+                // branch is noise when it restates the worktree name
+                let branch = (!s.branch.is_empty()
+                    && !s.branch.ends_with(place)
+                    && !place.ends_with(s.branch.as_str()))
+                .then(|| format!(" · {}", s.branch))
+                .unwrap_or_default();
                 println!(
                     "{} {}",
                     ui::h1(&format!("== session {} ==", short_sess(&sess))),
                     ui::dim(&format!(
-                        "{place}{} · {} – {} · {} commits",
-                        if s.branch.is_empty() { String::new() } else { format!(" · {}", s.branch) },
+                        "{place}{branch} · active {} – {} ago · {} commits",
                         age_label(now, s.start_ms),
                         age_label(now, s.end_ms),
                         s.commits
@@ -709,12 +771,17 @@ beside the shared db); pass --session",
                 return;
             }
             let fails = if head.fails > 0 { format!(" ({} fail)", head.fails) } else { String::new() };
+            let span = {
+                let s = ladder::Civil::from_bucket(start);
+                let e = ladder::Civil::from_bucket(end);
+                ladder::span_label(s, e)
+            };
             println!(
                 "{} {}",
-                ui::h1(&format!("== {label} ==")),
+                ui::h1(&format!("== {label}{} ==", if label.contains(' ') || span.is_empty() { String::new() } else { format!(" · {span}") })),
                 ui::dim(&format!(
                     "{} tools{fails} · {} commits · {} sessions{}",
-                    head.tools, head.commits, sess_rows.len(),
+                    ui::knum(head.tools), head.commits, sess_rows.len(),
                     if head.obs > 0 { format!(" · {} obs", head.obs) } else { String::new() }
                 ))
             );
@@ -726,7 +793,7 @@ beside the shared db); pass --session",
                     println!(
                         "  {} {} tools{f} · {} commits{}{files}  {}",
                         ui::dim(&format!("[{}]", b.label)),
-                        b.tools, b.commits,
+                        ui::knum(b.tools), b.commits,
                         if b.obs > 0 { format!(" · {} obs", b.obs) } else { String::new() },
                         ui::dim(&format!("▸ {}", b.handle)),
                     );

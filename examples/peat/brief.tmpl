@@ -10,19 +10,19 @@
 
 {{ "recent activity:" | h1 }}
 {%- for d in days %}
-  {{ d.day }}: {{ d.tools }} tool calls ({{ d.fails }} failed), {{ d.commits }} commits{% if d.files %} · {{ d.files | join(", ") }}{% endif %}
+  {{ d.day }}: {{ d.tools | k }} tools{% if d.fails %}{{ (" (" ~ d.fails ~ " fail)") | dim }}{% endif %}{% if d.commits %} · {{ d.commits }} commits{% endif %}{% if d.files %} · {{ d.files | join(", ") }}{% endif %}
 {%- endfor %}
 {%- endif %}
 {%- if further %}
 
 {{ "further back:" | h1 }}
 {%- for b in further %}
-  {{ ("[" ~ b.label ~ (" · " ~ b.span if b.span else "") ~ "]") | dim }} {{ b.tools }} tools{% if b.fails %}{{ (" (" ~ b.fails ~ " fail)") | dim }}{% endif %} · {{ b.commits }} commits · {{ b.sessions }} sessions{% if b.obs %} · {{ b.obs }} obs{% endif %}{% if b.files %} · {{ b.files | join(", ") }}{% endif %}  {{ ("▸ " ~ b.handle) | dim }}
+  {{ ("[" ~ b.label ~ (" · " ~ b.span if b.span else "") ~ "]") | dim }} {{ b.tools | k }} tools{% if b.fails %}{{ (" (" ~ b.fails ~ " fail)") | dim }}{% endif %}{% if b.commits %} · {{ b.commits }} commits{% endif %}{% if b.sessions %} · {{ b.sessions }} sessions{% endif %}{% if b.obs %} · {{ b.obs }} obs{% endif %}{% if b.files %} · {{ b.files | join(", ") }}{% endif %}  {{ ("▸ " ~ b.handle) | dim }}
 {%- endfor %}
 {%- endif %}
 {%- if last_session %}
 
-{{ "last session" | h1 }}{{ (" (" ~ last_session.age_hours ~ "h ago" ~ (", " ~ last_session.branch if last_session.branch else "") ~ "):") | dim }}
+{{ "last session" | h1 }}{{ (" (" ~ last_session.age ~ (", " ~ last_session.branch if last_session.branch else "") ~ "):") | dim }}
   {{ last_session.final_msg | clip(400) }}
 {%- endif %}
 {%- if files %}
@@ -44,7 +44,7 @@
 
 {{ "current understanding (agent-asserted, newest wins):" | h1 }}
 {%- for s in subjects %}
-  {{ s.subject | accent }}{{ (" (" ~ s.count ~ " obs") | dim }}{% if not s.cited %}{{ ", uncited" | warn }}{% endif %}{{ (", " ~ s.age ~ "):") | dim }} {{ s.text | clip(120) }}{% if not loop.last %}
+  {{ s.subject | accent }}{{ (" (" ~ s.count ~ " obs") | dim }}{% if not s.cited %}{{ ", uncited" | warn }}{% endif %}{{ (", " ~ s.age ~ "):") | dim }} {{ s.text | clip(120) }}  {{ s.handle | dim }}{% if not loop.last %}
 {% endif %}
 {%- endfor %}
 {%- endif %}

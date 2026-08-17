@@ -152,9 +152,12 @@ near subjects: fold-hnsw-perf (1 obs)
 recorded → fold-hnsw (support 2)
 ```
 
-The one judgment step. `--from seq,seq` cites the mechanical events the claim
+The one judgment step — one short sentence (deposits over ~240 chars earn a
+split-this nudge). `--from seq,seq` cites the mechanical events the claim
 rests on; an uncited obs is displayed as a bare assertion everywhere it
-appears. Before writing, near-subject matches print as a drift guard. The
+appears. **Briefs clip; trails don't**: belief lines in the brief are an
+index, truncated at ~120 chars and ending in `▸ peat <subject>`, which reads
+the full newest-wins text and the complete evidence trail verbatim. Before writing, near-subject matches print as a drift guard. The
 session id resolves from `--session`, else `.peat/current-session` (written
 by the SessionStart hook). `--at YYYY-MM-DD` backdates for retroactive
 annotation — `asof` briefs for that day will carry it.

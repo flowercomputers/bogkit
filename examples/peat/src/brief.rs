@@ -131,7 +131,7 @@ pub fn assemble<R: Readable>(
         .find(|(_, s)| !s.final_msg.is_empty())
         .map(|(_, s)| {
             serde_json::json!({
-                "age_hours": (now.saturating_sub(s.end_ms)) / 3_600_000,
+                "age": age_label(now, s.end_ms),
                 "branch": s.branch,
                 "final_msg": s.final_msg,
             })
@@ -200,6 +200,8 @@ pub fn assemble<R: Readable>(
                 "cited": s.cited,
                 "age": age_label(now, s.last_ms),
                 "text": s.text,
+                // the expansion path: briefs clip, trails read whole
+                "handle": crate::subject_handle_pub(name),
             })
         })
         .collect();

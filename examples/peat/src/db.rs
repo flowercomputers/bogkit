@@ -9,12 +9,26 @@ use fold::stream::KeyedStream;
 use crate::event::{Envelope, EventId};
 use crate::ui;
 
-/// The database: `$PEAT_DB` if set, else `.peat/db` at the repo root.
+/// The database: `$PEAT_DB` if set, else `.peat/db` at the repo root —
+/// unless `.peat/redirect` names another `.peat` directory (one line,
+/// resolved relative to the repo root), in which case the ledger lives
+/// there. The beads convention, borrowed: a worktree desk redirects to its
+/// anchor so every seat reads and writes one shared memory, while
+/// desk-local files (`current-session`, the once-per-session markers)
+/// stay beside the redirect.
 pub fn db_path() -> PathBuf {
     if let Ok(p) = std::env::var("PEAT_DB") {
         return PathBuf::from(p);
     }
-    peat_dir().join("db")
+    let dir = peat_dir();
+    if let Ok(target) = std::fs::read_to_string(dir.join("redirect")) {
+        let target = target.trim();
+        if !target.is_empty() {
+            let base = dir.parent().map(PathBuf::from).unwrap_or_default();
+            return base.join(target).join("db");
+        }
+    }
+    dir.join("db")
 }
 
 /// `.peat/` beside the nearest git/jj root above cwd, else cwd. Cached —
