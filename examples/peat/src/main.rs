@@ -156,6 +156,10 @@ fn main() {
                     tx.upsert(id, env);
                 }
             });
+            // fsync + let fjall fold the journal into the LSM — without this
+            // every subsequent open replays the whole journal, which after a
+            // bulk backfill dominates brief latency
+            st.checkpoint();
             eprintln!("peat: captured {n} events from session {}", parsed.session);
         }
 
@@ -215,6 +219,7 @@ fn main() {
                     .map(|s: SubjStats| s.count)
                     .unwrap_or(1)
             });
+            st.checkpoint();
             eprintln!("recorded → {subject} (support {count})");
         }
 
