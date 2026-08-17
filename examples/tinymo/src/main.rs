@@ -144,7 +144,9 @@ fn main() {
     };
 
     // persistent across runs on purpose: recordings live in bog
-    let db_path = std::env::temp_dir().join("tinymo.db");
+    let db_path = std::env::var("TINYMO_DB")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::env::temp_dir().join("tinymo.db"));
     if args.iter().any(|a| a == "--fresh") {
         let _ = std::fs::remove_dir_all(&db_path);
     }

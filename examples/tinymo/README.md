@@ -19,7 +19,7 @@ toio/              Python BLE driver (from ../toio): tinymo_driver.py talks to t
 Moves are stored as `Move { session, seq, at_ms, left, right, duration_ms, label }` in a
 `Bag<Move>` plus a `KeyBy(session) → Aggregate → Table<session, count>` — the boomerang limit is
 read straight from that incrementally-maintained count. The db lives in
-`$TMPDIR/tinymo.db` and is **kept** across runs (`--fresh` wipes it).
+`$TMPDIR/tinymo.db` (override with `TINYMO_DB=path`) and is **kept** across runs (`--fresh` wipes it). Only one brain can hold the db at a time — a second one panics with `Locked`.
 
 ## Run
 
