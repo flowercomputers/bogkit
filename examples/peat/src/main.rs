@@ -499,14 +499,20 @@ beside the shared db); pass --session",
             } else {
                 for h in &hits {
                     println!(
-                        "  {} {}",
+                        "  {} {} {}",
                         ui::dim(&format!(
                             "[{}{} · {}]",
                             h["kind"].as_str().unwrap_or("?"),
                             if h["kind"] == "obs" && h["cited"] == true { "·cited" } else { "" },
                             h["age"].as_str().unwrap_or("")
                         )),
-                        clip(h["text"].as_str().unwrap_or(""), 220),
+                        clip(h["text"].as_str().unwrap_or(""), 200),
+                        // the hit's address — paste into `peat show <sess> <seq>`
+                        ui::dim(&format!(
+                            "({} {})",
+                            h["session"].as_str().unwrap_or(""),
+                            h["seq"]
+                        )),
                     );
                 }
             }
