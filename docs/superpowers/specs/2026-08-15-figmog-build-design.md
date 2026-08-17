@@ -773,10 +773,46 @@ unless `--keep`. Exit nonzero if any phase fails or any tool call
 returns `isError` (a graceful 429 in the comparison phase is a recorded
 result, not a failure).
 
+### Interactive mode (`--interactive`)
+
+`figmog bench [FILE] --interactive` runs the same setup (corpus or real
+file → cold sync → spawn serve child) and then, instead of the automated
+phases, drops into a REPL on the user's terminal so requests are visible
+as they fire:
+
+- **Tool shorthands** mapping to the local tools with light arg parsing:
+  `search <words…>`, `node <id> [children]`, `tree [id] [depth]`,
+  `find <TYPE> [page]`, `where <pointer> [value]`, `stats`, `path <id>`,
+  `text [page]`, `at <x> <y>`, `instances <target>`, `components`,
+  `styles [type]`, `uses <id>`, `vars [id]`, `pages`, `status`. Each
+  prints one aligned line: sequence number, tool, arg summary, latency in
+  ms, and (dim) a one-line result digest (hit count / name / isError).
+- **`run N`** — fire N requests of the derived mixed workload, streaming
+  one line per request in real time, then print the session percentile
+  table for the burst.
+- **`api node <id>` / `api meta`** — real-file mode only: fire one actual
+  Figma API call (`/nodes` or `/meta`), timed the same way, each line
+  labeled with the API cost it spent. The live side-by-side is the demo's
+  centerpiece; 429s print their Retry-After and do not exit.
+- **`call <tool> <json-args>`** — raw escape hatch (works for proxied
+  tools too when an upstream is attached).
+- **`report`** — cumulative per-tool percentiles for everything fired
+  this session; **`help`**; **`quit`**/EOF exits cleanly (child reaped).
+
+Colors: raw ANSI escapes only (no deps), emitted only when stdout is a
+terminal (`IsTerminal`); latency lines green under 10ms, yellow under
+100ms, red above; errors red. Non-TTY stdout gets plain text. The
+interactive mode is human-only: `--json` combined with `--interactive`
+is a usage error. The one-shot mode is unchanged (CI/e2e cover it);
+interactive gets a scripted e2e (commands piped via stdin, non-TTY plain
+output asserted, clean exit on EOF).
+
 ### Non-goals
 
 Concurrent client simulation (stdio is one pipe; the server is
 single-threaded by design); benchmarking the proxy path (network-bound,
 not ours to measure); measuring Figma's rate limit itself (the
 comparison phase measures API *latency* with K small calls; the
-~10/min budget number is documented, never probed to exhaustion).
+~10/min budget number is documented, never probed to exhaustion);
+readline niceties (history/completion — plain stdin lines are enough
+for a demo REPL).
