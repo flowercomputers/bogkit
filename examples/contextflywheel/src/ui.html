@@ -116,7 +116,7 @@
       }
       $('compare-notes').innerHTML=notes.map(note=>`<li>${esc(note)}</li>`).join('');
     }
-    function toolName(record){return record.text.match(/^([^\s:]+)(?: result| failed|\s)/)?.[1]||'Tool'}
+    function toolName(record){return String(record?.text||'').match(/^([^\s:]+)(?: result| failed|\s)/)?.[1]||'Tool'}
     function buildActivities(){
       const structural=new Set(['objective','constraint','permission']);
       const activities=[]; const pending=[];
@@ -205,16 +205,20 @@
         }
       }
     }
+    function showContextDialog(){
+      const dialog=$('context-dialog');
+      if(!dialog)return;
+      try{if(!dialog.open)dialog.showModal()}catch(error){console.warn(error)}
+    }
     async function openContext(step){
       if(!step)return;
-      const dialog=$('context-dialog');
       try{
-        if(state.mission?.context?.step===step){renderContext(state.mission.context);dialog?.showModal();return}
+        if(state.mission?.context?.step===step){renderContext(state.mission.context);showContextDialog();return}
         const response=await fetch(`/api/context/${step}`);
         if(!response.ok)throw new Error('Compiled context is unavailable for this step.');
         renderContext(await response.json());
-        dialog?.showModal();
-      }catch(error){setHtml('memory-list',`<div class="error">${esc(error.message)}</div>`);dialog?.showModal()}
+        showContextDialog();
+      }catch(error){setHtml('memory-list',`<div class="error">${esc(error.message)}</div>`);showContextDialog()}
     }
     async function refreshMission(){
       const response=await fetch('/api/mission');
@@ -249,7 +253,7 @@
         }catch(error){$('connection').textContent='RECONNECTING';await new Promise(resolve=>setTimeout(resolve,1500))}
       }
     }
-    function closeOverlays(){$('settings').hidden=true;$('settings-button').setAttribute('aria-expanded','false');if($('context-dialog').open)$('context-dialog').close();if(!$('inspector').hidden)closeInspector()}
+    function closeOverlays(){$('settings').hidden=true;$('settings-button').setAttribute('aria-expanded','false');const dialog=$('context-dialog');if(dialog?.open)dialog.close();if($('inspector')&&!$('inspector').hidden)closeInspector()}
     $('search').addEventListener('input',event=>{state.query=event.target.value;renderTimeline()});
     $('summary-view').onclick=()=>setMode('summary');
     $('all-view').onclick=()=>setMode('all');
@@ -261,7 +265,7 @@
     $('close-detail').onclick=closeInspector;
     $('current-context').onclick=()=>openContext(state.mission?.last_step||currentBelief()?.step||state.records.at(-1)?.step);
     $('view-context').onclick=()=>openContext(state.selected?.step||state.mission?.last_step);
-    $('close-context').onclick=()=>$('context-dialog').close();
+    $('close-context').onclick=()=>{const dialog=$('context-dialog');if(dialog?.open)dialog.close()};
     $('compare').onclick=()=>{$('belief-change').hidden=false;$('belief-change').scrollIntoView({behavior:'smooth',block:'nearest'})};
     document.addEventListener('keydown',event=>{if(event.key==='Escape')closeOverlays()});
     document.addEventListener('click',event=>{if(!$('settings').hidden&&!event.target.closest('#settings')&&!event.target.closest('#settings-button')){$('settings').hidden=true;$('settings-button').setAttribute('aria-expanded','false')}});
