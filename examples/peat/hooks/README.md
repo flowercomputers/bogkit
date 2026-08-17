@@ -138,3 +138,37 @@ relative to the desk root — e.g. `../murail/.peat`) so bare `peat` typed by
 a human resolves to the shared ledger. Hooks keep using explicit `PEAT_DB`.
 The `.peat/` dir self-ignores (peat writes `.peat/.gitignore` with `*`), so
 jj never snapshots the redirect or the markers into a desk commit.
+
+## Obs guidance (append to the project's CLAUDE.md/AGENTS.md)
+
+```markdown
+### peat observations
+
+At commit points and task completions, deposit one-line observations:
+
+    peat obs <subject> "<claim>" [--from seq,seq]
+
+An observation is read months later, by an agent on another desk, with zero
+shared context. The test: would that reader know what to do differently?
+
+- **State a timeless rule, not a story or a status.** The incident is
+  already in the ledger (cite it: --from); deployment state belongs in
+  beads and commits, where it is expected to rot.
+- **No deixis**: never "tonight / just now / this session / the reviewer" —
+  the timestamp is recorded; prose references to *now* rot immediately.
+- **Findable names**: commands, paths, repo vocabulary — never episode
+  names ("the v3 rebuild", "the fix").
+- **One claim per obs**; repetition on a subject is how support accrues.
+- Check `peat subjects` before naming a new subject.
+
+Bad (real, deposited by peat's own author):
+    "struck twice same evening: the v3 murail rebuild also ran a pre-Said
+     binary; idempotent re-capture healed it silently — build -p peat
+     before any fleet-facing run"
+Good (real, deposited by a herald agent):
+    "A precedent set in a zero-row domain can be actively wrong in a
+     populated one: deterministic id derivation was correct for seat and
+     sandbox at 0 existing rows and would have orphaned memory's 2297 —
+     check every carried-forward pattern against the population it is
+     about to meet."
+```

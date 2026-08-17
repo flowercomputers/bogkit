@@ -361,15 +361,48 @@ beside the shared db); pass --session",
                 );
                 std::process::exit(1);
             };
+            let text = text.join(" ");
             let env = Envelope::new(
                 &session,
                 ts,
                 Event::Obs {
                     subject: subject.clone(),
-                    text: text.join(" "),
+                    text: text.clone(),
                     derived_from: from,
                 },
             );
+            // Advisory lint, never blocking: observations are read months
+            // later by agents with zero shared context, so phrasing that
+            // leans on the present moment quietly rots. The envelope
+            // already carries the timestamp; the ledger already holds the
+            // story (cite it with --from).
+            let text_l = text.to_lowercase();
+            for (marker, why) in [
+                ("tonight", "time-deictic"),
+                ("today", "time-deictic"),
+                ("yesterday", "time-deictic"),
+                ("this session", "session-deictic"),
+                ("this evening", "time-deictic"),
+                ("this morning", "time-deictic"),
+                ("just now", "time-deictic"),
+                ("earlier", "time-deictic"),
+                ("the reviewer", "person-deictic"),
+                ("this change", "change-deictic"),
+                ("this fix", "change-deictic"),
+                ("in flight", "status-log"),
+                ("now live", "status-log"),
+                ("mirrors ", "status-log"),
+                ("mirrored to", "status-log"),
+                ("shipped", "status-log"),
+                ("landed", "status-log"),
+            ] {
+                if text_l.contains(marker) {
+                    ui::note(&format!(
+                        "style: {why:?} phrase {marker:?} — future readers lack this context; state the rule standalone (the timestamp is recorded, the story is citable via --from)"
+                    ));
+                }
+            }
+
             // one transaction: hint, seq scan, insert, and count all see
             // the same state (and the count sees our own write)
             let count = st.wtx(|tx| {
@@ -403,7 +436,7 @@ beside the shared db); pass --session",
             // and per-command rotation emits one-row SSTs across every
             // keyspace (L0 shredding — fjall stalls writes at 20 L0 runs).
             // Bulk capture checkpoints; the journal absorbs single events.
-            if text.join(" ").chars().count() > 240 {
+            if text.chars().count() > 240 {
                 ui::note(
                     "long for a claim — briefs clip at ~120 chars (trails read whole); \
 consider splitting into separate observations",
