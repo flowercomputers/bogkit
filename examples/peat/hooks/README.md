@@ -130,3 +130,11 @@ Two behaviors worth knowing:
   gap: Codex's `SessionStart` `source` has no `compact` value, so the
   post-compact nudge is dormant there; `PreCompact` salvage still covers
   the mechanical half.
+
+## Worktree desks
+
+Write a `.peat/redirect` in each desk (one line, the anchor's `.peat`
+relative to the desk root — e.g. `../murail/.peat`) so bare `peat` typed by
+a human resolves to the shared ledger. Hooks keep using explicit `PEAT_DB`.
+The `.peat/` dir self-ignores (peat writes `.peat/.gitignore` with `*`), so
+jj never snapshots the redirect or the markers into a desk commit.

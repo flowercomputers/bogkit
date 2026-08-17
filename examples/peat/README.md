@@ -252,14 +252,16 @@ no `$CLAUDE_TRANSCRIPT_PATH`-style env vars), and every hook command must end
 
 ## Multiple agents, one memory
 
-Point every agent's hooks at one database:
+Give each worktree desk a redirect to its anchor (the beads convention):
 
 ```console
-$ PEAT_DB=/path/to/shared/.peat/db peat brief
+$ printf '../murail/.peat\n' > .peat/redirect     # relative to the desk root
 ```
 
-Each worktree/workspace keeps its own `.peat/current-session`; the ledger is
-shared. Writers queue on the single-writer lock (proven under 14-process
+Bare `peat` in that desk now reads and writes the shared ledger, while
+desk-local files (`current-session`, once-per-session markers) stay beside
+the redirect. `PEAT_DB=/path/to/.peat/db` remains the explicit override and
+is what hook snippets use. Writers queue on the single-writer lock (proven under 14-process
 load); the brief's *active in the last hour* section is the cross-agent
 awareness surface, and *current understanding* interleaves every agent's
 observations. Session exhaust from N agents becomes one mind.

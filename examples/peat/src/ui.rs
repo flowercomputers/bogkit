@@ -48,11 +48,17 @@ pub struct Phase {
     bar: Option<ProgressBar>,
     label: String,
     started: Instant,
+    outermost: bool,
 }
+
+/// Live phase count: nested phases (asof's replay wraps a ledger open)
+/// stay silent so one spinner line tells one story.
+static PHASES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 impl Phase {
     pub fn new(label: &str) -> Self {
-        let bar = fancy_err().then(|| {
+        let outermost = PHASES.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0;
+        let bar = (outermost && fancy_err()).then(|| {
             let b = ProgressBar::new_spinner()
                 .with_style(
                     ProgressStyle::with_template("{spinner} {msg}")
@@ -67,6 +73,7 @@ impl Phase {
             bar,
             label: label.to_string(),
             started: Instant::now(),
+            outermost,
         }
     }
 
@@ -79,6 +86,7 @@ impl Phase {
 
     /// End the phase; slow ones report their measured cost.
     pub fn done(self) {
+        // decrement happens in Drop; rendering only if we own the line
         if let Some(b) = &self.bar {
             let took = self.started.elapsed();
             if took > Duration::from_millis(300) {
@@ -99,6 +107,8 @@ impl Drop for Phase {
         if let Some(b) = self.bar.take() {
             b.finish_and_clear();
         }
+        let _ = self.outermost; // ownership noted; count is global
+        PHASES.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
