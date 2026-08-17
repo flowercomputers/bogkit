@@ -1,0 +1,29 @@
+== peat brief · {{ today }} ==
+{%- if days %}
+recent activity:
+{%- for d in days %}
+  {{ d.day }}: {{ d.tools }} tool calls ({{ d.fails }} failed), {{ d.commits }} commits{% if d.files %} · {{ d.files | join(", ") }}{% endif %}
+{%- endfor %}
+{%- endif %}
+{%- if last_session %}
+last session ({{ last_session.age_hours }}h ago{% if last_session.branch %}, {{ last_session.branch }}{% endif %}):
+  {{ last_session.final_msg }}
+{%- endif %}
+{%- if files %}
+recently touched files:
+{%- for f in files %}
+  {{ f.path }} — sessions {{ f.sessions | join(", ") }}
+{%- endfor %}
+{%- endif %}
+{%- if relevant %}
+possibly relevant (judge each; origin and age shown):
+{%- for r in relevant %}
+  [{{ r.tag }}] {{ r.text }}
+{%- endfor %}
+{%- endif %}
+{%- if subjects %}
+current understanding (agent-asserted, newest wins):
+{%- for s in subjects %}
+  {{ s.subject }} ({{ s.count }} obs{% if not s.cited %}, uncited{% endif %}, {{ s.age }}): {{ s.text }}
+{%- endfor %}
+{%- endif %}
