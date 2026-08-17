@@ -10,7 +10,7 @@ crate-type = ["cdylib"]
 sod = { path = "../../../sod" }
 fold = { path = "../../../fold" }
 postcard = { version = "1", features = ["use-std"] }
-napi = { version = "2", default-features = false, features = ["napi8", "async"] }
+napi = { version = "2", default-features = false, features = ["napi8"] }
 napi-derive = "2"
 
 [build-dependencies]
