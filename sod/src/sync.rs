@@ -170,18 +170,18 @@ impl Session {
         &self.skipped
     }
 
-    /// Consume the session, yielding its report.
-    ///
-    /// # Panics
-    /// Panics if the session never saw the peer's `Hello` — transports
-    /// always exchange Hellos before anything else.
-    pub fn report(self) -> SyncReport {
-        let (peer, peer_vector) = self.peer.expect("session saw no Hello");
-        SyncReport {
+    /// Consume the session, yielding its report — `None` if the session
+    /// never saw the peer's `Hello` (e.g. it ended on a version-mismatch
+    /// or transport error before the handshake completed). Refusals
+    /// recorded before an error are still readable via
+    /// [`skipped`](Session::skipped) before consuming.
+    pub fn report(self) -> Option<SyncReport> {
+        let (peer, peer_vector) = self.peer?;
+        Some(SyncReport {
             peer,
             peer_vector,
             skipped: self.skipped,
-        }
+        })
     }
 }
 
@@ -207,7 +207,13 @@ pub fn sync_pair<E1: Engine, L1: LogStore, E2: Engine, L2: LogStore>(
             to_b.extend(sa.on_msg(a, m)?);
         }
     }
-    Ok((sa.report(), sb.report()))
+    let (ra, rb) = (sa.report(), sb.report());
+    match (ra, rb) {
+        (Some(ra), Some(rb)) => Ok((ra, rb)),
+        // both sessions completed (loop above finished), so this is
+        // unreachable in practice; classify defensively rather than panic
+        _ => Err(SodError::Io("session ended before Hello".into())),
+    }
 }
 
 #[cfg(test)]

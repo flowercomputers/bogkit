@@ -16,11 +16,18 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const appDir = join(here, "..");
 const children = [];
+const tmpDirs = [];
+
+// cleanup must run on EVERY exit path — a mid-act crash must not leak
+// three servers holding the demo ports
+function cleanup() {
+  for (const c of children) c.kill();
+  for (const d of tmpDirs) rmSync(d, { recursive: true, force: true });
+}
+process.on("exit", cleanup);
 
 function fail(msg) {
-  console.error(`DEMO-LOCAL FAIL: ${msg}`);
-  for (const c of children) c.kill();
-  process.exit(1);
+  throw new Error(msg);
 }
 
 function boot(port, env) {
@@ -61,7 +68,9 @@ const A_SYNC = "ws://127.0.0.1:7300";
 const B_SYNC = "ws://127.0.0.1:7301";
 
 const dirs = ["hub", "a", "b"].map((n) => mkdtempSync(join(tmpdir(), `sod-web-demo-${n}-`)));
+tmpDirs.push(...dirs);
 
+try {
 boot(3002, { SOD_DATA_DIR: dirs[0], SOD_SERVE_ADDR: "127.0.0.1:7302" });
 boot(3000, {
   SOD_DATA_DIR: dirs[1],
@@ -127,8 +136,9 @@ if (!finals.every((f) => JSON.stringify(f) === canon)) {
   fail(`boards differ after heal: ${finals.map((f) => JSON.stringify(f)).join(" vs ")}`);
 }
 console.log("act 3 PASS: heal converged all three boards byte-identically");
-
-for (const c of children) c.kill();
-for (const d of dirs) rmSync(d, { recursive: true, force: true });
 console.log("DEMO-LOCAL PASS");
-process.exit(0);
+process.exit(0); // cleanup runs via the exit handler
+} catch (e) {
+  console.error(`DEMO-LOCAL FAIL: ${e.message}`);
+  process.exit(1);
+}

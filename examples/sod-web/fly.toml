@@ -4,7 +4,8 @@ app = "sod-web-demo"
 primary_region = "iad"
 
 [build]
-  dockerfile = "examples/sod-web/Dockerfile"
+  # relative to this fly.toml's directory (NOT the deploy context)
+  dockerfile = "Dockerfile"
 
 [env]
   SOD_SERVE_ADDR = "0.0.0.0:7300"

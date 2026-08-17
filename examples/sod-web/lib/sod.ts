@@ -15,7 +15,7 @@ export type Addon = {
   board(): { reactions: Array<{ emoji: string; count: number }>; total: number };
   status(): {
     id: string;
-    vector: Record<string, number>;
+    vector: Array<{ origin: string; seq: number }>;
     watermark: number;
     connectedIds: string[];
     heardFrom: number;

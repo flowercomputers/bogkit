@@ -1,6 +1,7 @@
 target/
-node_modules/
-.next/
+**/target/
+**/node_modules/
+**/.next/
 .git/
 .claude/
-*.node
+**/*.node

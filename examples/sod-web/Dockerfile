@@ -29,6 +29,10 @@ FROM node:22-slim
 WORKDIR /app
 ENV NODE_ENV=production
 ENV SOD_DATA_DIR=/data/sod
+# Next's standalone server binds process.env.HOSTNAME when present, and
+# Fly machines inject HOSTNAME=<machine-id> — pin it or the proxy can't
+# reach the app
+ENV HOSTNAME="0.0.0.0"
 COPY --from=web /app/.next/standalone ./
 COPY --from=web /app/.next/static ./.next/static
 # the addon must resolve at runtime as a real package next to server.js

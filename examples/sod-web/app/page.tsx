@@ -8,7 +8,7 @@ type Board = { reactions: Array<{ emoji: string; count: number }>; total: number
 type Peer = { url: string; paused: boolean; lastOkMs: number | null; lastError: string | null };
 type Status = {
   id: string;
-  vector: Record<string, number>;
+  vector: Array<{ origin: string; seq: number }>;
   watermark: number;
   connectedIds: string[];
   heardFrom: number;
@@ -175,8 +175,8 @@ export default function Page() {
               {status.serveAddr ? ` · serving on ${status.serveAddr}` : ""}
               <br />
               vector:{" "}
-              {Object.entries(status.vector)
-                .map(([origin, seq]) => `${origin.slice(0, 8)}·${seq}`)
+              {status.vector
+                .map(({ origin, seq }) => `${origin.slice(0, 8)}·${seq}`)
                 .join("  ") || "empty"}
             </div>
           </section>

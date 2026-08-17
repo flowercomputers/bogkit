@@ -43,7 +43,8 @@ assert(threw, "guarded unreact throws at zero");
 let st = sod.status();
 assert(st.id === idA, "status id");
 assert(st.connectedIds.length === 0, "no peers yet");
-assert(st.vector[idA] >= 4, "own feed advanced");
+const own = st.vector.find((v) => v.origin === idA);
+assert(own && own.seq >= 4, "own feed advanced");
 
 // --- two-process sync ---
 const child = spawn(process.execPath, [join(here, "smoke-peer.mjs"), dirB], {

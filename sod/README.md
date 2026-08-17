@@ -50,7 +50,7 @@ protocol machinery.
 |---|---|---|
 | `engine::Engine` | "the bog machinery" materializing deltas | `MemEngine` (always; oracle + wasm-viable), `engine_fold::FoldEngine` (feature `fold-engine`) |
 | `store::LogStore` | append-only frame storage | `MemLog` (always), `log_file::FileLog` (torn-tail recovery) |
-| transport | drives the sans-io `sync::Session` | `transport::ws` blocking websockets (feature `ws`): `sync_with`/`serve`, plus `SyncListener`/`IncomingSession` for hosts that must not hold the replica while idle (web servers) |
+| transport | drives the sans-io `sync::Session` | `transport::ws` blocking websockets (feature `ws`): `sync_with`/`serve` for simple hosts; for hosts that must never hold the replica while idle (web servers), `SyncListener`/`IncomingSession` on the accept side and `connect`/`OutgoingSession` on the dial side — connect first, borrow the replica only for the session |
 | entropy | `ReplicaId::generate` | `getrandom` (feature `os-rng`); or pass bytes via `ReplicaId::from_bytes` |
 
 Feature flags: `default = ["fold-engine", "ws", "os-rng"]`. The core —

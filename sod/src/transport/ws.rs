@@ -105,7 +105,9 @@ fn run_session<E: Engine, L: LogStore, S: std::io::Read + std::io::Write>(
             send(sock, m)?;
         }
     }
-    Ok(session.report())
+    session
+        .report()
+        .ok_or_else(|| SodError::Io("session ended before Hello".into()))
 }
 
 /// An established outbound connection, waiting for its session to run.
@@ -125,12 +127,20 @@ pub fn connect(url: &str) -> Result<OutgoingSession, SodError> {
         .strip_prefix("ws://")
         .ok_or_else(|| SodError::Io(format!("unsupported url (v1 speaks ws:// only): {url}")))?;
     let host_port = rest.split('/').next().unwrap_or(rest);
-    let addr = host_port
-        .to_socket_addrs()
-        .map_err(io_err)?
-        .next()
-        .ok_or_else(|| SodError::Io(format!("no address for {host_port}")))?;
-    let stream = TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT).map_err(io_err)?;
+    // try every resolved address (a v6-first resolver on a v4-only route
+    // must fall through to the A record, not burn the timeout and fail)
+    let mut last_err = SodError::Io(format!("no address for {host_port}"));
+    let mut stream = None;
+    for addr in host_port.to_socket_addrs().map_err(io_err)? {
+        match TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT) {
+            Ok(s) => {
+                stream = Some(s);
+                break;
+            }
+            Err(e) => last_err = io_err(e),
+        }
+    }
+    let stream = stream.ok_or(last_err)?;
     set_io_timeouts(&stream)?;
     let (sock, _resp) = tungstenite::client(url, stream)
         .map_err(|e| SodError::Io(format!("websocket handshake failed: {e}")))?;

@@ -12,7 +12,7 @@
 //! lists the distinct peers seen within the last 10 s — the top-nav
 //! "N bogs connected" badge.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -168,10 +168,17 @@ pub fn board() -> Result<Board> {
 }
 
 #[napi(object)]
+pub struct VectorEntry {
+    pub origin: String,
+    pub seq: i64,
+}
+
+#[napi(object)]
 pub struct Status {
     pub id: String,
-    /// origin id (hex) -> seq held through
-    pub vector: HashMap<String, i64>,
+    /// (origin id hex, seq held through), in origin order — an array so
+    /// the order is deterministic at the output boundary
+    pub vector: Vec<VectorEntry>,
     pub watermark: i64,
     /// distinct peer replica ids (hex) with a completed session ≤ 10 s ago
     pub connected_ids: Vec<String>,
@@ -184,10 +191,13 @@ pub struct Status {
 pub fn status() -> Result<Status> {
     with_replica(|r| {
         let id = r.id();
-        let vector: HashMap<String, i64> = r
+        let vector: Vec<VectorEntry> = r
             .vector()
             .iter()
-            .map(|(origin, seq)| (origin.to_string(), *seq as i64))
+            .map(|(origin, seq)| VectorEntry {
+                origin: origin.to_string(),
+                seq: *seq as i64,
+            })
             .collect();
         let heard_from = r.vector().iter().filter(|(o, _)| **o != id).count() as i64;
         let connected_ids = PEERS_SEEN
@@ -253,12 +263,33 @@ pub fn start_serve_loop(addr: String) -> Result<String> {
     let bound_ret = bound.clone();
     SERVE_STARTED.set(bound).ok();
     std::thread::spawn(move || {
+        let mut consecutive_accept_errors = 0usize;
         loop {
             match listener.accept() {
                 Ok(incoming) => {
-                    let mut guard = match REPLICA.lock() {
-                        Ok(g) => g,
-                        Err(_) => break, // poisoned: nothing sane left to do
+                    consecutive_accept_errors = 0;
+                    // Bounded try-lock: in a mutual-dial topology our own
+                    // dialer may hold the lock while waiting on the peer,
+                    // whose dialer waits on us — shed the session (the
+                    // peer retries next tick) instead of deadlocking
+                    // until the socket timeouts fire.
+                    let mut guard = None;
+                    for _ in 0..20 {
+                        match REPLICA.try_lock() {
+                            Ok(g) => {
+                                guard = Some(g);
+                                break;
+                            }
+                            Err(std::sync::TryLockError::WouldBlock) => {
+                                std::thread::sleep(Duration::from_millis(50));
+                            }
+                            Err(std::sync::TryLockError::Poisoned(_)) => return,
+                        }
+                    }
+                    let Some(mut guard) = guard else {
+                        eprintln!("sod-web: replica busy; shedding inbound session");
+                        drop(incoming);
+                        continue;
                     };
                     match guard.as_mut() {
                         Some(replica) => match incoming.run(replica, SCHEMA) {
@@ -275,7 +306,18 @@ pub fn start_serve_loop(addr: String) -> Result<String> {
                         None => drop(incoming),
                     }
                 }
-                Err(e) => eprintln!("sod-web: accept failed: {e}"),
+                Err(e) => {
+                    // post-d21cc50, accept() Err means the LISTENER failed;
+                    // back off, and give up if it never recovers (the same
+                    // hot-spin guard sod's own serve() carries)
+                    eprintln!("sod-web: accept failed: {e}");
+                    consecutive_accept_errors += 1;
+                    if consecutive_accept_errors >= 32 {
+                        eprintln!("sod-web: listener unrecoverable; serve loop exiting");
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(500));
+                }
             }
         }
     });
