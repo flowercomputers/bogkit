@@ -50,24 +50,29 @@ impl<D: Clone, P: Push<D>> Stream<D, P> {
     pub fn wtx<R>(&mut self, f: impl FnOnce(&mut Tx<'_, '_, D, P>) -> R) -> R {
         let mut wtx = WriteTx::new(self.store.write_tx());
 
-        let r = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            f(&mut Tx {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let result = f(&mut Tx {
                 pipeline: &mut self.pipeline,
                 tx: &mut wtx,
                 _p: PhantomData,
-            })
-        })) {
-            Ok(r) => r,
-            Err(p) => {
-                // fjall tx rolls back on drop
-                self.pipeline.abort();
-                std::panic::resume_unwind(p);
-            }
-        };
+            });
+            self.pipeline.commit(&mut wtx);
+            result
+        }));
 
-        self.pipeline.commit(&mut wtx);
-        wtx.commit();
-        r
+        match result {
+            Ok(result) => {
+                wtx.commit();
+                result
+            }
+            Err(panic) => {
+                self.pipeline.abort();
+                // Drop the fjall transaction outside the unwind so its writer
+                // lock remains usable, then resume the original panic.
+                drop(wtx);
+                std::panic::resume_unwind(panic);
+            }
+        }
     }
 
     /// Run a read transaction over one consistent snapshot across all sinks.
