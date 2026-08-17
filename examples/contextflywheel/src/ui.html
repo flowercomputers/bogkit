@@ -45,18 +45,18 @@
     .rail-head{display:flex;align-items:center;justify-content:space-between;padding:0 8px 14px}
     .rail-head h2{margin:0;color:var(--ink);font-size:.82rem;font-weight:600}
     .ghost{border:0;background:none;color:var(--accent);font-size:.75rem;font-weight:500;cursor:pointer;padding:0}
-    .ghost[disabled]{opacity:.45;cursor:not-allowed}
+    .ghost[disabled]{display:none}
     .session-list{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:4px}
     .session-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;width:100%;padding:10px 10px 10px 12px;border:0;border-left:2px solid transparent;border-radius:0 8px 8px 0;background:none;text-align:left;cursor:pointer}
     .session-row:hover{background:var(--soft)}
     .session-row.selected{background:var(--soft);border-left-color:var(--accent)}
-    .session-copy strong{display:block;color:var(--ink);font-size:.82rem;font-weight:600;margin-bottom:3px}
+    .session-copy strong{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;color:var(--ink);font-size:.82rem;font-weight:600;margin-bottom:3px;line-height:1.25}
     .session-copy span{display:block;color:var(--muted);font-size:.72rem;line-height:1.35}
     .session-when{color:var(--muted);font-size:.7rem;align-self:start;padding-top:2px}
     .session-empty{margin:12px 8px 0;font-size:.72rem;line-height:1.45}
     .main{min-width:0;min-height:0;display:flex;flex-direction:column;padding:22px 28px 16px;overflow:hidden}
     .main-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex:none}
-    .main-head h1{margin:0;color:var(--ink);font-size:1.55rem;font-weight:600;letter-spacing:-.04em}
+    .main-head h1{margin:0;color:var(--ink);font-size:1.55rem;font-weight:600;letter-spacing:-.04em;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
     .segment{display:flex;gap:8px}
     .seg{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:#fff;border-radius:8px;padding:7px 10px;color:var(--heading);font-size:.75rem;cursor:pointer}
     .seg.active{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
@@ -72,8 +72,9 @@
     .trace-head{display:flex;justify-content:space-between;align-items:baseline;margin:0 0 8px}
     .trace-head h2{margin:0;color:var(--ink);font-size:.92rem;font-weight:600}
     .new-events{display:none;border:0;background:none;color:var(--accent);font-size:.75rem;cursor:pointer}
-    .timeline{flex:1;min-height:0;overflow:auto;padding:4px 0 12px}
+    .timeline{flex:1;min-height:0;overflow:auto;padding:4px 0 12px;position:relative}
     .event{position:relative;display:grid;grid-template-columns:28px minmax(0,1fr) auto auto 12px;align-items:start;gap:10px;width:100%;padding:12px 10px 12px 8px;border:0;background:none;text-align:left;cursor:pointer;border-radius:8px}
+    .event:not(:last-child)::before{content:'';position:absolute;left:18px;top:34px;bottom:-4px;width:1px;background:var(--line)}
     .event:hover{background:var(--soft)}
     .event.active{background:var(--accent-soft)}
     .event.active strong,.event.active .node{color:var(--accent)}
@@ -187,11 +188,11 @@
         <nav class="sr-only" id="constraints"></nav>
         <section class="card">
           <p class="kicker">Current understanding</p>
-          <p class="understanding-belief" id="current-belief">None recorded.</p>
+          <p class="understanding-belief" id="current-belief">The ledger is open. No versioned belief has been written yet.</p>
           <div class="stats">
             <div class="stat pass"><span>Confidence</span><strong id="current-confidence">—</strong></div>
             <div class="stat"><span>Evidence</span><strong id="current-why">—</strong></div>
-            <div class="stat"><span>Next</span><strong id="next-action">—</strong></div>
+            <div class="stat"><span>Next</span><strong id="next-action">Awaiting the first revision</strong></div>
           </div>
         </section>
         <div class="sr-only">
@@ -224,7 +225,7 @@
       </main>
 
       <aside class="inspector" id="inspector" hidden>
-        <p class="inspector-empty">Select a moment in the record.</p>
+        <p class="inspector-empty">The record is still gathering evidence. When a moment exists, it will open here.</p>
         <div class="inspector-body">
           <div class="inspector-head">
             <div>
@@ -292,7 +293,7 @@
     function currentBelief(){return beliefRecords().at(-1)}
     function titleFor(record){if(record.kind==='belief_revision')return (record.belief_version||1)>1?'Belief revised':'Initial hypothesis formed';return labels[record.kind]||record.kind.replaceAll('_',' ')}
     function summarize(text,max=112){const clean=prose(text);const first=clean.match(/^(.{24,}?[.!?])(?:\s|$)/)?.[1]||clean;return first.length>max?first.slice(0,max-1).trimEnd()+'…':first}
-    function prose(text){return String(text||'').replace(/^CONFIRMED:\s*/i,'').replace(/\s+/g,' ').trim()}
+    function prose(text){return String(text||'').replace(/^CONFIRMED(?: AND FIXED)?[:.]?\s*/i,'').replace(/\s+/g,' ').trim()}
     function parseBelief(text){
       const clean=prose(text);
       if(!clean)return {lead:'',points:[],resolution:''};
@@ -305,20 +306,26 @@
       return {lead,points,resolution};
     }
     function shortTitle(text,fallback){
-      const source=text||fallback||'Session';
-      if(/checkout/i.test(source)&&/timeout/i.test(source))return 'Checkout timeout';
-      return summarize(source,32).replace(/…$/,'');
+      const source=String(text||fallback||'Session').replace(/\s+/g,' ').trim();
+      if(/checkout/i.test(source)&&/timeout/i.test(source)&&!/live/i.test(source))return 'Checkout timeout';
+      if(/live checkout/i.test(source))return 'Live checkout retry';
+      if(/controlled fixture/i.test(source))return 'Controlled fixture';
+      if(source.length<=42)return source;
+      return source.slice(0,42).replace(/\s+\S*$/,'');
     }
     function understandingLine(text){
       const parsed=parseBelief(text);
-      if(!parsed.lead)return 'No current belief has been recorded.';
-      if(/not the database/i.test(parsed.lead))return 'Three bugs in CheckoutWorker.process caused the timeout, not the database.';
-      return summarize(parsed.lead,110);
+      if(!parsed.lead)return 'The ledger is open. No versioned belief has been written yet.';
+      if(/CheckoutWorker\.process/i.test(parsed.lead)&&/not the database/i.test(parsed.lead)){
+        return 'Three bugs in CheckoutWorker.process caused the timeout, not the database.';
+      }
+      return summarize(parsed.lead,120);
     }
     function evidenceLine(belief,evidence){
       const blob=`${belief?.text||''} ${(evidence||[]).map(item=>item.text).join(' ')}`;
       const ms=blob.match(/(\d+(?:\.\d+)?)\s*ms/i);
-      const sec=blob.match(/(\d+(?:\.\d+)?)\s*s(?:ec(?:onds)?)?/i);
+      const elapsed=blob.match(/elapsed\s+(\d+(?:\.\d+)?)\s*s/i);
+      const sec=elapsed||blob.match(/(\d+(?:\.\d+)?)\s*s(?:ec(?:onds)?)?/i);
       if(ms&&sec)return `${ms[1]} ms lookup · ${sec[1]} s elapsed`;
       return evidence?.length?summarize(evidence[0].text,42):'—';
     }
@@ -327,8 +334,10 @@
     function sessionStatus(session,mission){
       const outcome=mission?.verified_outcome||mission?.baseline_outcome;
       if(session.id===state.activeSession&&outcome?.ran)return `${outcome.ok||outcome.passed===outcome.ran?'Belief corrected · ':''}${outcome.passed}/${outcome.ran} passed`;
+      if(/CONFIRMED:/i.test(session.current_belief||''))return 'Belief corrected';
       if(session.completed)return 'Completed';
-      return summarize(session.current_belief||`${session.event_count} recorded events`,48);
+      const n=Number(session.event_count||0);
+      return n?`${n} events · in progress`:'Awaiting the first event';
     }
     function renderSession(){
       const mission=state.mission||{};
@@ -344,14 +353,14 @@
       $('objective').textContent=obj||'No objective recorded.';
       $('constraints').innerHTML=(mission.constraints||[]).concat(mission.permission?[mission.permission]:[]).map(text=>`<span>${esc(text)}</span>`).join('');
       const parsed=belief?parseBelief(belief.text):{lead:'',resolution:''};
-      $('current-belief').textContent=belief?understandingLine(belief.text):'None recorded.';
+      $('current-belief').textContent=belief?understandingLine(belief.text):'The ledger is open. No versioned belief has been written yet.';
       $('current-belief').title=belief?.text||'';
       $('current-confidence').textContent=belief?pct(belief.confidence):'—';
-      $('current-why').textContent=evidenceLine(belief,evidence);
-      $('next-action').textContent=complete?'Fix verified':(mission.next_action||mission.behavioral_effect||'Waiting');
+      $('current-why').textContent=belief?evidenceLine(belief,evidence):'Evidence will attach once a belief is recorded.';
+      $('next-action').textContent=complete?'Fix verified':(mission.next_action||mission.behavioral_effect||(belief?'Awaiting the next action':'Awaiting the first revision'));
       $('mission-status').textContent=complete?'Completed':'Running';
       const sessions=state.sessions.length?state.sessions:[{id:'current',active:true,objective:obj,current_belief:belief?.text,event_count:state.records.length,completed:complete}];
-      $('session-list').innerHTML=sessions.map(session=>`<button class="session-row${session.id===state.activeSession?' selected':''}" data-session="${esc(session.id)}" type="button" aria-pressed="${session.id===state.activeSession}"><span class="session-copy"><strong>${esc(shortTitle(session.objective,session.id))}</strong><span>${esc(sessionStatus(session,session.id===state.activeSession?mission:null))}</span></span><span class="session-when">${session.active||session.id===state.activeSession?'Now':'Archive'}</span></button>`).join('')+(sessions.length>1?'':'<p class="session-empty">No other session ledgers found beside this one.</p>');
+      $('session-list').innerHTML=sessions.map(session=>`<button class="session-row${session.id===state.activeSession?' selected':''}" data-session="${esc(session.id)}" type="button" aria-pressed="${session.id===state.activeSession}"><span class="session-copy"><strong>${esc(shortTitle(session.objective,session.id))}</strong><span>${esc(sessionStatus(session,session.id===state.activeSession?mission:null))}</span></span><span class="session-when">${session.id===state.activeSession?'Now':'Archive'}</span></button>`).join('')+(sessions.length>1?'':'<p class="session-empty">No other session ledgers found beside this one.</p>');
       document.querySelectorAll('.session-row').forEach(button=>button.onclick=()=>loadSession(button.dataset.session));
       renderBeliefChange(previous,belief,evidence,mission.behavioral_effect,complete);
       renderPipeline(mission.pipeline||{}, complete);
@@ -387,7 +396,12 @@
       $('outcome-note').textContent=verified?'Read from the verified ledger.':`Parsed from ledger step ${outcome.source_step}.`;
     }
     function renderComparison(comparison,context,experiment){
-      if(!comparison){$('compare-panel').hidden=true;return}
+      if(!comparison){
+        $('compare-panel').hidden=true;
+        $('token-caption').textContent='Compiled context is not available yet.';
+        $('token-bar').style.width='0%';
+        return;
+      }
       $('compare-panel').hidden=false;
       const compiled=comparison.compiled_estimated_tokens??context?.total_estimated_tokens;
       const budget=Number(comparison.budget||context?.budget||8000);
@@ -398,7 +412,7 @@
       $('compare-raw').textContent=`${comparison.raw_event_count} events, ${comparison.tool_calls} tool calls.`;
       $('compare-compiled').textContent=compiled==null?'Compiled context is not available yet.':`${selected} memories kept. ${excluded} superseded withheld.`;
       const used=Number(compiled||0);
-      $('token-caption').textContent=`${used.toLocaleString()} / ${budget.toLocaleString()} tokens`;
+      $('token-caption').textContent=`${used.toLocaleString()} tokens`;
       $('token-bar').style.width=`${Math.max(used&&budget? (used/budget)*100 : 0, used?4:0)}%`;
       const notes=[`${comparison.token_count_method||'Estimated at four characters per token'}.`];
       if(Array.isArray(experiment)&&experiment.length){
@@ -444,7 +458,7 @@
       return failures?`${failures} failed`:`${activity.status}${results?` · ${results} result${results===1?'':'s'}`:''}`;
     }
     function isSummary(activity){
-      return new Set(['observation','user_prompt','belief_revision','decision_redirect','failed_approach','blocker','checkpoint','agent_stop']).has(activity.kind)
+      return new Set(['observation','user_prompt','belief_revision','decision_redirect','failed_approach','blocker','checkpoint','agent_stop','context_snapshot']).has(activity.kind)
         || (activity.kind==='tool_activity'&&activity.members.some(r=>/Ran \d+ tests/.test(r.text)));
     }
     function semanticMoments(){
@@ -458,16 +472,29 @@
     }
     function visibleRecords(){
       const query=state.query.toLowerCase();
-      const source=state.mode==='summary'?semanticMoments():buildActivities();
-      return source.filter(a=>(state.mode==='summary'||state.mode==='all'||isSummary(a)||(state.showTools&&a.kind==='tool_activity'))&&(!query||`${a.kind} ${a.text} ${(a.members||[]).map(r=>r.text).join(' ')}`.toLowerCase().includes(query)));
+      let source;
+      if(state.mode==='summary'){
+        const semantic=semanticMoments();
+        const summary=buildActivities().filter(isSummary);
+        source=semantic.length>=3?semantic:[...new Map([...summary,...semantic].map(activity=>[activity.step,activity])).values()].sort((a,b)=>a.step-b.step);
+        if(!source.length) source=buildActivities();
+      }else{
+        source=buildActivities();
+      }
+      return source.filter(a=>!query||`${a.kind} ${a.text} ${(a.members||[]).map(r=>r.text).join(' ')}`.toLowerCase().includes(query));
     }
     function renderTimeline(animateLast=false){
       const rows=visibleRecords();
       const total=buildActivities().length;
       const hidden=Math.max(0,total-rows.length);
-      $('timeline-note').textContent=state.mode==='summary'?'Moments that changed the belief.':'Every grouped activity.';
+      const hasBelief=state.records.some(record=>record.kind==='belief_revision');
+      const heading=document.querySelector('.trace-head h2');
+      if(heading) heading.textContent=hasBelief?'How the understanding changed':'How the work is unfolding';
+      $('timeline-note').textContent=state.mode==='summary'
+        ?(hasBelief?'Moments that changed the belief.':'The record so far, before a belief is written.')
+        :'Every grouped activity.';
       $('show-hidden').textContent=hidden?`${hidden} hidden`:'';
-      if(!rows.length){$('timeline').innerHTML='<div class="loading">No matching moments.</div>';return}
+      if(!rows.length){$('timeline').innerHTML='<div class="loading">The record is still empty.</div>';return}
       $('timeline').innerHTML=rows.map((r,index)=>`<button class="event ${state.selected?.step===r.step?'active':''} ${animateLast&&index===rows.length-1?'pulse':''}" data-step="${r.step}" type="button"><span class="node">${index+1}</span><span class="event-copy"><strong>${esc(activityTitle(r))}</strong><span>${esc(activityText(r))}</span></span>${r.confidence!=null?`<em>${esc(pct(r.confidence))}</em>`:'<span></span>'}<time>${new Date(r.timestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'})}</time><span class="chevron">›</span></button>`).join('');
       document.querySelectorAll('.event').forEach(button=>button.onclick=()=>selectStep(Number(button.dataset.step)));
       updateNav();
@@ -622,7 +649,9 @@
           state.records.push(record); state.pending+=1;
           $('new-events').style.display='inline';
           $('new-events').textContent=`${state.pending} new`;
-          await refreshMission(); renderTimeline(true);
+          await refreshMission();
+          if(!state.selected)selectDefaultMoment();
+          else renderTimeline(true);
           if(state.autoFollow&&isSummary(record)){const t=$('timeline');t.scrollTo({top:t.scrollHeight,behavior:'smooth'})}
           $('connection').textContent='Live';
         }catch(error){
