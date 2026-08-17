@@ -1,57 +1,104 @@
-# BogKit
+<div align="center">
+  <img src="examples/sundew/src/icon.png" width="88" alt="Sundew icon">
+  <h1>Sundew</h1>
+  <p><strong>Live, retractable memory for coding agents.</strong></p>
+  <p>Compile models early. Choose the retrieval goal late.</p>
+</div>
 
-This repo contains some of the tooling we've been working on for building Bog style databases. We've collected these tools and examples in one cargo workspace, so you can start building immediately. 
+![Sundew showing an explain-rationale briefing](examples/sundew/assets/explain-rationale.png)
 
-The best way to create your project is to run this terminal command in the root of this repo:
+Alinery's filesystem is the database. **Sundew is the query engine.** It turns tickets, artifacts, human comments, and wiki pages into a continuously maintained briefing for the next coding agent—then lets a human correct or retract that memory while the system is running.
 
-```console
-$ ./scripts/new-project.sh [project-name]
-``` 
+Built on Bog/Fold for **Bogathon 3** in the **agent support** category.
 
-This creates a new binary crate in `examples/[project-name]`, wires it into the workspace, and adds local path dependencies on `fold`, `anny`, and `ese` (though you may not necessarily use all of these).
+## Why Sundew
 
-Run your project with:
+Coding agents rarely fail because a relevant file does not exist. They fail because the right decision is buried, a rejected idea still ranks highly, or the next session receives more context than it can use.
 
-```console
-$ cargo run -p [project-name]
+Sundew treats agent context as mutable data:
+
+- **Parallel retrieval views:** BM25, ESE 512d, and Potion Code 256d are maintained from one keyed stream.
+- **Goal-conditioned ranking:** the same question can favor implementation evidence or explanatory rationale without mixing incompatible vector spaces.
+- **Live correction:** a human comment is indexed immediately; retracting stale knowledge removes it from every view.
+- **Packed context:** results are fused, policy-weighted, and packed into a 1,800-token next-session seed.
+
+## Live correction, not another prompt patch
+
+The demo begins with a stale wiki decision and an artifact recommending in-memory refresh tokens.
+
+1. **Land comment** inserts the human correction under a stable key.
+2. Bog propagates that positive delta through BM25, both HNSW indexes, the source table, and aggregate counts.
+3. **Retract wiki** emits a negative delta for the stale record. It becomes impossible to retrieve—not merely hidden in the interface.
+4. Sundew reruns the active query against a consistent snapshot, rebuilds the token-budgeted briefing, and broadcasts it to connected browsers.
+
+```text
+human edit
+    ↓
+Fold KeyedStream
+    ├── BM25
+    ├── ESE → HNSW 512d
+    ├── Potion Code → HNSW 256d
+    ├── source table
+    └── kind counts
+             ↓
+weighted reciprocal-rank fusion
+             ↓
+1,800-token agent briefing
 ```
 
-## Documentation
+The model's weights are not edited. Sundew updates the agent's **external, retrievable memory**, so the next retrieval sees the correction everywhere.
 
-The fold crate is internally documented; to view the doc site, run:
+## One question, two retrieval goals
 
-```console
-$ cargo doc --open -pfold 
+Embedding models encode different opinions about similarity. Sundew keeps their views separate and combines ranks with explicit, visible policy.
+
+### Locate implementation
+
+Potion Code receives more weight when the agent needs the executable rule or current implementation.
+
+![Sundew using the locate-implementation retrieval goal](examples/sundew/assets/locate-implementation.png)
+
+### Explain rationale
+
+ESE receives more weight when the agent needs the decision history and the reason behind it.
+
+The accompanying [Parallax experiment](examples/sundew/PARALLAX.md) evaluated this premise on an 879-file Alinery snapshot. Potion Code won 9 of 10 judged query-goal cases, the models chose different top results for 4 of 5 topics, and the faster ESE-to-Potion cascade was rejected because it discarded too many strong Potion results.
+
+## Run it
+
+Requires Rust with edition 2024 support. The first build downloads the embedding-model artifacts.
+
+```bash
+cargo run --locked -p sundew
 ```
 
-## Hackathon submission
+Open [http://localhost:3000](http://localhost:3000), then:
 
-To enter the hackathon: fork this repo, build your project, then open a pull request against upstream. The PR is your official submission acknowledgment — be sure to fill which category you are submitting for in the PR template:
+1. Switch between **Locate implementation** and **Explain rationale**.
+2. Click **Replay** to land the correction and retract the stale wiki.
+3. Open **Full briefing** to inspect the packed context.
+4. Use **Copy briefing** to copy the next-session seed.
 
-- agent support
-- performance
-- novel interface / gaming
+CLI modes are available for a quick check:
 
-Fill out the rest of the template (team, description, how to run) and you're good.
+```bash
+cargo run --locked -p sundew -- --probe "how should we store refresh tokens?"
+cargo run --locked -p sundew -- --script
+```
 
-## In this workspace
+Set `SUNDEW_PORT` to override port 3000.
 
-### Fold
-Fold is our take on an incremental programming framework, it's the engine that powers Bog. It’s a rust crate with iterator like primitives for materializing a stream of ever changing data into views. Statically typed and very, very fast.
+## What is real today
 
-### Embedded Static Embeddings (ESE)
-ESE, our first take on a compiler oriented approach to static embedding. It’s a flattening of a tokenizer and map of embeddings into a perfect hash function. It’s also evidence that the approach is worth generalizing, and that there is much to be rethought about how embedding runtimes currently function.
+The indexing, multi-model retrieval, retraction, rank fusion, token packing, and WebSocket updates are live. The hackathon UI currently seeds a small set of Alinery-shaped fixtures so the correction sequence is deterministic. A production Alinery sidecar would feed the same keyed record shape from `.alinery/` and `docs/wiki/` while keeping files as the source of truth.
 
-### Approximate Nearest Neighbors... yeah (ANNy)
-This is a very fast crate for creating HNSWs.
+## Built with BogKit
 
-### Examples
-In this directory you'll find a few examples that show bog style databases in various use cases.
+- **Fold** — incremental, transactional materialized views and retractions.
+- **ESE** — compiled static embeddings for fast general retrieval.
+- **ANNy** — retractable HNSW approximate-nearest-neighbor indexes.
+- **Potion Code** — a second, code-oriented embedding view used by Parallax and Sundew.
 
-- `starter` — the smallest possible fold database: a persistent count and bag, with inserts, reads, and retraction. `cargo run -p starter`
-- `timeseries` — weather readings bucketed into hourly and daily aggregates, updated incrementally. `cargo run -p timeseries`
-- `chat` — a chat backend where fold is the source of truth and every update is broadcast to clients over a websocket. `cargo run -p chat`, then open http://localhost:3000
-- `search` — text search three ways over one document stream: BM25 keyword search, HNSW semantic search over ese embeddings, and hybrid rank fusion. A good base for agent memory or document search projects. `cargo run -p search`
+## Team
 
-## More about Bog
-Bog is a database runtime that makes every attempt to do as much work as possible as early as possible, to make reads incredibly fast. This means compiling queries into functions that eagerly update their output as mutations occur.
+Matthew Ball (`matthewrball`) · Dustin Dannenhauer (`dtdannen`)
