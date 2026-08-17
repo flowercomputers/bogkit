@@ -3028,10 +3028,9 @@ dependencies = [
 name = "tinymo"
 version = "0.0.0"
 dependencies = [
- "anny",
- "ese",
  "fold",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
