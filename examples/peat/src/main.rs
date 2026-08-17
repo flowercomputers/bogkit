@@ -191,12 +191,12 @@ fn main() {
                     }
                     if waited >= wait_max_ms {
                         restore();
-                        eprintln!(
-                            "peat: ledger still locked after {}s — another peat \
+                        ui::error(&format!(
+                            "ledger still locked after {}s — another peat \
 process holds it (reads are exclusive too; a bulk capture can hold it for \
 minutes). Retry shortly, or raise PEAT_LOCK_WAIT_SECS.",
                             wait_max_ms / 1000
-                        );
+                        ));
                         std::process::exit(75); // EX_TEMPFAIL
                     }
                     if waited == 0 && !ui::fancy_err() {
@@ -226,11 +226,11 @@ minutes). Retry shortly, or raise PEAT_LOCK_WAIT_SECS.",
             final_msg,
         } => {
             let Ok(jsonl) = std::fs::read_to_string(&transcript) else {
-                eprintln!("peat: cannot read {}", transcript.display());
+                ui::error(&format!("cannot read {}", transcript.display()));
                 std::process::exit(1);
             };
             let Some(mut parsed) = transcript::parse(&jsonl, session.as_deref()) else {
-                eprintln!("peat: no session id found; pass --session");
+                ui::error("no session id found; pass --session");
                 std::process::exit(1);
             };
             // hook-provided closing message is authoritative over tail parsing
@@ -260,7 +260,10 @@ minutes). Retry shortly, or raise PEAT_LOCK_WAIT_SECS.",
             // bulk backfill dominates brief latency
             st.checkpoint();
             phase.done();
-            eprintln!("peat: captured {n} events from session {}", parsed.session);
+            ui::note(&format!(
+                "captured {n} events from session {}",
+                parsed.session
+            ));
         }
 
         Cli::Obs {
@@ -275,7 +278,7 @@ minutes). Retry shortly, or raise PEAT_LOCK_WAIT_SECS.",
                 Some(d) => match transcript::iso_to_ms(&format!("{d}T12:00:00.000Z")) {
                     Some(utc) => (utc as i64 - local_offset_ms()) as u64,
                     None => {
-                        eprintln!("peat: bad --at date {d:?}; expected YYYY-MM-DD");
+                        ui::error(&format!("bad --at date {d:?}; expected YYYY-MM-DD"));
                         std::process::exit(1);
                     }
                 },
@@ -293,9 +296,9 @@ minutes). Retry shortly, or raise PEAT_LOCK_WAIT_SECS.",
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| {
-                    eprintln!(
-                        "peat: no session id (.peat/current-session missing here and \
-beside the shared db); pass --session"
+                    ui::error(
+                        "no session id (.peat/current-session missing here and \
+beside the shared db); pass --session",
                     );
                     std::process::exit(1);
                 });
@@ -312,7 +315,7 @@ beside the shared db); pass --session"
                     .collect()
             });
             if !near.is_empty() {
-                eprintln!("near subjects: {}", near.join(" · "));
+                ui::note(&format!("near subjects: {}", near.join(" · ")));
             }
 
             // first free obs seq for this session
@@ -339,7 +342,7 @@ beside the shared db); pass --session"
                     .unwrap_or(1)
             });
             st.checkpoint();
-            eprintln!("recorded → {subject} (support {count})");
+            ui::note(&format!("recorded → {subject} (support {count})"));
         }
 
         Cli::Brief { task, json } => {
@@ -400,17 +403,25 @@ beside the shared db); pass --session"
                         .unwrap()
                     );
                 } else if rows.is_empty() {
-                    println!("no such subject: {subj}");
+                    println!("{}", ui::dim(&format!("no such subject: {subj}")));
                 } else {
                     if let Some(h) = head {
-                        println!("{subj} — {} ({} obs)", h.text, h.count);
+                        println!(
+                            "{} — {} {}",
+                            ui::accent(&subj),
+                            h.text,
+                            ui::dim(&format!("({} obs)", h.count))
+                        );
                     }
                     for r in rows {
                         println!(
-                            "  [{} · {}{}] {}",
-                            short_sess(&r.session),
-                            age_label(now, r.ts_ms),
-                            if r.derived_from.is_empty() { "" } else { " · cited" },
+                            "  {} {}",
+                            ui::dim(&format!(
+                                "[{} · {}{}]",
+                                short_sess(&r.session),
+                                age_label(now, r.ts_ms),
+                                if r.derived_from.is_empty() { "" } else { " · cited" }
+                            )),
                             r.text
                         );
                     }
@@ -419,7 +430,7 @@ beside the shared db); pass --session"
             }
             let query = query.join(" ");
             if query.trim().is_empty() {
-                eprintln!("peat: recall needs a query (or --subject)");
+                ui::error("recall needs a query (or --subject)");
                 std::process::exit(1);
             }
             let cutoff_ms = since.map(|d| now.saturating_sub(d * DAY_MS));
@@ -470,14 +481,17 @@ beside the shared db); pass --session"
             if json {
                 println!("{}", serde_json::to_string_pretty(&hits).unwrap());
             } else if hits.is_empty() {
-                println!("no hits for {query:?}");
+                println!("{}", ui::dim(&format!("no hits for {query:?}")));
             } else {
                 for h in &hits {
                     println!(
-                        "  [{}{} · {}] {}",
-                        h["kind"].as_str().unwrap_or("?"),
-                        if h["kind"] == "obs" && h["cited"] == true { "·cited" } else { "" },
-                        h["age"].as_str().unwrap_or(""),
+                        "  {} {}",
+                        ui::dim(&format!(
+                            "[{}{} · {}]",
+                            h["kind"].as_str().unwrap_or("?"),
+                            if h["kind"] == "obs" && h["cited"] == true { "·cited" } else { "" },
+                            h["age"].as_str().unwrap_or("")
+                        )),
                         clip(h["text"].as_str().unwrap_or(""), 220),
                     );
                 }
@@ -501,14 +515,18 @@ beside the shared db); pass --session"
                     .collect();
                 println!("{}", serde_json::to_string_pretty(&rows).unwrap());
             } else if subj.is_empty() {
-                println!("no subjects yet");
+                println!("{}", ui::dim("no subjects yet"));
             } else {
                 for (name, s) in subj {
                     println!(
-                        "  {name} ({} obs{}, {}): {}",
-                        s.count,
-                        if s.cited { "" } else { ", uncited" },
-                        age_label(now, s.last_ms),
+                        "  {} {} {}",
+                        ui::accent(&name),
+                        ui::dim(&format!(
+                            "({} obs{}, {}):",
+                            s.count,
+                            if s.cited { "" } else { ", uncited" },
+                            age_label(now, s.last_ms)
+                        )),
                         clip(&s.text, 140)
                     );
                 }
@@ -543,18 +561,25 @@ beside the shared db); pass --session"
             let (hit, citing) = found;
             match hit {
                 None => {
-                    eprintln!("no event ({session}*, {seq})");
+                    ui::error(&format!("no event ({session}*, {seq})"));
                     std::process::exit(1);
                 }
                 Some(((sess, q), env)) => {
                     println!(
-                        "event ({sess}, {q}) · {} · v{}",
-                        age_label(now, env.ts_ms),
-                        env.v
+                        "{} {}",
+                        ui::h1(&format!("event ({sess}, {q})")),
+                        ui::dim(&format!("· {} · v{}", age_label(now, env.ts_ms), env.v))
                     );
                     println!("{}", serde_json::to_string_pretty(&env.kind).unwrap());
                     for (subj, r) in citing {
-                        println!("cited by obs [{subj} · {}]: {}", age_label(now, r.ts_ms), r.text);
+                        println!(
+                            "{} {}",
+                            ui::dim(&format!(
+                                "cited by obs [{subj} · {}]:",
+                                age_label(now, r.ts_ms)
+                            )),
+                            r.text
+                        );
                     }
                 }
             }
@@ -567,7 +592,7 @@ beside the shared db); pass --session"
             let Some(cutoff) = transcript::iso_to_ms(&format!("{date}T23:59:59.999Z"))
                 .map(|utc| (utc as i64 - local_offset_ms()) as u64)
             else {
-                eprintln!("peat: bad date {date:?}; expected YYYY-MM-DD");
+                ui::error(&format!("bad date {date:?}; expected YYYY-MM-DD"));
                 std::process::exit(1);
             };
             // the ledger mirror is what makes this possible: read every
@@ -612,11 +637,11 @@ beside the shared db); pass --session"
             );
             brief.today = format!("{date} · as of that day · {} events", events.len());
             if events.is_empty() {
-                eprintln!(
-                    "peat: no events at or before {date} — either this ledger's \
+                ui::note(&format!(
+                    "no events at or before {date} — either this ledger's \
 history starts later, or the db predates the ledger mirror \
 (re-run `peat capture` on the transcripts to backfill it)"
-                );
+                ));
             }
             if json {
                 println!("{}", serde_json::to_string_pretty(&brief).unwrap());

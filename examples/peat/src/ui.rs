@@ -89,19 +89,56 @@ impl Drop for Phase {
     }
 }
 
+// ---- the one style vocabulary, shared by every verb ----
+//
+// Four roles, used identically in the brief template and in direct verb
+// output: `h1` bold headers · `accent` cyan identities (subjects, session
+// ids) · `dim` receded metadata (tags, parentheticals, receipts) · `warn`
+// red distrust signals (uncited, failures, errors). All identity when the
+// target stream is not a terminal.
+
+fn paint(on: bool, f: fn(console::Style) -> console::Style, s: &str) -> String {
+    if on {
+        f(console::Style::new()).apply_to(s).to_string()
+    } else {
+        s.to_string()
+    }
+}
+
+/// Bold header, stdout.
+pub fn h1(s: &str) -> String {
+    paint(fancy_out(), |c| c.bold(), s)
+}
+/// Cyan identity (subject, session), stdout.
+pub fn accent(s: &str) -> String {
+    paint(fancy_out(), |c| c.cyan(), s)
+}
+/// Dim metadata, stdout.
+pub fn dim(s: &str) -> String {
+    paint(fancy_out(), |c| c.dim(), s)
+}
+/// Red distrust signal, stdout.
+pub fn warn(s: &str) -> String {
+    paint(fancy_out(), |c| c.red(), s)
+}
+
+/// Dim receipt line on stderr (`peat: captured 161 events …`).
+pub fn note(msg: &str) {
+    eprintln!("{}", paint(fancy_err(), |c| c.dim(), msg));
+}
+
+/// Error line on stderr: the `peat:` prefix in red, message plain.
+pub fn error(msg: &str) {
+    eprintln!("{} {msg}", paint(fancy_err(), |c| c.red(), "peat:"));
+}
+
 /// Register the style filters the brief template may use. Identity unless
 /// stdout is a terminal, so templated output under hooks, tests, and pipes
 /// is byte-for-byte what the template says.
 pub fn add_style_filters(env: &mut minijinja::Environment<'_>) {
     let on = fancy_out();
     let style = move |f: fn(console::Style) -> console::Style| {
-        move |s: String| -> String {
-            if on {
-                f(console::Style::new()).apply_to(&s).to_string()
-            } else {
-                s
-            }
-        }
+        move |s: String| -> String { paint(on, f, &s) }
     };
     env.add_filter("h1", style(|s| s.bold()));
     env.add_filter("dim", style(|s| s.dim()));
