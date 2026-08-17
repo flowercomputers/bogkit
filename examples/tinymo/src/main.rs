@@ -148,6 +148,8 @@ struct Db<'a> {
     session_moves: Box<dyn Fn(u64) -> Vec<Move> + 'a>,
     session_count: Box<dyn Fn(u64) -> i64 + 'a>,
     max_session: Box<dyn Fn() -> Option<u64> + 'a>,
+    /// print what bog holds right now (one consistent snapshot of all views)
+    dump: Box<dyn Fn(Option<u64>) + 'a>,
 }
 
 fn main() {
@@ -162,9 +164,9 @@ fn main() {
                 .unwrap_or(5);
             Mode::Boomerang { limit }
         }
-        Some("record") | None => Mode::Record,
+        Some("record") | Some("inspect") | None => Mode::Record,
         Some(other) => {
-            eprintln!("unknown mode {other:?}; use `record` or `boomerang --limit N`");
+            eprintln!("unknown mode {other:?}; use `record`, `boomerang --limit N`, or `inspect`");
             std::process::exit(2);
         }
     };
@@ -222,8 +224,44 @@ fn main() {
             st.borrow()
                 .rtx(|(_, _, per_session)| per_session.iter().map(|(s, _): (u64, i64)| s).max())
         }),
+        dump: Box::new(|focus: Option<u64>| {
+            // everything below is read back from fold's persisted views in one
+            // read transaction — nothing here comes from in-memory state
+            st.borrow().rtx(|(count, log, per_session)| {
+                let mut sessions: Vec<(u64, i64)> = per_session.iter().collect();
+                sessions.sort();
+                let sess_str: Vec<String> =
+                    sessions.iter().map(|(s, n)| format!("s{s}:{n}")).collect();
+                println!(
+                    "    bog ▸ Count[moves_total]={}  Table[moves_per_session]={{{}}}",
+                    count.get(),
+                    sess_str.join(" ")
+                );
+                let mut moves: Vec<Move> = log
+                    .iter()
+                    .filter(|(m, _): &(Move, i64)| focus.is_none_or(|f| m.session == f))
+                    .map(|(m, _)| m)
+                    .collect();
+                moves.sort_by_key(|m| (m.session, m.seq));
+                let what = match focus {
+                    Some(f) => format!("session {f}"),
+                    None => "all sessions".to_string(),
+                };
+                println!("    bog ▸ Bag[moves] {what}: {} rows", moves.len());
+                for m in moves {
+                    println!(
+                        "         s{} #{} {:<12} L={:+4} R={:+4} {:>5}ms",
+                        m.session, m.seq, m.label, m.left, m.right, m.duration_ms
+                    );
+                }
+            })
+        }),
     };
     let last_session = (db.max_session)();
+    if args.first().map(String::as_str) == Some("inspect") {
+        (db.dump)(None);
+        return;
+    }
     println!("tinymo brain [{mode:?}] db={}", db_path.display());
     println!(
         "  bog has {total} moves across {} sessions",
@@ -346,12 +384,15 @@ fn serve_driver(conn: TcpStream, mode: Mode, db: &mut Db<'_>) -> std::io::Result
         {
             // held key: same move, longer — retract + reinsert in bog
             (db.replace)(prev, &ext);
-            println!("  session {session}: {} extended to {}ms", ext.label, ext.duration_ms);
+            println!("  session {session}: {} extended to {}ms  (bog: -old +new)", ext.label, ext.duration_ms);
+            (db.dump)(Some(session));
             *open = Some(ext);
             return None;
         }
         *seq += 1;
         (db.insert)(&m);
+        println!("  session {session}: +{} (bog: insert)", m.label);
+        (db.dump)(Some(session));
         *open = Some(m);
         Some((db.session_count)(session))
     };

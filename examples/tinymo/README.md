@@ -48,6 +48,17 @@ Keys: `W/S A/D` or arrows drive, `Q/E` curve, `1-9` speed, `R` record on/off, `P
 `L` LED, `B` beep, `X` quit. LED: green = idle, red = recording, blue = brain is driving
 (keys locked), orange = boomerang armed.
 
+## Seeing bog do the work
+
+After every write the brain prints a snapshot read back from fold's persisted views (not
+from memory): the `Count`, the per-session `Table`, and the session's rows in the `Bag`.
+Extending a held-key move shows up as `-old +new` with the count unchanged. To prove the
+state is on disk, stop everything and run:
+
+```sh
+cargo run -p tinymo -- inspect     # dumps every view from the db, no driver needed
+```
+
 ## Tests
 
 ```sh
