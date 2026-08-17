@@ -112,6 +112,56 @@ pub fn sync_with<E: Engine, L: LogStore>(
     result
 }
 
+/// A bound sync listener. Owns **no replica** — hosts embedding sod in a
+/// live server accept on a dedicated thread and borrow the replica only
+/// per session (sessions are milliseconds), so writes and syncs interleave
+/// on one lock without ever holding it while idle.
+pub struct SyncListener {
+    listener: TcpListener,
+}
+
+impl SyncListener {
+    /// Bind `addr` (e.g. `127.0.0.1:7300`, or port `0` for ephemeral).
+    pub fn bind(addr: &str) -> Result<Self, SodError> {
+        Ok(SyncListener {
+            listener: TcpListener::bind(addr).map_err(io_err)?,
+        })
+    }
+
+    /// The actually-bound address (resolves port `0`).
+    pub fn local_addr(&self) -> Result<std::net::SocketAddr, SodError> {
+        self.listener.local_addr().map_err(io_err)
+    }
+
+    /// Block until a peer connects **and** completes the websocket
+    /// handshake. Still owns no replica.
+    pub fn accept(&self) -> Result<IncomingSession, SodError> {
+        let (stream, _addr) = self.listener.accept().map_err(io_err)?;
+        let sock = tungstenite::accept(stream)
+            .map_err(|e| SodError::Io(format!("websocket handshake failed: {e}")))?;
+        Ok(IncomingSession { sock })
+    }
+}
+
+/// A handshaken inbound connection, waiting for its session to run.
+pub struct IncomingSession {
+    sock: WebSocket<TcpStream>,
+}
+
+impl IncomingSession {
+    /// Run the whole session as responder; the replica is borrowed only
+    /// for this call. Closes the socket on exit either way.
+    pub fn run<E: Engine, L: LogStore>(
+        mut self,
+        r: &mut Replica<E, L>,
+        schema: u32,
+    ) -> Result<SyncReport, SodError> {
+        let result = run_session(&mut self.sock, r, schema, false);
+        let _ = self.sock.close(None);
+        result
+    }
+}
+
 /// Accept sync sessions on `addr` (e.g. `127.0.0.1:7171`), one at a time.
 ///
 /// With `max_sessions: Some(n)` returns after `n` **completed** sessions
@@ -119,19 +169,23 @@ pub fn sync_with<E: Engine, L: LogStore>(
 /// and failed sessions are logged to stderr and do not count — a stray TCP
 /// probe must not use up a one-shot serve. Per-origin refusals recorded by
 /// completed sessions are logged to stderr.
+///
+/// This holds `r` exclusively for the whole loop; hosts that also take
+/// writes should use [`SyncListener`] directly instead.
 pub fn serve<E: Engine, L: LogStore>(
     addr: &str,
     r: &mut Replica<E, L>,
     schema: u32,
     max_sessions: Option<usize>,
 ) -> Result<(), SodError> {
-    let listener = TcpListener::bind(addr).map_err(io_err)?;
+    let listener = SyncListener::bind(addr)?;
     let mut done = 0usize;
-    for stream in listener.incoming() {
-        let stream: TcpStream = stream.map_err(io_err)?;
-        match tungstenite::accept(stream) {
-            Ok(mut sock) => {
-                match run_session(&mut sock, r, schema, false) {
+    let mut consecutive_accept_errors = 0usize;
+    loop {
+        match listener.accept() {
+            Ok(incoming) => {
+                consecutive_accept_errors = 0;
+                match incoming.run(r, schema) {
                     Ok(report) => {
                         for s in &report.skipped {
                             eprintln!("sod: refused during sync: {s}");
@@ -140,13 +194,19 @@ pub fn serve<E: Engine, L: LogStore>(
                     }
                     Err(e) => eprintln!("sod: sync session failed: {e}"),
                 }
-                let _ = sock.close(None);
             }
-            Err(e) => eprintln!("sod: websocket handshake failed: {e}"),
+            Err(e) => {
+                // failed handshakes (stray probes) must not stop serving,
+                // but a persistently broken listener must not spin forever
+                eprintln!("sod: {e}");
+                consecutive_accept_errors += 1;
+                if consecutive_accept_errors >= 32 {
+                    return Err(e);
+                }
+            }
         }
         if Some(done) == max_sessions {
-            break;
+            return Ok(());
         }
     }
-    Ok(())
 }

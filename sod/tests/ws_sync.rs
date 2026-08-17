@@ -54,6 +54,49 @@ fn two_processes_converge() {
     assert_eq!(server.engine().count(b"dialed"), -1);
 }
 
+#[test]
+fn listener_idles_without_replica_lock() {
+    use sod::transport::ws::SyncListener;
+
+    // Bind a listener that owns no replica. While it idles waiting for a
+    // connection, the replica is fully available for writes — this is the
+    // embedding contract for live servers.
+    let listener = SyncListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let mut server = replica(5);
+    for i in 0..100u64 {
+        // listener already bound and idle; writes need no coordination
+        server.commit(vec![(i.to_be_bytes().to_vec(), 1)], i).unwrap();
+    }
+
+    // Hand the replica to the accept thread only now; it borrows the
+    // replica per session.
+    let handle = std::thread::spawn(move || {
+        let incoming = listener.accept().unwrap();
+        let report = incoming.run(&mut server, SCHEMA).unwrap();
+        (server, report)
+    });
+
+    let mut client = replica(6);
+    client.commit(vec![(b"from client".to_vec(), 1)], 7).unwrap();
+    let mut attempts = 0;
+    loop {
+        match sync_with(&format!("ws://{addr}"), &mut client, SCHEMA) {
+            Ok(_) => break,
+            Err(e) => {
+                attempts += 1;
+                assert!(attempts < 50, "could not sync: {e}");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+    }
+    let (server, report) = handle.join().unwrap();
+    assert_eq!(report.peer, ReplicaId([6; 16]));
+    assert_eq!(client.vector(), server.vector());
+    assert_eq!(client.engine().view_bytes(), server.engine().view_bytes());
+}
+
 const ADDR2: &str = "127.0.0.1:47164";
 
 #[test]
