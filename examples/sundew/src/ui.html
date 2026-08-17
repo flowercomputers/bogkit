@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="color-scheme" content="dark light" />
 <title>Sundew</title>
+<link rel="icon" type="image/png" href="/favicon.png" />
 <style>
   /* Tokens and type from Alinery DESIGN.md + alinery-app/src/theme.css.
      Sundew is still one HTML page — no Tauri, kanban, or Alinery chrome. */
@@ -71,6 +72,15 @@
     gap: 16px; padding: 0 16px;
     border-bottom: 1px solid var(--border);
     background: var(--canvas);
+  }
+  header .brand { display: flex; align-items: center; gap: 12px; min-width: 0 }
+  header .mark {
+    width: 32px; height: 32px; flex-shrink: 0;
+    border-radius: 8px; overflow: hidden; background: var(--accent-base);
+  }
+  header .mark img {
+    width: 118%; height: 118%; margin: -9%;
+    display: block; object-fit: cover;
   }
   header h1 {
     margin: 0; font: 600 20px/1.1 var(--font-ui);
@@ -207,9 +217,12 @@
 </head>
 <body>
 <header>
-  <div>
-    <h1>Sundew</h1>
-    <p class="lede">Alinery’s filesystem is the database. Sundew is the query engine.</p>
+  <div class="brand">
+    <div class="mark"><img src="/icon.png" width="32" height="32" alt="" /></div>
+    <div>
+      <h1>Sundew</h1>
+      <p class="lede">Alinery’s filesystem is the database. Sundew is the query engine.</p>
+    </div>
   </div>
   <div class="tools">
     <button id="stage" type="button" aria-pressed="false">Full briefing</button>

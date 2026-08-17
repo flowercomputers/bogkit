@@ -22,7 +22,8 @@ use axum::{
     Router,
     extract::State,
     extract::ws::{Message, WebSocket, WebSocketUpgrade},
-    response::Html,
+    http::header,
+    response::{Html, IntoResponse},
     routing::get,
 };
 use fold::pipeline::{Aggregate, KeyBy, Keyed, Map, Scored, Unkey, terminal};
@@ -707,6 +708,8 @@ fn seed_chunks() -> Vec<Chunk> {
 async fn serve_http(tx: mpsc::Sender<Ingest>, state_rx: watch::Receiver<Snapshot>) {
     let app = Router::new()
         .route("/", get(index))
+        .route("/icon.png", get(icon_png))
+        .route("/favicon.png", get(favicon_png))
         .route("/ws", get(ws_upgrade))
         .with_state((tx, state_rx));
 
@@ -772,4 +775,22 @@ async fn handle_socket(mut socket: WebSocket, (tx, mut state_rx): AppState) {
 
 async fn index() -> Html<&'static str> {
     Html(include_str!("ui.html"))
+}
+
+fn png(bytes: &'static [u8]) -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "image/png"),
+            (header::CACHE_CONTROL, "public, max-age=86400"),
+        ],
+        bytes,
+    )
+}
+
+async fn icon_png() -> impl IntoResponse {
+    png(include_bytes!("icon.png"))
+}
+
+async fn favicon_png() -> impl IntoResponse {
+    png(include_bytes!("favicon.png"))
 }
