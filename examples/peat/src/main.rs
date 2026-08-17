@@ -59,6 +59,10 @@ enum Cli {
         from: Vec<u32>,
         #[arg(long)]
         session: Option<String>,
+        /// Backdate the observation to noon of this day (YYYY-MM-DD) —
+        /// retroactive annotation; asof briefs for that day will carry it
+        #[arg(long)]
+        at: Option<String>,
     },
     /// Print a session-start orientation (stdout is injected as context)
     Brief {
@@ -241,7 +245,18 @@ minutes). Retry shortly, or raise PEAT_LOCK_WAIT_SECS.",
             text,
             from,
             session,
+            at,
         } => {
+            let ts = match &at {
+                None => now_ms(),
+                Some(d) => match transcript::iso_to_ms(&format!("{d}T12:00:00.000Z")) {
+                    Some(utc) => (utc as i64 - local_offset_ms()) as u64,
+                    None => {
+                        eprintln!("peat: bad --at date {d:?}; expected YYYY-MM-DD");
+                        std::process::exit(1);
+                    }
+                },
+            };
             let text = text.join(" ");
             // resolve the session id: this worktree's .peat first, then the
             // shared store's anchor (a desk is not the anchor — PEAT_DB's
@@ -284,7 +299,7 @@ beside the shared db); pass --session"
             }
             let env = Envelope::new(
                 &session,
-                now_ms(),
+                ts,
                 Event::Obs {
                     subject: subject.clone(),
                     text,
