@@ -118,7 +118,14 @@ fn main() {
     // Shared-db concurrency: fold is single-writer, and with several
     // worktree agents pointing PEAT_DB at one database, hook invocations
     // can collide. Peat processes are short-lived, so waiting is correct:
-    // retry the open with backoff for up to ~45s before giving up.
+    // retry the open with backoff (default 120s, PEAT_LOCK_WAIT_SECS to
+    // change) and give up with a message, never a raw panic — a bulk
+    // capture can legitimately hold the lock for minutes.
+    let wait_max_ms: u64 = std::env::var("PEAT_LOCK_WAIT_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(120u64)
+        * 1000;
     let mut st = {
         let phase = ui::Phase::new("opening ledger");
         let mut delay_ms = 200u64;
@@ -128,20 +135,28 @@ fn main() {
                 KeyedStream::<EventId, Envelope, _>::new(db_path(), peat_pipeline!())
             }) {
                 Ok(st) => break st,
-                Err(_) if waited < 45_000 => {
+                Err(_) if waited < wait_max_ms => {
                     if waited == 0 && !ui::fancy_err() {
                         // non-tty gets one plain line instead of a spinner
                         eprintln!("peat: db busy (another agent writing); waiting…");
                     }
                     phase.tick(format!(
-                        "ledger busy — another writer · waiting {}s (gives up at 45s)",
-                        waited / 1000
+                        "ledger busy — another writer · waiting {}s (gives up at {}s)",
+                        waited / 1000,
+                        wait_max_ms / 1000
                     ));
                     std::thread::sleep(std::time::Duration::from_millis(delay_ms));
                     waited += delay_ms;
                     delay_ms = (delay_ms * 2).min(3_000);
                 }
-                Err(p) => std::panic::resume_unwind(p),
+                Err(_) => {
+                    eprintln!(
+                        "peat: ledger still locked after {}s — another process is \
+writing (a bulk capture?). Retry shortly, or raise PEAT_LOCK_WAIT_SECS.",
+                        wait_max_ms / 1000
+                    );
+                    std::process::exit(75); // EX_TEMPFAIL
+                }
             }
         };
         phase.done();
@@ -199,13 +214,21 @@ fn main() {
             session,
         } => {
             let text = text.join(" ");
+            // resolve the session id: this worktree's .peat first, then the
+            // shared store's anchor (a desk is not the anchor — PEAT_DB's
+            // parent dir holds the file when hooks wrote it there)
             let session = session
                 .or_else(|| std::fs::read_to_string(peat_dir().join("current-session")).ok())
+                .or_else(|| {
+                    let anchor = db_path().parent()?.join("current-session");
+                    std::fs::read_to_string(anchor).ok()
+                })
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| {
                     eprintln!(
-                        "peat: no session id (.peat/current-session missing); pass --session"
+                        "peat: no session id (.peat/current-session missing here and \
+beside the shared db); pass --session"
                     );
                     std::process::exit(1);
                 });
