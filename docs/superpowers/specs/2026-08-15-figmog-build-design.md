@@ -884,7 +884,19 @@ opened stays open for the process lifetime); CLI multi-file addressing.
   with `--from-file`-shaped… (network-free e2e: `figmog_open` is
   network-only; e2e covers its isError on missing token instead).
 
-## 15. v5: the remote upstream (mcp.figma.com)
+## 15. v5: the remote upstream (mcp.figma.com) — BLOCKED (2026-08-16)
+
+> **Status: blocked by Figma policy, not engineering.** Verified via
+> Figma community threads: (a) personal/plan access tokens are rejected
+> at mcp.figma.com — OAuth is the only auth; (b) remote-MCP access is
+> allowlisted to clients in Figma's MCP Catalog (VS Code, Cursor, Claude
+> Code, Codex) — custom clients cannot request the `mcp:connect` scope
+> and dynamic client registration returns 403. figmog therefore cannot
+> authenticate as itself, and impersonating a catalog client's identity
+> would circumvent Figma's access control — out of the question. The
+> design below stands ready if Figma ever opens DCR/PAT auth; until
+> then the desktop server is the only proxyable upstream, and remote-only
+> capabilities are candidates for native REST-backed equivalents instead.
 
 A second upstream flavor alongside the desktop server. The remote server
 is a better proxy citizen than desktop — its tools take explicit
