@@ -883,3 +883,62 @@ opened stays open for the process lifetime); CLI multi-file addressing.
   errors when two mirrors exist and no default was given, `figmog_open`
   with `--from-file`-shaped… (network-free e2e: `figmog_open` is
   network-only; e2e covers its isError on missing token instead).
+
+## 15. v5: the remote upstream (mcp.figma.com)
+
+A second upstream flavor alongside the desktop server. The remote server
+is a better proxy citizen than desktop — its tools take explicit
+URLs/nodeIds per call (no selection), so proxied tools route per-file
+like the local ones, erasing §12's open-file caveat — and it adds
+remote-only tools (search_design_system, use_figma, whoami,
+download_assets, generate_diagram, …). Its calls cost Tier-1-equivalent
+per-minute budget on paid seats (6/month on Starter → effectively
+paid-seat-only, consistent with the design center), which makes the
+version-keyed cache genuinely valuable.
+
+### Auth (the whole cost)
+
+MCP OAuth, std-only:
+- Discovery: on 401, read `WWW-Authenticate` /
+  `/.well-known/oauth-protected-resource`, then the authorization
+  server's metadata (`/.well-known/oauth-authorization-server`).
+- Dynamic client registration at the advertised registration endpoint
+  (public client, PKCE).
+- Browser flow: local `TcpListener` on an ephemeral port serves the
+  redirect; `open`/`xdg-open` launches the authorization URL; PKCE
+  verifier from `/dev/urandom`, S256 challenge via a vendored ~100-line
+  SHA-256 (well-known constants; unit-tested against published test
+  vectors). State parameter checked.
+- Tokens persisted at `<figmog-root>/auth.json` (0600), refresh-token
+  flow on 401/expiry; failures degrade to "remote upstream
+  unauthenticated" status (local tools unaffected).
+
+### Surface
+
+- `--upstream` accepts the remote URL; `--remote` sugar for
+  `--upstream https://mcp.figma.com/mcp`. Desktop and remote are the
+  same `UpstreamMcp` path — the OAuth layer is an `HttpUpstream`
+  concern activated when a request meets a 401 challenge (desktop never
+  does). `figmog login` CLI command runs the flow standalone;
+  `figmog serve` triggers it lazily on first challenged request
+  (browser opens once; stderr explains).
+- Registry/routing/caching per §12 unchanged; remote tool descriptions
+  prefixed "[via Figma remote] ". Cacheable rule unchanged (get_/list_
+  + explicit node id) — remote's URL-addressed args satisfy it
+  naturally; `use_figma`/creates are writes (uncached, meta-poll
+  trigger).
+- `figmog_status.upstream` distinguishes `connected (desktop)` /
+  `connected (remote)` / `unauthenticated (remote)` / `unreachable` /
+  `disabled`.
+
+### Non-goals (v5)
+
+Multiple simultaneous upstreams (one at a time via --upstream); token
+encryption beyond file permissions; headless/device-code auth flows.
+
+### Testing
+
+SHA-256 against FIPS test vectors; PKCE challenge known-answer test;
+OAuth state machine against a scripted in-process HTTP fake (challenge →
+discovery → registration → token exchange → authenticated retry →
+refresh-on-401); no live-network tests (manual live check documented).
