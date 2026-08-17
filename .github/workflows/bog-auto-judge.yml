@@ -1,0 +1,32 @@
+name: bog-auto-judge
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+# Only one judge run per PR at a time; new pushes cancel stale runs
+concurrency:
+  group: bog-auto-judge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  judge:
+    runs-on: ubuntu-latest
+    steps:
+      # SECURITY: this workflow runs with pull_request_target, which has repo
+      # secrets. It must never check out or execute code from the fork —
+      # the judge script reads the PR diff via the GitHub API only.
+      - name: Checkout base repo (judge script only)
+        uses: actions/checkout@v4
+
+      - name: Run bog-auto-judge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: bash .github/scripts/bog-auto-judge.sh
