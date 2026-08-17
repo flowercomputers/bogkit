@@ -7,128 +7,163 @@
 <style>
   :root { --plate:#181410; --panel:#221c15; --line:#3a3226; --amber:#E5B54B; --dim:#8D7B4F; --ink:#d8d2c4; --crim:#E0554A; --moss:#7da184; }
   * { box-sizing:border-box; }
-  body { margin:0; background:var(--plate); color:var(--ink); font-family:ui-monospace,Menlo,monospace; padding:34px 44px 40px; }
-  h1 { font-size:15px; font-weight:normal; letter-spacing:.28em; color:var(--amber); margin:0; text-transform:uppercase; }
-  .sub { font-size:10.5px; color:var(--dim); margin:6px 0 26px; letter-spacing:.06em; }
-  .sub a { color:var(--dim); }
-  .grid { display:grid; grid-template-columns:1.35fr 1fr; gap:18px; }
-  .panel { background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:16px 18px; }
-  .panel h2 { font-size:9.5px; letter-spacing:.22em; color:var(--dim); margin:0 0 14px; font-weight:normal; text-transform:uppercase; }
-  .wide { grid-column:1 / -1; }
+  html { scroll-snap-type: y mandatory; }
+  body { margin:0; background:var(--plate); color:var(--ink); font-family:ui-monospace,Menlo,monospace; }
+  .slide { min-height:100vh; scroll-snap-align:start; display:flex; flex-direction:column; justify-content:center;
+    padding:64px max(7vw,44px); max-width:1180px; margin:0 auto; }
+  .kicker { font-size:12px; letter-spacing:.3em; text-transform:uppercase; color:var(--dim); }
+  .head { font-size:clamp(26px,3.4vw,40px); line-height:1.2; color:var(--ink); font-weight:normal; margin:14px 0 8px; letter-spacing:-.01em; }
+  .head b { color:var(--amber); font-weight:normal; }
+  .lede { font-size:14px; line-height:1.7; color:var(--dim); max-width:62ch; margin:0 0 34px; }
+  .lede a { color:var(--dim); }
+  .lede b { color:var(--ink); font-weight:normal; }
+  .num { font-variant-numeric:tabular-nums; }
 
   /* pipeline */
-  #pipe { display:flex; align-items:stretch; gap:0; flex-wrap:wrap; }
-  .stage { border:1px solid var(--line); border-radius:5px; padding:10px 14px; min-width:118px; background:var(--plate); transition:border-color .5s, box-shadow .5s; }
+  #pipe { display:flex; align-items:stretch; flex-wrap:wrap; gap:0; margin-bottom:26px; }
+  .stage { border:1px solid var(--line); border-radius:6px; padding:14px 18px; min-width:150px; background:var(--panel); transition:border-color .5s; }
   .stage.hot { border-color:var(--amber); }
-  .stage .n { font-size:9px; color:var(--dim); letter-spacing:.14em; text-transform:uppercase; }
-  .stage .v { font-size:21px; color:var(--amber); margin-top:4px; line-height:1.15; }
-  .stage .v small { font-size:10px; color:var(--dim); }
-  .arrow { align-self:center; color:var(--dim); padding:0 9px; font-size:14px; }
-  #opline { margin-top:13px; font-size:11px; color:var(--dim); min-height:16px; }
+  .stage .n { font-size:10px; color:var(--dim); letter-spacing:.14em; text-transform:uppercase; }
+  .stage .v { font-size:30px; color:var(--amber); margin-top:6px; line-height:1.1; }
+  .stage .v small { font-size:12px; color:var(--dim); }
+  .arrow { align-self:center; color:var(--dim); padding:0 12px; font-size:17px; }
+  #opline { font-size:14px; color:var(--dim); min-height:20px; }
   #opline b { color:var(--ink); font-weight:normal; }
-  #ledger { margin-top:6px; font-size:10px; color:var(--dim); }
+  #ledger { margin-top:8px; font-size:12px; color:var(--dim); }
   #ledger .newest { color:var(--amber); }
 
+  /* hero number + tables */
+  .hero { font-size:clamp(72px,11vw,150px); color:var(--amber); line-height:1; letter-spacing:-.03em; margin:6px 0 8px; }
+  .bench { border-collapse:collapse; font-size:14px; margin-top:22px; min-width:min(640px,100%); }
+  .bench td { border-top:1px solid var(--line); padding:11px 6px; }
+  .bench td:first-child { color:var(--dim); padding-right:40px; }
+  .bench td:last-child { text-align:right; color:var(--ink); }
+  .bench td b { color:var(--amber); font-weight:normal; }
+  .quote { border-left:2px solid var(--crim); margin:30px 0 0; padding:4px 0 4px 16px; font-size:16px; color:var(--ink); line-height:1.6; max-width:56ch; }
+  .quote .who { color:var(--dim); font-size:11px; display:block; margin-top:7px; letter-spacing:.1em; }
+
   /* shelves */
-  .shelf { display:flex; justify-content:space-between; align-items:baseline; border-top:1px solid var(--line); padding:9px 2px; gap:10px; }
+  .shelf { display:flex; justify-content:space-between; align-items:baseline; border-top:1px solid var(--line); padding:15px 4px; gap:16px; max-width:760px; }
   .shelf:first-of-type { border-top:none; }
-  .shelf .name { font-size:13px; color:var(--ink); }
+  .shelf .name { font-size:19px; color:var(--ink); }
   .shelf .name .ring { color:var(--amber); }
-  .shelf .meta { font-size:10px; color:var(--dim); text-align:right; }
+  .shelf .meta { font-size:13px; color:var(--dim); text-align:right; }
   .shelf .meta b { color:var(--ink); font-weight:normal; }
 
-  /* bench */
-  .ratio { font-size:56px; color:var(--amber); line-height:1; margin:6px 0 2px; letter-spacing:-.02em; }
-  .bench { width:100%; border-collapse:collapse; margin-top:10px; font-size:11.5px; }
-  .bench td { border-top:1px solid var(--line); padding:7px 4px; }
-  .bench td:last-child { text-align:right; color:var(--ink); }
-  .bench td:first-child { color:var(--dim); }
-  .quote { border-left:2px solid var(--crim); margin:14px 0 0; padding:2px 0 2px 12px; font-size:11.5px; color:var(--ink); line-height:1.6; }
-  .quote .who { color:var(--dim); font-size:9.5px; display:block; margin-top:4px; letter-spacing:.1em; }
+  /* anchors */
+  #abench { min-width:min(720px,100%); }
+  #abench .track { display:inline-block; width:120px; height:5px; background:var(--line); border-radius:3px; position:relative; vertical-align:2px; margin-right:10px; }
+  #abench .track i { position:absolute; left:0; top:0; height:5px; border-radius:3px; background:var(--amber); }
 
   /* crates */
-  .crate { border-top:1px solid var(--line); padding:9px 2px; font-size:11px; color:var(--dim); line-height:1.6; }
-  .crate:first-of-type { border-top:none; }
-  .crate b { color:var(--amber); font-weight:normal; }
+  .crates { display:grid; grid-template-columns:repeat(auto-fit,minmax(290px,1fr)); gap:30px; }
+  .crate { font-size:13.5px; color:var(--dim); line-height:1.75; }
+  .crate b { color:var(--amber); font-weight:normal; font-size:16px; }
   .crate .fix { color:var(--moss); }
-
-  .foot { margin-top:18px; font-size:10px; color:var(--dim); display:flex; justify-content:space-between; gap:20px; flex-wrap:wrap; }
+  .foot { margin-top:44px; font-size:12.5px; color:var(--dim); display:flex; justify-content:space-between; gap:24px; flex-wrap:wrap; border-top:1px solid var(--line); padding-top:16px; }
   .foot b { color:var(--ink); font-weight:normal; }
-  @media (max-width: 980px) { .grid { grid-template-columns:1fr; } .ratio { font-size:42px; } }
+
+  /* deck chrome */
+  #pageno { position:fixed; right:26px; bottom:22px; font-size:12px; color:var(--dim); z-index:5; }
+  #hint { position:fixed; left:50%; transform:translateX(-50%); bottom:20px; font-size:12px; color:var(--dim); animation:sink 2.2s ease-in-out infinite; }
+  @keyframes sink { 0%,100% { transform:translate(-50%,0); } 50% { transform:translate(-50%,6px); } }
+  @media (prefers-reduced-motion: reduce) { #hint { animation:none; } }
 </style>
 </head>
 <body>
-<h1>Soundings · the machine room</h1>
-<div class="sub">everything on this page is the instrument measuring itself, live · the writing surface is at <a href="/">/</a> — this is its engine, on the same websocket</div>
 
-<div class="grid">
-  <div class="panel wide">
-    <h2>The pipeline — one edit, counted from inside (fold Meter operators)</h2>
-    <div id="pipe">
-      <div class="stage" id="st-keys"><div class="n">keys · deltas in</div><div class="v">—</div></div>
-      <div class="arrow">→</div>
-      <div class="stage" id="st-embed"><div class="n">embed · ese</div><div class="v">—</div></div>
-      <div class="arrow">→</div>
-      <div class="stage" id="st-scored"><div class="n">scored · view rows</div><div class="v">—</div></div>
-      <div class="arrow">→</div>
-      <div class="stage" id="st-views"><div class="n">views maintained</div><div class="v">2</div></div>
-      <div class="arrow">→</div>
-      <div class="stage" id="st-knn"><div class="n">kNN · anny <small>stopwatch</small></div><div class="v">—</div></div>
-      <div class="arrow">→</div>
-      <div class="stage" id="st-wall"><div class="n">wall · whole edit</div><div class="v">—</div></div>
-    </div>
-    <div id="opline">waiting for an edit on the writing surface…</div>
-    <div id="ledger"></div>
+<section class="slide" id="s1">
+  <div class="kicker">Bog-a-thon 3 · Soundings</div>
+  <div class="head">The machine room.</div>
+  <p class="lede">Everything on these slides is <b>the instrument measuring itself, live</b> — same process,
+  same websocket as the writing surface at <a href="/">/</a>. Nothing here is a mock-up;
+  kill the process and this page notices.</p>
+  <div id="hint">scroll · or press →</div>
+</section>
+
+<section class="slide" id="s2">
+  <div class="kicker">fold · Meter operators inside the pipeline</div>
+  <div class="head">Every edit is counted <b>from the inside</b>.</div>
+  <p class="lede">Type one sentence on the writing surface and watch these boxes tick. The counts come from
+  Meter operators <b>inside the dataflow</b> — observed deltas, not a stopwatch around the outside.
+  The one stopwatch (the kNN read) is labelled as such.</p>
+  <div id="pipe">
+    <div class="stage" id="st-keys"><div class="n">keys · deltas in</div><div class="v">—</div></div>
+    <div class="arrow">→</div>
+    <div class="stage" id="st-embed"><div class="n">embed · ese</div><div class="v">—</div></div>
+    <div class="arrow">→</div>
+    <div class="stage" id="st-scored"><div class="n">scored · rows</div><div class="v">—</div></div>
+    <div class="arrow">→</div>
+    <div class="stage" id="st-views"><div class="n">views maintained</div><div class="v">2</div></div>
+    <div class="arrow">→</div>
+    <div class="stage" id="st-knn"><div class="n">kNN · anny <small>stopwatch</small></div><div class="v">—</div></div>
+    <div class="arrow">→</div>
+    <div class="stage" id="st-wall"><div class="n">wall · whole edit</div><div class="v">—</div></div>
   </div>
+  <div id="opline">waiting for an edit on the writing surface…</div>
+  <div id="ledger"></div>
+</section>
 
-  <div class="panel">
-    <h2>Local vs cloud — measured tonight, this rig, venue wifi</h2>
-    <div class="ratio">≈50,000×</div>
-    <div style="font-size:10px;color:var(--dim);">per-sentence embedding, local vs the cloud API this project's sibling used four days ago</div>
-    <table class="bench">
-      <tr><td>ese, inside the binary</td><td><b>3.4 µs</b> (291k sentences/s)</td></tr>
-      <tr><td>voyage-3-large, cloud API</td><td><b>181 ms</b> p50 (min 164 · max 264)</td></tr>
-      <tr><td>anny kNN, in-process</td><td><b>230–870 µs</b></td></tr>
-      <tr><td>TCP floor to the cloud</td><td><b>29 ms</b> before any work</td></tr>
-    </table>
-    <div class="quote">“429 — Too Many Requests.”<span class="who">THE CLOUD, AFTER THREE SENTENCES · THE LOCAL EMBEDDER HAD READ THE 129K-SENTENCE CANON MANY TIMES OVER</span></div>
+<section class="slide" id="s3">
+  <div class="kicker">local-first embeddings · measured tonight, this rig, venue wifi</div>
+  <div class="hero num">≈50,000×</div>
+  <p class="lede">per-sentence embedding, in-process vs the cloud API this project's sibling used four days ago.</p>
+  <table class="bench num">
+    <tr><td>ese, inside the binary</td><td><b>3.4 µs</b> · 291k sentences/s</td></tr>
+    <tr><td>voyage-3-large, cloud API</td><td><b>181 ms</b> p50 · min 164 · max 264</td></tr>
+    <tr><td>anny kNN, in-process</td><td><b>230–870 µs</b></td></tr>
+    <tr><td>TCP floor to the cloud</td><td><b>29 ms</b> before any work begins</td></tr>
+  </table>
+  <div class="quote">“429 — Too Many Requests.”
+    <span class="who">THE CLOUD, AFTER THREE SENTENCES · THE LOCAL EMBEDDER HAD READ THE 129K-SENTENCE CANON MANY TIMES OVER</span></div>
+</section>
+
+<section class="slide" id="s4">
+  <div class="kicker">reference libraries · one instrument, four professions</div>
+  <div class="head">Four worlds, <b>a quarter-second</b> apart.</div>
+  <p class="lede">Voices, percentiles, the constellation, and rewrite targets all re-aim when the shelf
+  changes. First use builds an index once and checkpoints the HNSW graph; every later switch is a
+  <b>content-digested snapshot fast-load</b>. An interrupted shelf is detected and rebuilt, never trusted.</p>
+  <div id="shelves"><div class="shelf"><span class="name">loading…</span></div></div>
+</section>
+
+<section class="slide" id="s5">
+  <div class="kicker">the anchored axis · benched at startup, in 248µs</div>
+  <div class="head">How many examples make an axis? <b>We measured.</b></div>
+  <p class="lede">The concrete——abstract axis is a centroid difference over example sentences. Nested anchor
+  sets scored against a <b>held-out 30-sentence ladder</b> in six graded bands — topics overlap across
+  bands, so the axis can't cheat by scoring topic. <span id="apairs" class="num">—</span> cross-band pairs.</p>
+  <table class="bench num" id="abench"><tr><td>loading…</td></tr></table>
+  <p class="lede" style="margin-top:26px;">Ordering gains taper in the tens; the <b>dynamic range doubles</b>
+  from 4 to 20. Today's instrument stays at 4/pole — changing anchors re-scores the world, and a
+  materialized view keeps its history honest. The v2 axis ships 20+ with this bench as its receipt.</p>
+</section>
+
+<section class="slide" id="s6">
+  <div class="kicker">fold · ese · anny</div>
+  <div class="head">Three crates, all load-bearing — <b>and what we sent back</b>.</div>
+  <div class="crates">
+    <div class="crate"><b>fold</b><br>Four KeyedStreams: document, library, lenses, reader-cache. Scores,
+      percentile histograms, and LLM gists as incrementally-maintained views; algebraic retraction is the
+      corrigendum; Meters narrate every edit from inside.<br>
+      <span class="fix">↑ upstream: the Meter operator · Bm25 same-tx retract+insert fix · Hnsw sink last-write-wins fix</span></div>
+    <div class="crate"><b>ese</b><br>Static embeddings compiled into the binary — a pure function of the
+      text, which is exactly fold's retraction contract. Sentence-anchored axes; 3.4µs means the lens
+      never lags the pen.<br>
+      <span class="fix">finding: word anchors are mush — anchor axes with sentences</span></div>
+    <div class="crate"><b>anny</b><br>HNSW nearest-voices over every shelf; true deletion — retract a
+      sentence and its cards release, no tombstones. Graph snapshots adopted from Séance (PR #6), hardened
+      with a rows-content digest.<br>
+      <span class="fix">↑ upstream: snapshot stale-vector rejection + allocation caps</span></div>
   </div>
-
-  <div class="panel">
-    <h2>The shelves — reference libraries, snapshot fast-load</h2>
-    <div id="shelves"><div class="crate">loading…</div></div>
-    <div style="font-size:10px;color:var(--dim);margin-top:10px;">switching drops one stream and opens another · HNSW graphs restore from content-digested snapshots (v2) instead of rebuilding · an interrupted shelf is detected and rebuilt, never trusted</div>
+  <div class="foot">
+    <span>tests <b>27 + 17 passing</b> · clippy quiet · committed tree verified from a clean worktree</span>
+    <span>guest model <b id="model">—</b> — drafts on request; the lenses audit every draft</span>
+    <span>kill this process with <b>-9</b> — the document returns in ~15ms, the shelf in ~0.1s</span>
   </div>
+</section>
 
-  <div class="panel">
-    <h2>The anchor question — how many examples make an axis?</h2>
-    <div style="font-size:10.5px;color:var(--dim);line-height:1.6;margin-bottom:8px;">
-      the concrete——abstract axis is a centroid difference over example sentences. benched live at startup
-      against a held-out 30-sentence ladder (6 human-graded bands, topics overlapping across bands so the
-      axis can't cheat by scoring topic) · <span id="apairs">—</span> cross-band pairs
-    </div>
-    <table class="bench" id="abench"><tr><td>loading…</td></tr></table>
-    <div style="font-size:10.5px;color:var(--dim);margin-top:10px;line-height:1.6;">
-      gains taper in the tens — the v2 axis ships 20+/pole. today's instrument stays at 4/pole:
-      changing anchors re-scores the world, and a materialized view keeps its history honest.
-    </div>
-  </div>
-
-  <div class="panel wide">
-    <h2>Three crates, all load-bearing — and what we sent back upstream</h2>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:0 26px;">
-      <div class="crate"><b>fold</b> — four KeyedStreams (document · library · lenses · reader-cache); scores, percentile histograms, and LLM gists as incrementally-maintained views; algebraic retraction is the corrigendum; Meter operators narrate every edit from inside the dataflow.<br><span class="fix">↑ upstream: the Meter operator · Bm25 same-tx retract+insert fix · Hnsw sink last-write-wins fix</span></div>
-      <div class="crate"><b>ese</b> — static embeddings compiled into the binary; a pure function of the text, which is exactly fold's retraction contract; sentence-anchored axes; 3.4µs means the lens never lags the pen.<br><span class="fix">finding: word anchors are mush — anchor axes with sentences</span></div>
-      <div class="crate"><b>anny</b> — HNSW nearest-voices over every shelf; true deletion (retract a sentence, its cards release — no tombstones); graph snapshots adopted from Séance (PR #6) and hardened with a rows-content digest.<br><span class="fix">↑ upstream: snapshot stale-vector rejection + allocation caps</span></div>
-    </div>
-  </div>
-</div>
-
-<div class="foot">
-  <span>tests <b>27 + 17 passing</b> · clippy quiet · committed tree verified from a clean worktree</span>
-  <span>guest model <b id="model">—</b> — drafts on request; the lenses audit every draft</span>
-  <span>kill this process with <b>-9</b> — the document returns in ~15ms, the shelf in ~0.1s</span>
-</div>
+<div id="pageno" class="num">1 / 6</div>
 
 <script>
 const $ = (id) => document.getElementById(id);
@@ -141,7 +176,7 @@ function setStage(id, html, hot) {
   if (hot) { el.classList.remove("hot"); void el.offsetWidth; el.classList.add("hot"); }
 }
 
-function onHud(h, canon) {
+function onHud(h) {
   if (!h || !h.op) return;
   const st = Object.fromEntries((h.stages || []).map((s) => [s.name, s]));
   const hot = h.seq !== lastSeq;
@@ -151,7 +186,7 @@ function onHud(h, canon) {
   setStage("st-knn", fmtUs(h.voice_us || null), hot && !!h.voice_us);
   setStage("st-wall", fmtUs(h.wall_us), hot);
   const untouched = Math.max(0, (h.rows || 0) - (h.keys || 0));
-  $("opline").innerHTML = `last op: <b>${h.op}${h.key != null ? " s" + h.key : ""}</b> · ${h.rows || 0} rows maintained, <b>${untouched} never visited</b> · Meter-counted, wall = stopwatch`;
+  $("opline").innerHTML = `last op: <b>${h.op}${h.key != null ? " s" + h.key : ""}</b> · ${h.rows || 0} rows maintained, <b>${untouched} never visited</b>`;
   if (hot) {
     lastSeq = h.seq;
     ledger.unshift(`#${String(h.seq).padStart(4, "0")} ${h.op}${h.key != null ? " s" + h.key : ""} · ${h.wall_us}µs`);
@@ -164,29 +199,25 @@ async function shelves() {
   try {
     const d = await (await fetch("/engine-info")).json();
     $("model").textContent = d.model || "—";
-    if (d.anchors && d.anchors.length) {
-      $("apairs").textContent = d.anchors[0].pairs;
-      $("abench").innerHTML =
-        `<tr><td style="color:var(--dim)">anchors/pole</td><td style="color:var(--dim)">ordering</td><td style="color:var(--dim)">spread</td><td style="color:var(--dim)">built in</td></tr>` +
-        d.anchors.map((a) => {
-          const track = `<span style="display:inline-block;width:64px;height:4px;background:var(--line);border-radius:2px;position:relative;vertical-align:2px;margin-right:7px;"><i style="position:absolute;left:0;top:0;height:4px;border-radius:2px;background:var(--amber);width:${(a.pairwise_accuracy * 100).toFixed(0)}%"></i></span>`;
-          return `<tr><td><b style="color:var(--ink)">${a.per_pole}</b></td><td>${track}<b>${(a.pairwise_accuracy * 100).toFixed(1)}%</b></td><td><b>${a.spread.toFixed(2)}</b></td><td>${a.build_us >= 1000 ? (a.build_us / 1000).toFixed(1) + " ms" : a.build_us + " µs"}</td></tr>`;
-        }).join("");
-    }
     $("shelves").innerHTML = d.libs.map((l) => {
       const mb = l.snap_bytes ? (l.snap_bytes / 1048576).toFixed(1) + " MB snapshot" : "no snapshot yet";
       const n = l.sentences != null ? l.sentences.toLocaleString() + " sentences" : (l.prepped ? "prepped" : "not prepped");
-      return `<div class="shelf"><span class="name">${l.active ? '<span class="ring">◉ </span>' : ""}${l.label}</span><span class="meta"><b>${n}</b> · ${mb}</span></div>`;
+      return `<div class="shelf"><span class="name">${l.active ? '<span class="ring">◉ </span>' : ""}${l.label}</span><span class="meta num"><b>${n}</b> · ${mb}</span></div>`;
     }).join("");
+    if (d.anchors && d.anchors.length) {
+      $("apairs").textContent = d.anchors[0].pairs;
+      $("abench").innerHTML =
+        `<tr><td>anchors per pole</td><td style="text-align:left">pairwise ordering</td><td>spread</td><td>built in</td></tr>` +
+        d.anchors.map((a) =>
+          `<tr><td><b>${a.per_pole}</b></td><td style="text-align:left"><span class="track"><i style="width:${(a.pairwise_accuracy * 100).toFixed(0)}%"></i></span><b>${(a.pairwise_accuracy * 100).toFixed(1)}%</b></td><td><b>${a.spread.toFixed(2)}</b></td><td>${a.build_us >= 1000 ? (a.build_us / 1000).toFixed(1) + " ms" : a.build_us + " µs"}</td></tr>`
+        ).join("");
+    }
   } catch { /* retry next tick */ }
 }
 
 function connect() {
   const ws = new WebSocket(`ws://${location.host}/ws`);
-  ws.onmessage = (ev) => {
-    const m = JSON.parse(ev.data);
-    onHud(m.doc && m.doc.hud, m.canon);
-  };
+  ws.onmessage = (ev) => onHud(JSON.parse(ev.data).doc?.hud);
   ws.onclose = () => {
     $("opline").innerHTML = `<span style="color:var(--crim)">stream down — if that was a kill -9, watch how fast this line comes back</span>`;
     setTimeout(connect, 700);
@@ -195,6 +226,25 @@ function connect() {
 }
 connect();
 setInterval(shelves, 5000);
+
+// deck chrome: page number + arrow-key navigation
+const slides = [...document.querySelectorAll(".slide")];
+function pageno() {
+  const i = slides.findIndex((sl) => sl.getBoundingClientRect().top > -window.innerHeight / 2);
+  $("pageno").textContent = `${Math.max(1, i + 1)} / ${slides.length}`;
+  $("hint").style.display = i <= 0 ? "" : "none";
+}
+document.addEventListener("scroll", pageno, { passive: true });
+document.addEventListener("keydown", (e) => {
+  const cur = slides.findIndex((sl) => sl.getBoundingClientRect().top > -window.innerHeight / 2);
+  if (["ArrowRight", "ArrowDown", "PageDown", " "].includes(e.key) && cur < slides.length - 1) {
+    e.preventDefault(); slides[cur + 1].scrollIntoView({ behavior: "smooth" });
+  }
+  if (["ArrowLeft", "ArrowUp", "PageUp"].includes(e.key) && cur > 0) {
+    e.preventDefault(); slides[cur - 1].scrollIntoView({ behavior: "smooth" });
+  }
+});
+pageno();
 </script>
 </body>
 </html>
