@@ -54,6 +54,15 @@
   .sm .mi .hue { display: inline-block; width: 14px; height: 8px; border-radius: 2px; }
   .sm .mi .x2 { color: var(--faint); padding: 0 4px; }
   .sm .mi .x2:hover { color: #8c3b2e; }
+  /* the sounding line: the essay's whole distribution, always on */
+  #sline { margin: 2px 0 18px; }
+  #sline .rail { position: relative; height: 9px; border-radius: 3px;
+    background: linear-gradient(90deg, rgba(63,96,121,.4), rgba(214,206,190,.35), rgba(161,112,28,.4)); }
+  #sline .rail i { position: absolute; top: -3px; width: 2px; height: 15px; background: var(--ink); opacity: .75; }
+  #sline .rail i.caret { width: 3px; background: #A2231F; opacity: 1; }
+  #sline .crail { position: relative; height: 5px; margin-top: 3px; }
+  #sline .crail i { position: absolute; top: 0; width: 1px; height: 5px; background: var(--faint); opacity: .35; }
+  .page.galing #sline { display: none; }
   #constel { position: relative; margin: 4px 0 14px; }
   #ccanvas { width: 100%; height: 280px; display: block; background: #fbf7ee; border: 1px solid #d8cfbd; border-radius: 5px; cursor: crosshair; }
   #ctip { position: absolute; z-index: 25; background: var(--card); border: 1px solid var(--line); border-radius: 4px;
@@ -115,6 +124,7 @@
   #voice .hit .m { display: flex; align-items: center; gap: 8px; font-family: ui-monospace, Menlo, monospace; font-size: 11px; font-variant-numeric: tabular-nums; color: var(--faint); margin-top: 5px; }
   #voice .hit .ax { flex: none; width: 64px; height: 3px; background: var(--line); border-radius: 2px; position: relative; }
   #voice .hit .ax i { position: absolute; top: -2.5px; width: 8px; height: 8px; border-radius: 50%; background: var(--ink); margin-left: -4px; }
+  #voice .hit .ax .thr { position: absolute; top: -3.5px; width: 1px; height: 10px; background: #8c3b2e; opacity: .55; }
   #voice .empty { font-size: 14px; color: var(--faint); font-style: italic; line-height: 1.65; }
   /* the instrument plate — black-and-amber, numbers that cannot be faked.
      tokens from docs/corrigenda-and-chalk.html `.plate` */
@@ -246,7 +256,7 @@
   #lenscard .lc-h { font-family: ui-monospace, Menlo, monospace; font-size: 9px; letter-spacing: .14em; color: var(--faint); margin-bottom: 4px; }
   #lenscard .lc-row { display: flex; gap: 8px; align-items: baseline; margin-top: 6px; }
   #lenscard .lc-row .k { font-family: ui-monospace, Menlo, monospace; font-size: 10px; color: var(--faint); width: 32px; flex: none; }
-  #lenscard .lc-row input { flex: 1; font: inherit; font-size: 15px; background: none; border: 0; border-bottom: 1px solid var(--line); padding: 2px 0; color: var(--ink); outline: none; }
+  #lenscard .lc-row input { flex: 1; font: inherit; font-size: 16px; background: none; border: 0; border-bottom: 1px solid var(--line); padding: 2px 0; color: var(--ink); outline: none; }
   #lenscard .lc-row input:focus { border-bottom-color: var(--ink); }
   #lenscard .lc-name input { font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; }
   #lenscard .lc-actions { display: flex; gap: 12px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
@@ -278,7 +288,10 @@
     background: var(--card); border: 1px solid var(--line); border-radius: 3px; padding: 0 6px;
   }
   .gchip .us .lbl { color: var(--faint); font-size: 8.5px; margin-left: 4px; letter-spacing: .06em; }
-  .gchip .pct { display: block; font-size: 10px; color: var(--faint); margin-top: 3px; }
+  .gchip .pct { display: block; font-size: 11px; color: var(--faint); margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .gchip .pctax { display: block; position: relative; height: 4px; background: var(--line); border-radius: 2px; margin-top: 6px; }
+  .gchip .pctax .q { position: absolute; top: -2px; width: 1px; height: 8px; background: var(--faint); opacity: .5; }
+  .gchip .pctax .dot { position: absolute; top: -2px; width: 8px; height: 8px; border-radius: 50%; background: var(--ink); margin-left: -4px; }
   .page.galing .gchip { display: none; }
   @media (max-width: 1020px) { .gchip { display: none; } }
 </style>
@@ -317,6 +330,10 @@
       <div id="ckey" class="lenskey"></div>
     </div>
     <div class="lenskey" id="lenskey"></div>
+    <div id="sline" hidden title="every sentence of this essay as a tick on the concrete——abstract line · grey beneath: the active library's distribution">
+      <div class="rail" id="srail"></div>
+      <div class="crail" id="scrail"></div>
+    </div>
     <div id="doc" contenteditable="plaintext-only" spellcheck="false"></div>
     <div class="tile" id="foldtile"></div>
   </main>
@@ -443,7 +460,38 @@ function render() {
   retireGhosts();
   renderChips($("doc"));
   renderHud();
+  renderSline();
   if (constelOn) { fetchCloud().then(drawConstel); }
+}
+
+// ---------- the sounding line (Tufte's bold move): legend, distribution,
+// and caret fused into one strip — your sentences as ticks on the axis,
+// the library's own distribution in grey beneath ----------
+let slineCloudDrawn = "";
+function renderSline() {
+  const el = $("sline");
+  if (!state.rows.length) { el.hidden = true; return; }
+  el.hidden = false;
+  const caretRow = lastCaret ? state.rows.find((r) => r.para === lastCaret.para && r.text === lastCaret.text) : null;
+  $("srail").replaceChildren(...state.rows.map((r) => {
+    const i = document.createElement("i");
+    i.style.left = (r.t * 100).toFixed(1) + "%";
+    if (caretRow && r.id === caretRow.id) i.className = "caret";
+    return i;
+  }));
+  const key = lib.id;
+  if (slineCloudDrawn !== key) {
+    fetchCloud().then(() => {
+      if (!cloudPts.length) return;
+      slineCloudDrawn = key;
+      const step = Math.max(1, Math.floor(cloudPts.length / 220));
+      $("scrail").replaceChildren(...cloudPts.filter((_, j) => j % step === 0).map((p) => {
+        const i = document.createElement("i");
+        i.style.left = (p[0] * 100).toFixed(1) + "%";
+        return i;
+      }));
+    });
+  }
 }
 
 // the ledger: last few ops, newest first — kept client-side from each hud
@@ -703,6 +751,7 @@ function penFollow() {
     ? `Nearest voices — at your caret<span class="stat"><span class="ramp"><i style="left:${(row.t * 100).toFixed(0)}%"></i></span>t ${row.t.toFixed(2)} · ${row.words} words${row.pct != null ? ` · ${ordinal(row.pct)} pct of ${esc(libNoun())}` : ""}</span>`
     : `Nearest voices — following your pen<span class="stat"></span>`;
   laneFollow(row);
+  renderSline();
   renderPullRow();
   fetchVoice(cs.text, row ? row.id : null);
 }
@@ -1110,7 +1159,9 @@ function renderChips(doc) {
   chip.contentEditable = "false";
   chip.style.top = top + "px";
   chip.innerHTML = `<span class="us"><b>${h.wall_us}µs</b><span class="lbl">wtx</span></span>` +
-    (row.pct != null ? `<span class="pct">len · ${ordinal(row.pct)} pct of ${libNoun()}</span>` : "");
+    (row.pct != null
+      ? `<span class="pctax" title="length percentile vs ${libNoun()}"><i class="q" style="left:25%"></i><i class="q" style="left:50%"></i><i class="q" style="left:75%"></i><i class="dot" style="left:${Math.max(2, Math.min(98, row.pct)).toFixed(0)}%"></i></span><span class="pct">${ordinal(row.pct)} pct</span>`
+      : "");
   doc.appendChild(chip);
   setTimeout(() => chip.classList.add("fade"), 4000);
 }
@@ -1318,9 +1369,12 @@ async function refreshReader() {
     card.className = "card2 hit";
     if (p.gist) {
       const warn = p.fidelity < 0.6;
-      card.innerHTML = `<div class="t gist"></div><div class="m"></div>`;
+      // fidelity dot on a fixed 0.4–1.0 track with the warn threshold ticked
+      const pos = Math.max(2, Math.min(98, ((p.fidelity - 0.4) / 0.6) * 100));
+      const thr = ((0.6 - 0.4) / 0.6) * 100;
+      card.innerHTML = `<div class="t gist"></div><div class="m"><span class="ax"><em class="thr" style="left:${thr.toFixed(0)}%"></em><i style="left:${pos.toFixed(0)}%"></i></span><span class="n"></span></div>`;
       card.querySelector(".t").textContent = p.gist;
-      card.querySelector(".m").textContent = `¶${i + 1} · fidelity ${p.fidelity.toFixed(2)}${warn ? " ⚠ the reader may have missed this one" : " ✓"} · ${p.cached ? "cached" : "re-read"}`;
+      card.querySelector(".n").textContent = `¶${i + 1} · fidelity ${p.fidelity.toFixed(2)}${warn ? " ⚠ may have missed it" : " ✓"} · ${p.cached ? "cached" : "re-read"}`;
     } else {
       card.innerHTML = `<div class="m">¶${i + 1} · the reader had nothing (model error)</div>`;
     }
@@ -1575,6 +1629,7 @@ function connect() {
       lib = m.lib;
       insp = null;          // inspirations belong to their library
       lastHits = [];
+      slineCloudDrawn = "";
       $("voice").innerHTML = '<div class="empty">the library is reshelving — voices return in a moment.</div>';
       refreshLibs();
       renderPullRow();
