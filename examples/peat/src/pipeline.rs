@@ -171,6 +171,7 @@ pub fn searchable(k: &Keyed<EventId, Envelope>) -> Option<Keyed<EventId, TextRow
         } => (text, "obs", !derived_from.is_empty()),
         Event::FinalMsg { text } => (text, "final", true),
         Event::Said { text } => (text, "said", true),
+        Event::CompactSummary { text } => (text, "compact", true),
         Event::UserMsg { text } => (text, "user", true),
         _ => return None,
     };

@@ -81,6 +81,24 @@ pub fn parse(jsonl: &str, fallback_session: Option<&str>) -> Option<Parsed> {
                 (session.clone(), seq0 + 1),
                 Envelope::new(&session, ts, Event::Compaction {}),
             ));
+            // keep the compactor's distillation itself — it is the summary
+            // of everything the context window lost
+            if let Some(text) = line
+                .get("message")
+                .and_then(|m| m.get("content"))
+                .and_then(Value::as_str)
+            {
+                events.push((
+                    (session.clone(), seq0 + 2),
+                    Envelope::new(
+                        &session,
+                        ts,
+                        Event::CompactSummary {
+                            text: cap(text, FINAL_MSG_CAP),
+                        },
+                    ),
+                ));
+            }
             continue;
         }
 

@@ -67,6 +67,11 @@ pub enum Event {
     /// envelopes still parse.
     Said { text: String },
 
+    /// The compactor's own distillation of a context window it replaced —
+    /// the closest thing to an observation compaction can produce, kept
+    /// verbatim and recallable. Added in v2; additive.
+    CompactSummary { text: String },
+
     // ---- the one judgment step ----
     /// A small claim the agent chose to record. `derived_from` cites the
     /// seqs of mechanical events it rests on; empty means a bare assertion,

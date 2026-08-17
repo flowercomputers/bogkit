@@ -58,6 +58,20 @@ the debug log only, so `peat capture` output is invisible; rely on exit code 0.
 }
 ```
 
+## Session-end observations (block-once) and compaction
+
+The Stop hook can return `{"decision":"block","reason":"..."}`, which makes
+the agent take ONE more turn with the reason as its instruction — the
+mechanism that automates the judgment step without a second model: capture
+runs, then (unless `stop_hook_active` says we already blocked once) the
+agent is asked to deposit observations while its context is still hot.
+
+`PreCompact` fires before compaction replaces the context window: it cannot
+consult the agent, so it runs a mechanical salvage `peat capture` — the
+idempotent upsert makes the later Stop capture re-cover the same events for
+free. The compactor's own summary is captured as a `CompactSummary` event
+(recallable, embedded) whenever a transcript is ingested.
+
 Notes:
 
 - **peat failing may never break a session** — every command ends `|| true`.
