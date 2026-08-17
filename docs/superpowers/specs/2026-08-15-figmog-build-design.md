@@ -693,3 +693,60 @@ holds unchanged.
 
 Proxying the remote server (OAuth); mid-session upstream re-attach /
 `listChanged` notifications; caching selection-based calls; multi-file.
+
+## 13. `figmog bench` — the load-test demo
+
+One self-contained command that makes the value proposition measurable:
+local reads at memory speed against a rate-limited API that allows ~10
+file requests per minute.
+
+`figmog bench [--nodes N] [--calls M] [--json] [--keep]`
+(defaults: N=10000, M=5000; `--keep` leaves the temp store on disk and
+prints its path).
+
+### Phases (all timed, all reported)
+
+1. **Corpus** — generate a deterministic synthetic Figma file JSON with N
+   nodes: pages of auto-layout frames, TEXT nodes whose characters are
+   drawn from a fixed word list (so BM25 has real queries), one
+   COMPONENT_SET with variants plus INSTANCE nodes referencing them,
+   fill/text styles, and `boundVariables` bindings. Determinism: a seeded
+   LCG in the generator, no wall-clock, no `rand` dep — the same `--nodes`
+   always yields byte-identical JSON. Generator lives in the crate
+   (`src/bench.rs` or a `corpus` module) and is unit-testable
+   (node count exact, determinism byte-checked).
+2. **Cold sync** — flatten + `sync` the corpus into a temp store via the
+   library (not a child process): report flatten ms, sync ms, records/s.
+3. **No-churn re-pull** — sync the identical corpus again: report ms and
+   assert-in-code churn is zero (the engine's headline invariant, timed).
+4. **Serve load** — spawn `current_exe()` as
+   `serve --no-upstream --no-watch --db <tmp>`, complete the MCP
+   handshake, then issue M tools/call frames in a fixed rotating mix
+   (`figmog_search` with rotating corpus words, `figmog_node`,
+   `figmog_where`, `figmog_stats`, `figmog_tree` (depth 2),
+   `figmog_instances`), measuring wall time per request (write→response
+   line). Sequential over one stdio pipe — that matches the server's
+   single-threaded loop, so the numbers are honest.
+
+### Report
+
+Per-tool table: calls, p50 / p95 / p99 / max (ms), plus overall
+sustained req/s and total wall time. `--json` emits one JSON object with
+the same fields (stdout purity as elsewhere: human table OR json, never
+both). Ends with the headline line comparing sustained req/s against
+Figma's Tier-1 budget ("~10 file requests/min on Starter").
+
+### Constraints
+
+No new dependencies. Percentiles via sort. `Instant`-based timing only
+(no SystemTime in the measurement path). The bench must not touch the
+network (`--no-upstream`, corpus from memory) and must clean up its temp
+dir unless `--keep`. Exit nonzero if any phase fails or any tool call
+returns `isError`.
+
+### Non-goals
+
+Concurrent client simulation (stdio is one pipe; the server is
+single-threaded by design); benchmarking the proxy path (network-bound,
+not ours to measure); comparing against a live Figma API call (the
+rate-limit number is documented, not re-measured).
