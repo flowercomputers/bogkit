@@ -56,3 +56,44 @@ fn rtx_in_wtx() {
         assert!(!bag.contains(&4));
     });
 }
+
+#[test]
+fn final_flush_panic_discards_pending_pipeline_state() {
+    const PANIC_PAYLOAD: &str = "final flush panic";
+
+    let mut st = Stream::new(
+        fresh_db("final-flush-panic.db"),
+        Distinct::new(
+            "distinct",
+            (
+                terminal::Count::new("count"),
+                Filter::new(
+                    |_: &u32| -> bool { std::panic::panic_any(PANIC_PAYLOAD) },
+                    terminal::Bag::new("filtered"),
+                ),
+            ),
+        ),
+    );
+
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        st.wtx(|tx| tx.insert(&1));
+    }))
+    .expect_err("final flush should panic");
+    assert_eq!(
+        panic.downcast_ref::<&str>().copied(),
+        Some(PANIC_PAYLOAD),
+        "wtx should resume the original panic",
+    );
+
+    st.rtx(|(count, filtered)| {
+        assert_eq!(count.get(), 0);
+        assert!(!filtered.contains(&1));
+    });
+
+    st.wtx(|_| {});
+
+    st.rtx(|(count, filtered)| {
+        assert_eq!(count.get(), 0);
+        assert!(!filtered.contains(&1));
+    });
+}
