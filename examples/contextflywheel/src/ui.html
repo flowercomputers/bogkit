@@ -26,7 +26,7 @@
   </style>
 </head>
 <body>
-  <header class="topbar"><div class="brand">ContextFlywheel</div><input class="search" id="search" aria-label="Search timeline" placeholder="Search sessions, tools, beliefs…"><div class="top-actions"><span class="live" aria-live="polite"><i class="dot"></i><span id="connection">LIVE</span></span><button class="icon-btn" type="button" aria-label="New session">+</button></div></header>
+    <header class="topbar"><div class="brand">ContextFlywheel<div class="muted" style="font-size:.72rem;font-weight:500;letter-spacing:0;margin-top:2px">BogKit Fold · BM25 · ESE · ANNy</div></div><input class="search" id="search" aria-label="Search timeline" placeholder="Search sessions, tools, beliefs…"><div class="top-actions"><span class="live" aria-live="polite"><i class="dot"></i><span id="connection">LIVE</span></span><button class="icon-btn" type="button" aria-label="New session">+</button></div></header>
   <main class="workspace">
     <aside class="sessions" aria-label="Sessions"><div class="session-head"><h2>Sessions</h2><button class="icon-btn" aria-label="New session">+</button></div><div id="session-list"><div class="loading">Loading session…</div></div></aside>
     <section class="main"><div class="mission-head"><div><div class="layer-label">Mission</div><h1 id="mission-title">Mission</h1><p id="objective">Loading objective…</p><div class="constraint-list" id="constraints"></div></div><div class="mission-actions"><span class="running"><i class="dot" style="color:var(--green)"></i><span id="mission-status">Running</span></span><button class="pause" type="button">Ⅱ&nbsp; Pause</button></div></div><section class="understanding"><div class="understanding-head"><div><div class="layer-label">Current understanding</div><h2>What the agent believes now</h2><div class="understanding-belief" id="current-belief">None recorded</div></div><button class="context-btn" id="current-context" type="button">Context sent to Qwen</button></div><div class="understanding-grid"><div><h3>WHY</h3><p id="current-why">Waiting for supporting evidence.</p></div><div><h3>NEXT ACTION</h3><p id="next-action">Waiting for the agent.</p></div></div><span class="confidence" id="current-confidence">—</span></section><section class="belief-change" id="belief-change" hidden><div class="change-head"><strong>BELIEF CHANGED</strong><span class="muted mono" id="change-version"></span></div><div class="change-grid"><div class="change-cell"><small>Before</small><p id="change-before"></p></div><div class="change-cell"><small>Evidence</small><p id="change-evidence"></p></div><div class="change-cell"><small>Now</small><p id="change-now"></p></div><div class="change-cell"><small>Behavioral effect</small><p id="change-effect"></p></div></div></section><div class="pipeline" id="pipeline" aria-label="Mission live state"></div><div class="working-status" aria-live="polite"><i class="dot"></i><span id="working-status">Loading mission state…</span></div><div class="outcome" id="outcome" hidden><div><strong id="outcome-title"></strong><span id="outcome-note"></span></div></div><section class="compare" id="compare-panel" hidden><div class="layer-label">Measured from this ledger</div><div class="compare-grid"><div><h3>Raw transcript</h3><p id="compare-raw"></p></div><div><h3>ContextFlywheel</h3><p id="compare-compiled"></p></div></div><ul id="compare-notes"></ul></section><div class="timeline-head"><div><div class="layer-label">Important changes</div><h2>Causal timeline</h2></div><div class="timeline-actions"><button class="new-events" id="new-events" type="button">0 new events</button><div class="segment" aria-label="Timeline view"><button id="summary-view" class="active" type="button" aria-pressed="true">Important</button><button id="all-view" type="button" aria-pressed="false">Full trace</button></div><button class="settings-btn" id="settings-button" type="button" aria-label="Timeline settings" aria-expanded="false" aria-controls="settings">•••</button><div class="settings" id="settings" hidden><strong>Timeline settings</strong><label class="setting"><span>Show tool activity</span><input id="show-tools" type="checkbox"></label><label class="setting"><span>Auto-follow updates</span><input id="auto-follow" type="checkbox" checked></label></div></div></div><div class="timeline-note"><span id="timeline-note">Showing important decisions and evidence.</span><button class="show-all-link" id="show-hidden" type="button"></button></div><div class="timeline" id="timeline"><div class="loading">Loading timeline…</div></div></section>
@@ -184,13 +184,15 @@
       $('raw-event-text').textContent=raw;
     }
     function setMode(mode){state.mode=mode;$('summary-view').classList.toggle('active',mode==='summary');$('all-view').classList.toggle('active',mode==='all');$('summary-view').setAttribute('aria-pressed',mode==='summary');$('all-view').setAttribute('aria-pressed',mode==='all');renderTimeline()}
+    function setText(id,value){const el=$(id); if(el) el.textContent=value}
+    function setHtml(id,value){const el=$(id); if(el) el.innerHTML=value}
     function renderContext(report){
       const sections=[['protected_state','Protected state'],['current_beliefs','Current beliefs'],['supporting_evidence','Supporting evidence'],['relevant_history','Relevant history']];
-      $('context-method').textContent=`${report.selection_method} · ${report.retrieval_source||'Mission Ledger'} · ${report.token_count_method}`;
-      $('token-table').innerHTML=sections.map(([key,name])=>`<div class="token-row"><span>${name}</span><strong>${Number(report.sections?.[key]||0).toLocaleString()} tokens</strong></div>`).join('')+`<div class="token-row total"><span>Total</span><strong>${Number(report.total_estimated_tokens).toLocaleString()} / ${Number(report.budget).toLocaleString()}</strong></div>`;
-      $('context-flags').innerHTML=`<span class="flag">Source: ${esc(report.retrieval_source||'ledger')}</span><span class="flag">Semantic: ${report.semantic_retrieval_used?'used':'not used'}</span><span class="flag">Model ranking: ${report.model_ranking_used?'used':'not used'}</span><span class="flag good">Superseded beliefs excluded</span>`;
-      $('memory-list').innerHTML=(report.selected||[]).length?(report.selected||[]).map(item=>`<div class="memory-item"><strong>${esc(summarize(item.text,140))}</strong><span>${esc(item.reason)} · ${esc(item.source)}</span></div>`).join(''):'<p class="muted">No memories selected.</p>';
-      $('excluded-list').innerHTML=(report.excluded||[]).length?(report.excluded||[]).map(item=>`<div class="memory-item"><strong>${esc(summarize(item.text,140))}</strong><span>${esc(item.reason)}</span></div>`).join(''):'<p class="muted">No superseded beliefs to exclude.</p>';
+      setText('context-method',`${report.selection_method||'BogKit Fold retrieval'} · ${report.retrieval_source||'BogKit Fold ledger (BM25 + ESE + ANNy)'} · ${report.token_count_method||''}`);
+      setHtml('token-table',sections.map(([key,name])=>`<div class="token-row"><span>${name}</span><strong>${Number(report.sections?.[key]||0).toLocaleString()} tokens</strong></div>`).join('')+`<div class="token-row total"><span>Total</span><strong>${Number(report.total_estimated_tokens||0).toLocaleString()} / ${Number(report.budget||0).toLocaleString()}</strong></div>`);
+      setHtml('context-flags',`<span class="flag good">BogKit Fold current beliefs</span><span class="flag">BogKit BM25 keyword</span><span class="flag">ESE embeddings ${report.semantic_retrieval_used?'used':'available'}</span><span class="flag">ANNy HNSW ${report.semantic_retrieval_used?'used':'available'}</span><span class="flag">Model ranking: ${report.model_ranking_used?'used':'not used'}</span><span class="flag good">Superseded beliefs excluded</span>`);
+      setHtml('memory-list',(report.selected||[]).length?(report.selected||[]).map(item=>`<div class="memory-item"><strong>${esc(summarize(item.text,140))}</strong><span>${esc(item.reason)} · ${esc(item.source)}</span></div>`).join(''):'<p class="muted">No memories selected.</p>');
+      setHtml('excluded-list',(report.excluded||[]).length?(report.excluded||[]).map(item=>`<div class="memory-item"><strong>${esc(summarize(item.text,140))}</strong><span>${esc(item.reason)}</span></div>`).join(''):'<p class="muted">No superseded beliefs to exclude.</p>');
       const captured=state.mission?.captured_context;
       const capturedSection=$('captured-section');
       if(capturedSection){
@@ -198,20 +200,21 @@
         if(captured?.context){
           const body=$('captured-context');
           const summary=$('captured-summary');
-          if(body)body.textContent=captured.context;
-          if(summary)summary.textContent=`Exact ${captured.mode||'deterministic'} injection · ${captured.context_hash||''} · ${captured.estimated_tokens??'—'} estimated tokens`;
+          if(body) body.textContent=captured.context;
+          if(summary) summary.textContent=`Exact ${captured.mode||'deterministic'} injection · ${captured.context_hash||''} · ${captured.estimated_tokens??'—'} estimated tokens`;
         }
       }
     }
     async function openContext(step){
       if(!step)return;
+      const dialog=$('context-dialog');
       try{
-        if(state.mission?.context?.step===step){renderContext(state.mission.context);$('context-dialog').showModal();return}
+        if(state.mission?.context?.step===step){renderContext(state.mission.context);dialog?.showModal();return}
         const response=await fetch(`/api/context/${step}`);
         if(!response.ok)throw new Error('Compiled context is unavailable for this step.');
         renderContext(await response.json());
-        $('context-dialog').showModal();
-      }catch(error){$('memory-list').innerHTML=`<div class="error">${esc(error.message)}</div>`;$('context-dialog').showModal()}
+        dialog?.showModal();
+      }catch(error){setHtml('memory-list',`<div class="error">${esc(error.message)}</div>`);dialog?.showModal()}
     }
     async function refreshMission(){
       const response=await fetch('/api/mission');
