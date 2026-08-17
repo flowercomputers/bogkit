@@ -76,8 +76,31 @@ enum Cli {
         /// Max hits to print
         #[arg(long, default_value_t = 12)]
         limit: usize,
+        /// Only this kind: obs | said | user | final | compact
+        #[arg(long)]
+        kind: Option<String>,
+        /// Only events from the last N days
+        #[arg(long)]
+        since: Option<u64>,
+        /// Only this session (prefix ok)
+        #[arg(long)]
+        session: Option<String>,
+        /// Read one subject's full evidence trail instead of searching
+        #[arg(long)]
+        subject: Option<String>,
         #[arg(long)]
         json: bool,
+    },
+    /// List every subject in the claims register
+    Subjects {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print one event in full, with any observations citing it
+    Show {
+        /// Session id (prefix ok)
+        session: String,
+        seq: u32,
     },
     /// Time travel: the brief as it would have read at the end of DATE.
     /// Replays the ledger prefix through the same deterministic pipeline.
@@ -341,13 +364,65 @@ beside the shared db); pass --session"
             }
         }
 
-        Cli::Recall { query, limit, json } => {
+        Cli::Recall {
+            query,
+            limit,
+            kind,
+            since,
+            session,
+            subject,
+            json,
+        } => {
+            let now = now_ms();
+            // --subject reads the evidence trail directly — the claims
+            // register, no search involved
+            if let Some(subj) = subject {
+                let rows = st.rtx(|(_, _, _, (subjects, evidence), _, _)| {
+                    let head: Option<SubjStats> = subjects.get(&subj);
+                    let mut rows = evidence.get(&subj);
+                    rows.sort_by_key(|r: &pipeline::ObsRow| std::cmp::Reverse(r.ts_ms));
+                    (head, rows)
+                });
+                let (head, rows) = rows;
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "subject": subj, "current": head.as_ref().map(|h| &h.text),
+                            "support": head.as_ref().map(|h| h.count),
+                            "evidence": rows.iter().map(|r| serde_json::json!({
+                                "session": r.session, "seq": r.seq,
+                                "age": age_label(now, r.ts_ms),
+                                "cited": !r.derived_from.is_empty(),
+                                "text": r.text,
+                            })).collect::<Vec<_>>(),
+                        }))
+                        .unwrap()
+                    );
+                } else if rows.is_empty() {
+                    println!("no such subject: {subj}");
+                } else {
+                    if let Some(h) = head {
+                        println!("{subj} — {} ({} obs)", h.text, h.count);
+                    }
+                    for r in rows {
+                        println!(
+                            "  [{} · {}{}] {}",
+                            short_sess(&r.session),
+                            age_label(now, r.ts_ms),
+                            if r.derived_from.is_empty() { "" } else { " · cited" },
+                            r.text
+                        );
+                    }
+                }
+                return;
+            }
             let query = query.join(" ");
             if query.trim().is_empty() {
-                eprintln!("peat: recall needs a query");
+                eprintln!("peat: recall needs a query (or --subject)");
                 std::process::exit(1);
             }
-            let now = now_ms();
+            let cutoff_ms = since.map(|d| now.saturating_sub(d * DAY_MS));
             let hits = st.rtx(|(_, _, (kw, vec, texts), _, _, _)| {
                 let mut fused: HashMap<EventId, f64> = HashMap::new();
                 for (rank, hit) in kw.search(&query, limit * 2).iter().enumerate() {
@@ -364,6 +439,21 @@ beside the shared db); pass --session"
                     .into_iter()
                     .filter_map(|(id, score)| {
                         let t = texts.get(&id)?;
+                        if let Some(k) = &kind {
+                            if &t.kind != k {
+                                return None;
+                            }
+                        }
+                        if let Some(c) = cutoff_ms {
+                            if t.ts_ms < c {
+                                return None;
+                            }
+                        }
+                        if let Some(sess) = &session {
+                            if !id.0.starts_with(sess.as_str()) {
+                                return None;
+                            }
+                        }
                         Some(serde_json::json!({
                             "score": (score * 1000.0).round() / 1000.0,
                             "kind": t.kind,
@@ -390,6 +480,82 @@ beside the shared db); pass --session"
                         h["age"].as_str().unwrap_or(""),
                         clip(h["text"].as_str().unwrap_or(""), 220),
                     );
+                }
+            }
+        }
+
+        Cli::Subjects { json } => {
+            let now = now_ms();
+            let mut subj: Vec<(String, SubjStats)> =
+                st.rtx(|(_, _, _, (subjects, _), _, _)| subjects.iter().collect());
+            subj.sort_by_key(|(_, s)| std::cmp::Reverse(s.last_ms));
+            if json {
+                let rows: Vec<serde_json::Value> = subj
+                    .iter()
+                    .map(|(name, s)| {
+                        serde_json::json!({
+                            "subject": name, "support": s.count, "cited": s.cited,
+                            "age": age_label(now, s.last_ms), "text": s.text,
+                        })
+                    })
+                    .collect();
+                println!("{}", serde_json::to_string_pretty(&rows).unwrap());
+            } else if subj.is_empty() {
+                println!("no subjects yet");
+            } else {
+                for (name, s) in subj {
+                    println!(
+                        "  {name} ({} obs{}, {}): {}",
+                        s.count,
+                        if s.cited { "" } else { ", uncited" },
+                        age_label(now, s.last_ms),
+                        clip(&s.text, 140)
+                    );
+                }
+            }
+        }
+
+        Cli::Show { session, seq } => {
+            let now = now_ms();
+            let found = st.rtx(|(_, _, _, (subjects, evidence), _, ledger)| {
+                // session may be a prefix: resolve against the ledger
+                let hit: Option<(EventId, Envelope)> = ledger
+                    .iter()
+                    .find(|((s, q), _): &(EventId, Envelope)| {
+                        *q == seq && s.starts_with(session.as_str())
+                    });
+                let citing: Vec<(String, pipeline::ObsRow)> = subjects
+                    .iter()
+                    .flat_map(|(name, _): (String, SubjStats)| {
+                        evidence
+                            .get(&name)
+                            .into_iter()
+                            .map(move |r| (name.clone(), r))
+                    })
+                    .filter(|(_, r)| {
+                        hit.as_ref().is_some_and(|((s, _), _)| {
+                            r.session == *s && r.derived_from.contains(&seq)
+                        })
+                    })
+                    .collect();
+                (hit, citing)
+            });
+            let (hit, citing) = found;
+            match hit {
+                None => {
+                    eprintln!("no event ({session}*, {seq})");
+                    std::process::exit(1);
+                }
+                Some(((sess, q), env)) => {
+                    println!(
+                        "event ({sess}, {q}) · {} · v{}",
+                        age_label(now, env.ts_ms),
+                        env.v
+                    );
+                    println!("{}", serde_json::to_string_pretty(&env.kind).unwrap());
+                    for (subj, r) in citing {
+                        println!("cited by obs [{subj} · {}]: {}", age_label(now, r.ts_ms), r.text);
+                    }
                 }
             }
         }
