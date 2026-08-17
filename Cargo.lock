@@ -2253,8 +2253,10 @@ version = "0.0.0"
 dependencies = [
  "anny",
  "clap",
+ "console 0.16.4",
  "ese",
  "fold",
+ "indicatif 0.18.6",
  "minijinja",
  "serde",
  "serde_json",

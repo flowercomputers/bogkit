@@ -16,6 +16,7 @@
 pub mod event;
 pub mod pipeline;
 pub mod transcript;
+pub mod ui;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -110,24 +111,32 @@ fn main() {
     // can collide. Peat processes are short-lived, so waiting is correct:
     // retry the open with backoff for up to ~45s before giving up.
     let mut st = {
+        let phase = ui::Phase::new("opening ledger");
         let mut delay_ms = 200u64;
         let mut waited = 0u64;
-        loop {
+        let st = loop {
             match std::panic::catch_unwind(|| {
                 KeyedStream::<EventId, Envelope, _>::new(db_path(), peat_pipeline!())
             }) {
                 Ok(st) => break st,
                 Err(_) if waited < 45_000 => {
-                    if waited == 0 {
+                    if waited == 0 && !ui::fancy_err() {
+                        // non-tty gets one plain line instead of a spinner
                         eprintln!("peat: db busy (another agent writing); waiting…");
                     }
+                    phase.tick(format!(
+                        "ledger busy — another writer · waiting {}s (gives up at 45s)",
+                        waited / 1000
+                    ));
                     std::thread::sleep(std::time::Duration::from_millis(delay_ms));
                     waited += delay_ms;
                     delay_ms = (delay_ms * 2).min(3_000);
                 }
                 Err(p) => std::panic::resume_unwind(p),
             }
-        }
+        };
+        phase.done();
+        st
     };
 
     match cli {
@@ -160,6 +169,7 @@ fn main() {
                 ));
             }
             let n = parsed.events.len();
+            let phase = ui::Phase::new(&format!("capturing {n} events"));
             st.wtx(|tx| {
                 for (id, env) in &parsed.events {
                     tx.upsert(id, env);
@@ -169,6 +179,7 @@ fn main() {
             // every subsequent open replays the whole journal, which after a
             // bulk backfill dominates brief latency
             st.checkpoint();
+            phase.done();
             eprintln!("peat: captured {n} events from session {}", parsed.session);
         }
 
@@ -274,6 +285,7 @@ fn main() {
             // result the truth of that day rather than a reconstruction.
             let scratch = std::env::temp_dir().join(format!("peat-asof-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&scratch);
+            let phase = ui::Phase::new(&format!("replaying {} events to {date}", events.len()));
             let mut past =
                 KeyedStream::<EventId, Envelope, _>::new(&scratch, peat_pipeline!());
             past.wtx(|tx| {
@@ -281,6 +293,7 @@ fn main() {
                     tx.upsert(id, e);
                 }
             });
+            phase.done();
             let query = task.join(" ");
             let mut brief = past.rtx(
                 |(days, files, (kw, vec, texts), (subjects, _), sessions, _ledger)| {
@@ -482,6 +495,7 @@ fn render(brief: &Brief) -> String {
     let tmpl = std::fs::read_to_string(peat_dir().join("brief.tmpl"))
         .unwrap_or_else(|_| DEFAULT_TMPL.to_string());
     let mut env = minijinja::Environment::new();
+    ui::add_style_filters(&mut env);
     env.add_template("brief", &tmpl).unwrap();
     env.get_template("brief")
         .unwrap()
