@@ -43,7 +43,7 @@
   .slot .sv .sub2 { display: block; font-weight: 400; font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--faint); margin-top: 3px; max-width: 280px; border: none; }
   .slot .sv .x { font-weight: 400; color: var(--faint); margin-left: 6px; cursor: pointer; }
   .slot .sv .x:hover { color: #8c3b2e; }
-  .sm { display: none; position: absolute; z-index: 30; top: calc(100% + 6px); left: -8px; min-width: 230px;
+  .sm { display: none; position: absolute; z-index: 30; top: calc(100% + 6px); left: -8px; min-width: 250px; max-width: 460px;
     background: var(--card); border: 1px solid var(--line); border-radius: 5px; box-shadow: 0 10px 30px rgba(40,30,10,.14); padding: 5px; }
   .slot.open .sm { display: block; }
   .sm .mi { display: flex; align-items: baseline; gap: 8px; padding: 7px 10px; border-radius: 3px; cursor: pointer; font-size: 14.5px; }
@@ -87,6 +87,19 @@
     border-top: 1px dashed #8c3b2e; margin: 2px 0 8px; padding-top: 3px; }
   #voice .rfoot { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--faint); margin-top: 8px; }
   #voice .gist { font-style: italic; }
+  .tourpin { position: absolute; z-index: 28; width: 22px; height: 22px; border-radius: 50%;
+    background: var(--ink); color: var(--paper); font-family: ui-monospace, Menlo, monospace; font-size: 12px;
+    display: none; align-items: center; justify-content: center; cursor: help; }
+  body.tour .tourpin { display: flex; }
+  .tourpin .tcard { display: none; position: absolute; left: 28px; top: -6px; z-index: 29; width: 300px;
+    background: var(--ink); color: var(--paper); border-radius: 5px; padding: 10px 12px;
+    font-family: Georgia, serif; font-size: 13px; line-height: 1.55; cursor: default; }
+  .tourpin .tcard b { color: #E5B54B; font-weight: 400; font-family: ui-monospace, Menlo, monospace; font-size: 11px;
+    display: block; letter-spacing: .1em; text-transform: uppercase; margin-bottom: 4px; }
+  .tourpin:hover .tcard { display: block; }
+  .tourpin.flip .tcard { left: auto; right: 28px; }
+  .sm .mi .prov { display: block; font-family: ui-monospace, Menlo, monospace; font-size: 10.5px; color: var(--faint); margin-top: 2px; letter-spacing: 0; }
+  .sm .mi .col { display: flex; flex-direction: column; }
   .lenskey { font-family: Georgia, serif; font-style: italic; font-size: 13px; color: var(--faint); min-height: 20px; margin-bottom: 18px; }
   .lenskey .sw { display: inline-block; width: 15px; height: 10px; border-radius: 2px; vertical-align: -1px; margin: 0 4px 0 2px; border: 1px solid rgba(0,0,0,.07); }
   #doc { font-size: 21px; line-height: 1.62; }
@@ -334,9 +347,12 @@
       </div>
     </div>
     <div class="chips">
+      <button id="seedchip" class="chip" title="drop a pre-written page tuned to the active library — then edit, pull, retract it live">⚡ demo page</button>
       <button id="constelchip" class="chip" title="your sentences as points in lens-space, over the active library's cloud">✦ constellation</button>
       <button id="readerchip" class="chip" title="one stranger reads each paragraph back to you — gists cached in a fold Table">👓 reader</button>
       <button id="galechip" title="replay scripted edits at 60/s for 10s against a naive full-rescan arm">▶ gale</button>
+      <button id="tourchip" class="chip" title="pins on every region explaining which bogkit crate makes it work">❔ how it's made</button>
+      <button id="enginechip" class="chip" title="the machine room — a live slide deck of the engine, in a new tab">⚙ machine room ↗</button>
     </div>
     <div id="constel" hidden>
       <div class="chead"><span class="cname">the constellation</span><span class="chow">every sentence is a point · left = concrete, right = abstract · empty space = where nobody has written</span></div>
@@ -381,6 +397,12 @@ let lib = { id: "canon", label: "novel" };
 let insp = null;      // pinned inspiration: { title, text } from the voices
 let lastHits = [];    // most recent voice-card hits
 const LIB_NOUN = { canon: "the canon", screen: "1,172 films", contracts: "10-K contracts", self: "your own writing" };
+const LIB_META = {
+  canon: { e: "📚", prov: "20 Gutenberg classics · 129,097 sentences · fetched from gutenberg.org by prep_corpus.py" },
+  screen: { e: "🎬", prov: "1,172 full film scripts · HuggingFace IsmaelMousa/movies · Apache-2.0" },
+  contracts: { e: "⚖️", prov: "5,984 exhibits from 2026 10-K filings · Stanford Materials Contracts Corpus" },
+  self: { e: "✍️", prov: "your own past writing · 185 sentences · embedded in-binary, never leaves this machine" },
+};
 const libNoun = () => LIB_NOUN[lib.id] || "the library";
 let lens = localStorage.getItem("soundings.lens") || "off";
 let dirtyAt = 0, syncTimer = null, lastSyncedDom = "";
@@ -1220,12 +1242,14 @@ function setLibrary(id) {
 function renderMast() {
   // type of writing
   const ready = canon.includes("ready ·");
-  $("libval").innerHTML = `${esc(lib.label)} <span class="caret">▾</span>` +
+  const lm = LIB_META[lib.id] || { e: "" };
+  $("libval").innerHTML = `${lm.e} ${esc(lib.label)} <span class="caret">▾</span>` +
     (ready ? "" : `<span class="sub2">${esc(canon)}</span>`);
   $("libmenu").replaceChildren(...libsInfo.map((l) => {
+    const m = LIB_META[l.id] || { e: "", prov: "" };
     const d = document.createElement("div");
     d.className = "mi" + (l.id === lib.id ? " on" : "") + (l.prepped ? "" : " dis");
-    d.innerHTML = `<span>${esc(l.label)}</span><span class="k">${l.prepped ? (l.id === lib.id ? "active" : "shelved") : "not prepped yet"}</span>`;
+    d.innerHTML = `<span>${m.e}</span><span class="col"><span>${esc(l.label)}</span><span class="prov">${esc(m.prov)}</span></span><span class="k">${l.prepped ? (l.id === lib.id ? "active" : "shelved") : "not prepped yet"}</span>`;
     if (l.prepped && l.id !== lib.id) d.onclick = () => setLibrary(l.id);
     return d;
   }));
@@ -1253,7 +1277,82 @@ function renderMast() {
 }
 refreshLibs();
 
-// ---------- the constellation: the essay as a walk through lens-space ----
+// ---------- demo pages: one click drops a page tuned to the active shelf ----
+const DEMO_SEEDS = {
+  canon: [
+    "The tide pools held their breath between waves. Every small thing in them had learned to wait. Patience, in that world, was not a virtue but a physics.",
+    "By August the harbor had forgiven the winter. Boats went out before light and came back low in the water, and the town counted its luck in crates of silver fish. Luck, the old men said, is only weather you have decided to take personally.",
+  ],
+  screen: [
+    "The warehouse door screams open. Reyes steps through with the flashlight low, sweeping the pallet rows. Water drips somewhere deep in the dark.",
+    "She freezes. A second set of footsteps stops half a beat after hers. Reyes kills the light and presses her back to the cold steel shelf. I know you're there, she says, to no one she can see.",
+  ],
+  contracts: [
+    "The Employee shall indemnify and hold harmless the Company against all losses, claims, and reasonable expenses arising from any breach of the obligations set forth in this Agreement. Such indemnification shall survive the termination of this Agreement for a period of three years.",
+    "If any provision of this Agreement is held to be unenforceable, the remaining provisions shall continue in full force and effect. The parties agree to negotiate in good faith a replacement provision that most closely reflects the original intent.",
+  ],
+  self: [
+    "Ten years in this city and I still measure it in cycles: the booms, the hollowing out, the stubborn refill. Every collapse taught me which parts of my work were load-bearing and which were decoration.",
+    "What I want to build next is smaller and more honest. A tool that watches quietly, earns trust in microseconds, and never speaks unless spoken to.",
+  ],
+};
+$("seedchip").onclick = () => {
+  const seeds = DEMO_SEEDS[lib.id] || DEMO_SEEDS.canon;
+  const ed = $("doc");
+  const hadText = !!domTextNow();
+  for (const para of seeds) {
+    const d = document.createElement("div");
+    d.className = "para";
+    d.textContent = para;
+    ed.appendChild(d);
+  }
+  ed.classList.remove("empty");
+  dirtyAt = Date.now();
+  ed.dispatchEvent(new InputEvent("input", { bubbles: true }));
+  // park the caret in the first seeded sentence so the lane answers at once
+  setTimeout(() => {
+    const blk = blocks()[hadText ? blocks().length - seeds.length : 0];
+    if (blk && blk.firstChild) {
+      const sel = getSelection(); const rng = document.createRange();
+      rng.setStart(blk.firstChild, Math.min(10, blk.firstChild.length)); rng.collapse(true);
+      sel.removeAllRanges(); sel.addRange(rng);
+      ed.focus(); penFollow();
+    }
+  }, 700);
+};
+
+// ---------- the tour: pins that name the crate behind each region ----------
+$("enginechip").onclick = () => window.open("/engine", "_blank");
+const TOUR = [
+  ["#mast", "1", "fold · reference libraries", "Each 'type of writing' is its own KeyedStream + anny HNSW shelf. Switching drops one stream and snapshot-fast-loads another in ~0.1s — voices, percentiles, and rewrite targets all re-aim."],
+  ["#sline", "2", "ese · the anchored axis", "Static embeddings compiled into the binary. Every tick is a sentence projected onto a sentence-anchored axis in ~3µs — inside the pipeline's Map, so retraction re-derives it exactly."],
+  ["#doc", "3", "fold · the document stream", "The page is a KeyedStream: every edit becomes retract+insert deltas, scores are a materialized view, Meter operators count the work from inside. Kill -9 and it resumes from disk."],
+  [".lane", "4", "anny · nearest voices", "HNSW over the active shelf, ~230µs a query. True deletion — retract a sentence and its cards release, no tombstones. Pulls draft with a guest LLM; the same ese math audits every draft."],
+  [".chips", "5", "views are free reads", "The constellation and the reader render already-maintained state. Reader gists are cached in a fold Table keyed by content hash — unchanged paragraphs are never re-read."],
+  ["#hud", "6", "the instrument strip", "Plain words or the engineer tape — both narrate Meter-counted deltas; the one stopwatch is labelled. The machine room (⚙) is the full deck of the engine."],
+];
+let tourOn = false;
+$("tourchip").onclick = () => {
+  tourOn = !tourOn;
+  $("tourchip").classList.toggle("on", tourOn);
+  document.body.classList.toggle("tour", tourOn);
+  if (tourOn && !document.querySelector(".tourpin")) {
+    for (const [sel, num, title, text] of TOUR) {
+      const host = document.querySelector(sel);
+      if (!host) continue;
+      if (getComputedStyle(host).position === "static") host.style.position = "relative";
+      const pin = document.createElement("span");
+      pin.className = "tourpin" + (sel === ".lane" || sel === ".chips" ? " flip" : "");
+      pin.style.top = "-8px";
+      pin.style.left = sel === ".lane" ? "auto" : "-30px";
+      if (sel === ".lane") pin.style.right = "-6px";
+      if (sel === "#hud") { pin.style.top = "-10px"; pin.style.left = "10px"; }
+      pin.contentEditable = "false";
+      pin.innerHTML = `${num}<span class="tcard"><b>${title}</b>${text}</span>`;
+      host.appendChild(pin);
+    }
+  }
+};
 let constelOn = false, cloudPts = [], cloudFor = "";
 $("constelchip").onclick = async () => {
   constelOn = !constelOn;
