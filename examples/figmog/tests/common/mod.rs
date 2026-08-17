@@ -99,6 +99,34 @@ pub fn fixture_v2() -> Value {
     v
 }
 
+/// A second, small, distinct fixture — used by the multi-file `serve` e2e
+/// (`tests/serve.rs`) to prove `file`-argument routing actually reaches a
+/// *different* mirror rather than always answering from the first one.
+/// Deliberately tiny (3 nodes) and textually disjoint from [`fixture_v1`]:
+/// its one TEXT node's `characters` contains "zephyr", a word that appears
+/// nowhere in `fixture_v1`, so a search hit for it proves routing.
+#[allow(dead_code)] // not every test binary that includes this module calls it
+pub fn fixture_other() -> Value {
+    json!({
+        "name": "OtherFixture",
+        "version": "1",
+        "lastModified": "2026-08-03T00:00:00Z",
+        "document": {
+            "id": "0:0", "name": "Document", "type": "DOCUMENT",
+            "children": [
+                { "id": "0:1", "name": "Page 1", "type": "CANVAS", "children": [
+                    { "id": "1:1", "name": "Banner", "type": "TEXT",
+                      "characters": "Feel the zephyr breeze",
+                      "children": [] }
+                ] }
+            ]
+        },
+        "components": {},
+        "componentSets": {},
+        "styles": {}
+    })
+}
+
 /// Materialize [`fixture_v1`] into a DB via `pull --from-file` and return the
 /// (tempdir, db-path) pair every read command — CLI or `serve` — needs.
 /// Shared so `tests/cli.rs` and `tests/serve.rs` build the same fixture the

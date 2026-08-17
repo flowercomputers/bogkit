@@ -51,10 +51,40 @@ fn spawn_serve_with_args(
     extra_args: &[&str],
 ) -> (ChildGuard, ChildStdin, Receiver<String>) {
     let bin = assert_cmd::cargo::cargo_bin("figmog");
-    let mut child = Command::new(bin)
-        .args(["serve", "--no-watch", "--db"])
+    let mut cmd = Command::new(bin);
+    cmd.args(["serve", "--no-watch", "--db"])
         .arg(db)
-        .args(extra_args)
+        .args(extra_args);
+    spawn_child(cmd)
+}
+
+/// Spawn `figmog serve --no-watch --no-upstream --figmog-root <root>
+/// <files...>` (spec §14's multi-file surface, with the hidden
+/// `--figmog-root` testability flag pointed at a pre-built fixture root),
+/// with `FIGMA_TOKEN` scrubbed from the child's environment — every
+/// multi-file e2e that touches `figmog_open` needs the missing-token
+/// isError, not whatever real token the test runner's own shell happens to
+/// export.
+fn spawn_serve_multifile(
+    root: &std::path::Path,
+    files: &[&str],
+) -> (ChildGuard, ChildStdin, Receiver<String>) {
+    let bin = assert_cmd::cargo::cargo_bin("figmog");
+    let mut cmd = Command::new(bin);
+    cmd.args(["serve", "--no-watch", "--no-upstream", "--figmog-root"])
+        .arg(root)
+        .args(files)
+        .env_remove("FIGMA_TOKEN");
+    spawn_child(cmd)
+}
+
+/// Shared plumbing behind every `spawn_serve*` helper: pipe stdio, spawn,
+/// drain stderr for debugging visibility (never asserted on), and feed
+/// stdout lines into a channel — driving the child through a channel
+/// (rather than reading its stdout inline) means a hung child blocks only
+/// the bounded `recv_timeout` in [`recv`], never the test thread itself.
+fn spawn_child(mut cmd: Command) -> (ChildGuard, ChildStdin, Receiver<String>) {
+    let mut child = cmd
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -84,6 +114,38 @@ fn spawn_serve_with_args(
 
     (ChildGuard(child), stdin, rx)
 }
+
+/// Pre-build one fixture store per `(key, fixture)` pair under a fresh temp
+/// `--figmog-root` layout — `<root>/<key>/db`, exactly the path
+/// [`sessions::open_session`](../src/sessions.rs) derives (spec §14) — each
+/// via `figmog pull --from-file`, so the multi-file `serve` e2e can start
+/// against pre-populated mirrors without ever touching the network. Returns
+/// the tempdir; the caller must keep it alive for the duration of the test.
+fn build_fixture_root(entries: &[(&str, Value)]) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    for (key, fixture) in entries {
+        let resp = dir.path().join(format!("{key}.json"));
+        std::fs::write(&resp, serde_json::to_string(fixture).unwrap()).unwrap();
+        let db = dir.path().join(key).join("db");
+        assert_cmd::Command::cargo_bin("figmog")
+            .unwrap()
+            .args(["pull", "--from-file"])
+            .arg(&resp)
+            .arg("--db")
+            .arg(&db)
+            .assert()
+            .success();
+    }
+    dir
+}
+
+/// Bare file keys (spec §14: 10+ alphanumeric chars — see `ident::parse_file_ref`),
+/// deliberately readable rather than realistic, for the multi-file e2e
+/// tests below. `KEY_A` mirrors [`common::fixture_v1`] and is always the
+/// first startup file (so the default-routing rule picks it); `KEY_B`
+/// mirrors [`common::fixture_other`].
+const KEY_A: &str = "figmogkeyoneaaaa1111";
+const KEY_B: &str = "figmogkeytwobbbb2222";
 
 /// Write one JSON-RPC frame, newline-delimited (the protocol this crate's
 /// `mcp`/`serve` modules speak).
@@ -528,4 +590,316 @@ fn serve_e2e_proxied_tool_lists_round_trips_and_second_call_is_cache_served() {
     fake_handle
         .join()
         .expect("fake upstream server thread should finish after exactly 4 requests");
+}
+
+// ---- multi-file serve e2e (spec §14) ----
+//
+// Two pre-built stores under a temp `--figmog-root` (built via `pull
+// --from-file --db <root>/<key>/db`, never touching the network), started
+// with BOTH keys as positional args, proves the whole v4 surface: 19 tools,
+// every local tool's optional `file` schema property, `figmog_files`,
+// `file`-argument routing to a *specific* mirror, default-file routing on
+// an omitted `file`, and `figmog_open`'s isError on a missing token. A
+// second spawn with zero startup files covers the omitted-`file`-with-no-
+// default error text a single default file can never trigger.
+
+#[test]
+fn serve_e2e_multi_file_routes_by_file_arg_and_first_startup_key_is_default() {
+    let root = build_fixture_root(&[
+        (KEY_A, common::fixture_v1()),
+        (KEY_B, common::fixture_other()),
+    ]);
+    let (mut guard, mut stdin, rx) = spawn_serve_multifile(root.path(), &[KEY_A, KEY_B]);
+
+    send(
+        &mut stdin,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {"protocolVersion": "2025-06-18", "capabilities": {}},
+        }),
+    );
+    let resp = recv(&rx);
+    assert_eq!(resp["id"], json!(1));
+    send(
+        &mut stdin,
+        &json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+    );
+
+    // -- tools/list: 19 tools; every tool but figmog_open/figmog_files
+    // carries an *optional* `file` property, figmog_open's `file` is
+    // required, figmog_files takes none (spec §14). --
+    send(
+        &mut stdin,
+        &json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
+    );
+    let resp = recv(&rx);
+    let tools = resp["result"]["tools"].as_array().expect("tools array");
+    assert_eq!(tools.len(), 19, "tools: {tools:#?}");
+    for tool in tools {
+        let name = tool["name"].as_str().expect("tool name");
+        let schema = &tool["inputSchema"];
+        let required: Vec<Value> = schema["required"].as_array().cloned().unwrap_or_default();
+        match name {
+            "figmog_open" => {
+                assert!(
+                    schema["properties"]["file"].is_object(),
+                    "figmog_open should take a file property"
+                );
+                assert!(
+                    required.contains(&json!("file")),
+                    "figmog_open's file should be required"
+                );
+            }
+            "figmog_files" => {
+                assert!(
+                    schema["properties"].get("file").is_none(),
+                    "figmog_files should not take a file argument"
+                );
+            }
+            _ => {
+                assert!(
+                    schema["properties"]["file"].is_object(),
+                    "{name} is missing the optional file routing property"
+                );
+                assert!(
+                    !required.contains(&json!("file")),
+                    "{name}'s file property must be optional"
+                );
+            }
+        }
+    }
+
+    // -- figmog_files: both mirrors, in open order, KEY_A (first startup
+    // FILE) is the default. --
+    let resp = call(&mut stdin, &rx, 3, "figmog_files", json!({}));
+    assert_eq!(resp["result"]["isError"], json!(false));
+    let rows = result_json(&resp);
+    let rows = rows.as_array().expect("files array");
+    assert_eq!(rows.len(), 2, "files: {rows:#?}");
+    assert_eq!(rows[0]["key"], json!(KEY_A));
+    assert_eq!(rows[0]["name"], json!("Fixture"));
+    assert_eq!(rows[0]["default"], json!(true));
+    assert_eq!(rows[1]["key"], json!(KEY_B));
+    assert_eq!(rows[1]["name"], json!("OtherFixture"));
+    assert_eq!(rows[1]["default"], json!(false));
+
+    // -- figmog_search {query: "zephyr", file: KEY_B} hits: "zephyr" only
+    // appears in fixture_other's one TEXT node, so a hit here proves the
+    // `file` argument actually reached the *other* mirror. --
+    let resp = call(
+        &mut stdin,
+        &rx,
+        4,
+        "figmog_search",
+        json!({"query": "zephyr", "file": KEY_B}),
+    );
+    assert_eq!(resp["result"]["isError"], json!(false));
+    let hits = result_json(&resp);
+    let hits = hits.as_array().expect("hits array");
+    assert!(!hits.is_empty(), "expected a 'zephyr' hit in {KEY_B}");
+    assert_eq!(hits[0]["id"], json!("1:1"));
+
+    // -- same query with `file` omitted routes to the default (KEY_A /
+    // fixture_v1, which never mentions "zephyr" anywhere) and misses —
+    // proving omission really does route to the default session rather
+    // than reusing whichever mirror answered the previous call. --
+    let resp = call(
+        &mut stdin,
+        &rx,
+        5,
+        "figmog_search",
+        json!({"query": "zephyr"}),
+    );
+    assert_eq!(resp["result"]["isError"], json!(false));
+    let hits = result_json(&resp);
+    assert!(
+        hits.as_array().expect("hits array").is_empty(),
+        "default file should have no 'zephyr' hits: {hits:?}"
+    );
+
+    // -- figmog_status {file: KEY_B}: the *other* file's own name. --
+    let resp = call(&mut stdin, &rx, 6, "figmog_status", json!({"file": KEY_B}));
+    assert_eq!(resp["result"]["isError"], json!(false));
+    assert_eq!(result_json(&resp)["name"], json!("OtherFixture"));
+
+    // -- figmog_open {file: "garbagekey1234567890"}: a brand-new key
+    // auto-opens (no pull yet — see sessions::SessionManager::open), then
+    // figmog_open's own pull fails cleanly because FIGMA_TOKEN is scrubbed
+    // from this child's environment (spawn_serve_multifile). --
+    let resp = call(
+        &mut stdin,
+        &rx,
+        7,
+        "figmog_open",
+        json!({"file": "garbagekey1234567890"}),
+    );
+    assert_eq!(resp["result"]["isError"], json!(true));
+
+    drop(stdin);
+    let status = wait_with_timeout(&mut guard.0, TIMEOUT);
+    assert!(status.success(), "figmog serve exited with {status:?}");
+}
+
+/// Zero startup files (spec §14: valid, token-free, idle startup) — the
+/// only shape in which the omitted-`file`-with-no-default error is
+/// triggerable at all (a single startup file, or an established default,
+/// always resolves the omitted case; two auto-opened mirrors are covered
+/// by `sessions.rs`'s own unit tests). Proves the error names both new
+/// tools, per spec §14's resolution rule.
+#[test]
+fn serve_e2e_multi_file_zero_startup_omitted_file_errors_naming_figmog_open() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut guard, mut stdin, rx) = spawn_serve_multifile(root.path(), &[]);
+
+    send(
+        &mut stdin,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {"protocolVersion": "2025-06-18", "capabilities": {}},
+        }),
+    );
+    let resp = recv(&rx);
+    assert_eq!(resp["id"], json!(1));
+    send(
+        &mut stdin,
+        &json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+    );
+
+    // figmog_files: nothing mirrored yet.
+    let resp = call(&mut stdin, &rx, 2, "figmog_files", json!({}));
+    assert_eq!(resp["result"]["isError"], json!(false));
+    assert_eq!(result_json(&resp), json!([]));
+
+    // A tool call with `file` omitted and no default mirrored file:
+    // isError naming figmog_open/figmog_files, not a silent empty answer.
+    let resp = call(&mut stdin, &rx, 3, "figmog_status", json!({}));
+    assert_eq!(resp["result"]["isError"], json!(true));
+    let text = resp["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        text.contains("figmog_open"),
+        "error should name figmog_open: {text}"
+    );
+    assert!(
+        text.contains("figmog_files"),
+        "error should name figmog_files: {text}"
+    );
+
+    drop(stdin);
+    let status = wait_with_timeout(&mut guard.0, TIMEOUT);
+    assert!(status.success(), "figmog serve exited with {status:?}");
+}
+
+/// `--db <path>` with no FILE positional predates multi-file serve (spec
+/// §14 non-goal: CLI multi-file addressing is out of scope) — the single
+/// session it opens has no real Figma key to pull with (see
+/// `sessions::open_session_at`'s `network_key: None` case). Any tool that
+/// forces a pull must fail with the same clean pre-v4 message, never panic
+/// or attempt a network call against a filesystem-path-shaped "key".
+#[test]
+fn serve_e2e_db_override_with_no_file_figmog_sync_errors_no_file_key() {
+    let (_dir, db) = common::fixture_db();
+    let (mut guard, mut stdin, rx) = spawn_serve(&db);
+
+    send(
+        &mut stdin,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {"protocolVersion": "2025-06-18", "capabilities": {}},
+        }),
+    );
+    let resp = recv(&rx);
+    assert_eq!(resp["id"], json!(1));
+    send(
+        &mut stdin,
+        &json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+    );
+
+    let resp = call(&mut stdin, &rx, 2, "figmog_sync", json!({}));
+    assert_eq!(resp["result"]["isError"], json!(true));
+    let text = resp["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        text.contains("no file key"),
+        "expected the no-file-key message, got: {text}"
+    );
+    assert!(
+        !text.to_lowercase().contains("panic"),
+        "must not panic: {text}"
+    );
+
+    drop(stdin);
+    let status = wait_with_timeout(&mut guard.0, TIMEOUT);
+    assert!(status.success(), "figmog serve exited with {status:?}");
+}
+
+/// Documents an accepted divergence (see this crate's README, "Multiple
+/// files" section, and `serve.rs::build_sessions`'s doc comment):
+/// `.figmog/current` is only refreshed by a startup pull that actually
+/// *ran* (`!no_watch && !session.mirrored`). `--no-watch` never pulls at
+/// startup — not even against a pre-built store under the default
+/// `.figmog` root — so `figmog serve <key> --no-watch` (no `--db`) must
+/// NOT write `.figmog/current`, even though pre-v4 `figmog serve <key>`
+/// (which always watched) did. A real pull that writes it (an initial
+/// watch-mode pull against an empty store, or a later watch-tick pull)
+/// needs a live network + token and is deliberately not exercised here —
+/// this test only pins the `--no-watch` half, which is fully offline.
+#[test]
+fn serve_e2e_no_watch_default_root_startup_does_not_write_figmog_current() {
+    let cwd = tempfile::tempdir().unwrap();
+    let response = cwd.path().join("resp.json");
+    std::fs::write(
+        &response,
+        serde_json::to_string(&common::fixture_v1()).unwrap(),
+    )
+    .unwrap();
+    let db = cwd.path().join(".figmog").join(KEY_A).join("db");
+    assert_cmd::Command::cargo_bin("figmog")
+        .unwrap()
+        .args(["pull", "--from-file"])
+        .arg(&response)
+        .arg("--db")
+        .arg(&db)
+        .assert()
+        .success();
+
+    let bin = assert_cmd::cargo::cargo_bin("figmog");
+    let mut cmd = Command::new(bin);
+    cmd.args(["serve", "--no-watch", "--no-upstream", KEY_A])
+        .current_dir(cwd.path())
+        .env_remove("FIGMA_TOKEN");
+    let (mut guard, mut stdin, rx) = spawn_child(cmd);
+
+    send(
+        &mut stdin,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {"protocolVersion": "2025-06-18", "capabilities": {}},
+        }),
+    );
+    let resp = recv(&rx);
+    assert_eq!(resp["id"], json!(1));
+    send(
+        &mut stdin,
+        &json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+    );
+
+    drop(stdin);
+    let status = wait_with_timeout(&mut guard.0, TIMEOUT);
+    assert!(status.success(), "figmog serve exited with {status:?}");
+
+    assert!(
+        !cwd.path().join(".figmog").join("current").exists(),
+        "--no-watch startup against a pre-built store must not write .figmog/current"
+    );
 }

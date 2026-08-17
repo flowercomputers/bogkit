@@ -80,11 +80,12 @@ is one process — fjall is single-writer, so a standalone MCP server would
 fight `figmog watch` for the store lock — that owns the mirror, polls for
 changes exactly like `watch`, and (unless `--no-upstream`) also attaches
 Figma's native desktop MCP server as a **cached proxy**: `tools/list`
-merges figmog's 17 local `figmog_*` tools with every tool the desktop
+merges figmog's 19 local `figmog_*` tools with every tool the desktop
 server advertises, verbatim, so an agent gets one server, one connection,
 and the full native tool surface (`get_design_context`, `get_screenshot`,
 `get_variable_defs`, code-generation tools, …) without figmog reimplementing
-any of it.
+any of it. `figmog serve` also mirrors more than one file in one process —
+see "Multiple files" below.
 
 ```console
 $ cargo build -p figmog
@@ -112,6 +113,59 @@ first. (`figmog tools` never opens the store, so it works fine even while
 a second `figmog serve` or `figmog watch` against a store one of them
 already owns fails with the same clean message rather than a raw panic.
 
+### Multiple files
+
+`figmog serve [FILE]...` takes zero or more Figma file URLs/keys at
+startup — one process can mirror several files. Every local `figmog_*`
+tool gains an optional `file` argument (a URL or bare key, parsed the same
+way as the CLI's own file arguments): pass it to route the call at a
+specific mirror, auto-opening it (spending one Tier-1 pull) the first time
+an agent references it; omit it and the call answers from the *default*
+file — the first `FILE` given at startup, or whichever got mirrored first
+if none were.
+
+```console
+$ claude mcp add figmog -- /absolute/path/to/clog/target/debug/figmog serve
+```
+
+Zero files at startup is valid and needs no `FIGMA_TOKEN` up front — the
+server starts empty and mirrors files as an agent references them by URL.
+This is the shape to reach for with `claude mcp add` when you don't want
+to commit to one file ahead of time; passing one or more files at startup
+(as in the single-file examples above) still works exactly as before, and
+the first one becomes the default so every existing single-file tool call
+still needs no `file` argument at all.
+
+Two tools manage the mirror set directly:
+
+- `figmog_open {file}` — mirror a file now (spends one Tier-1 pull);
+  returns its churn and node count. Creates the mirror if it's new, or
+  re-syncs it if already mirrored.
+- `figmog_files` — list every mirrored file: key, name, version, node
+  count, last synced time, and which one (if any) is the default.
+
+**Proxied tools caveat (spec §14, verbatim):** "the desktop server
+operates on the file open in the Figma app; the `file` argument does not
+route proxied tools." A `file` argument sent on a non-`figmog_*` call is
+simply ignored — the desktop server has no concept of "which file", so
+`get_code`/`get_design_context`/etc. always answer for whatever file is
+open in the Figma app, independent of any mirror `figmog serve` manages.
+
+**Accepted divergence:** `.figmog/current` — the file `pull`/`watch`/plain
+`figmog serve <file>` remember so later CLI commands can drop the file
+argument — is only refreshed by a startup pull that actually *ran*. A
+startup file whose store is already populated (including every
+`--no-watch` invocation, which never pulls at startup at all) leaves
+`.figmog/current` untouched; only a genuine network pull — the initial
+watch-mode pull against an empty store, or a later watch-tick pull —
+writes it.
+
+CLI commands (`pull`, `watch`, `status`, and the rest) are unchanged and
+still address exactly one file via `--db`/`.figmog/current` — multi-file
+addressing is a `serve` capability only (spec §14 non-goal: no CLI
+multi-file addressing, no cross-file queries, no idle-session eviction —
+a session opened stays open for the process's life).
+
 ### The cached proxy
 
 Proxying targets **paid Dev/Full seats**: it requires the Figma desktop
@@ -124,8 +178,8 @@ process — no mid-session re-probe, so restart `figmog serve` once the
 desktop server is reachable to attach it.
 
 - `--upstream <url>` overrides the desktop server's URL.
-- `--no-upstream` disables proxying entirely — figmog serves its 17
-  `figmog_*` tools only, exactly like v2.
+- `--no-upstream` disables proxying entirely — figmog serves its 19
+  `figmog_*` tools only, exactly like v2 (plus v4's multi-file surface).
 - **Namespace rule:** `figmog_*` tools are always local; every other tool
   name is always proxied. If the desktop server ever advertised a tool
   named `figmog_*`, figmog would drop it and log a warning rather than
@@ -177,7 +231,9 @@ first`.
 ### Core read tools
 
 Each mirrors a CLI read command one-to-one and answers instantly from the
-local store — zero Figma API cost, zero rate-limit exposure.
+local store — zero Figma API cost, zero rate-limit exposure. Every tool
+below also takes an optional `file` argument (URL or key) routing the call
+at a specific mirror — see "Multiple files" above.
 
 | tool | input | reads |
 |---|---|---|
@@ -199,7 +255,8 @@ local store — zero Figma API cost, zero rate-limit exposure.
 The local mirror's unfair advantage: full-file answers no rate-limited API
 surface could offer, each a read-only scan/join over the same indexes.
 Every one has a matching CLI subcommand, so the CLI/tool surface stays
-one-to-one.
+one-to-one, and (like the core read tools above) each also takes an
+optional `file` argument.
 
 | tool | CLI equivalent | input | answer |
 |---|---|---|---|
@@ -220,7 +277,8 @@ figmog for everything:
 > plus a cached proxy to Figma's native capabilities. Call figmog for
 > everything Figma-related. figmog_* tools answer from the local mirror
 > at zero API cost; native-named tools (get_*, …) go to Figma, cached by
-> file version where possible.
+> file version where possible. Pass the Figma file URL as the `file`
+> argument when you have one; figmog mirrors files on first reference.
 
 Every figmog-native tool lives in the `figmog_*` namespace, so it never
 collides by name with a proxied tool; local tools only ever read the
@@ -229,7 +287,7 @@ that spends Figma's Tier-1 rate budget (a forced pull) — every other
 local tool call is instant, free, and backed by the same
 fold-materialized indexes the CLI reads. Proxied tools go through the
 cache described above. `--no-upstream` recovers the older, "second,
-separate server" shape (v2) if that's ever preferable — figmog's 17
+separate server" shape (v2) if that's ever preferable — figmog's 19
 `figmog_*` tools alongside Figma's own, unrelated MCP connection.
 
 ## Variables

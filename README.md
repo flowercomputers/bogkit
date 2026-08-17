@@ -53,8 +53,8 @@ In this directory you'll find a few examples that show bog style databases in va
 - `chat` — a chat backend where fold is the source of truth and every update is broadcast to clients over a websocket. `cargo run -p chat`, then open http://localhost:3000
 - `search` — text search three ways over one document stream: BM25 keyword search, HNSW semantic search over ese embeddings, and hybrid rank fusion. A good base for agent memory or document search projects. `cargo run -p search`
 - `figmog` — a local mirror of a Figma file: sync once, then search, walk, and
-  query components/styles/variables with zero API calls, and an MCP server
-  (`figmog serve`), with a built-in load-test demo (`figmog bench`).
+  query components/styles/variables with zero API calls, and a multi-file MCP
+  server (`figmog serve`), with a built-in load-test demo (`figmog bench`).
   `cargo run -p figmog -- --help`
 
 ## More about Bog
