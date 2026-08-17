@@ -147,6 +147,14 @@ pub fn file_session(k: &Keyed<EventId, Envelope>) -> Option<Keyed<String, String
     }
 }
 
+/// Whether a text row is distilled enough to embed. Vectors are for
+/// beliefs and session summaries; the user-message firehose stays
+/// keyword-searchable (Bm25) but is not worth O(n) graph rebuild cost.
+pub fn embeddable(t: &Keyed<EventId, TextRow>) -> Option<Keyed<EventId, [f32; ese::DIMENSIONS]>> {
+    (t.val.kind != "user")
+        .then(|| Keyed::new(t.key.clone(), ese::encode_single(&t.val.text)))
+}
+
 pub fn searchable(k: &Keyed<EventId, Envelope>) -> Option<Keyed<EventId, TextRow>> {
     let e = &k.val;
     let (text, kind, cited) = match &e.kind {
@@ -269,13 +277,8 @@ macro_rules! peat_pipeline {
                         },
                         terminal::search::Bm25::new("kw"),
                     ),
-                    Map::new(
-                        |t: &fold::pipeline::Keyed<$crate::event::EventId, p::TextRow>| {
-                            fold::pipeline::Keyed::new(
-                                t.key.clone(),
-                                ese::encode_single(&t.val.text),
-                            )
-                        },
+                    FilterMap::new(
+                        p::embeddable,
                         terminal::search::Hnsw::<
                             $crate::event::EventId,
                             f32,

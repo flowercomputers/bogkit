@@ -210,15 +210,10 @@ where
 
     fn init(&mut self, init: &mut PipelineInitCtx<'_>) {
         let ks = init.keyspace(&self.name);
-        // recover the graph from the vectors persisted by earlier runs
-        self.state.borrow_mut().rebuild(
-            self.metric,
-            self.seed,
-            init.snapshot().iter(&ks).map(|kv| {
-                let (k, v) = kv.into_inner().unwrap();
-                (k.to_vec(), v.to_vec())
-            }),
-        );
+        // defer graph recovery to first use (the same lazy path aborted
+        // transactions take): opening a stream must not pay an O(n) graph
+        // rebuild when this sink may never be touched
+        self.state.borrow_mut().stale = true;
         self.ks = Some(ks);
     }
 
