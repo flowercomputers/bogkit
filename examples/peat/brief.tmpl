@@ -16,7 +16,7 @@
 {%- if last_session %}
 
 {{ "last session" | h1 }}{{ (" (" ~ last_session.age_hours ~ "h ago" ~ (", " ~ last_session.branch if last_session.branch else "") ~ "):") | dim }}
-  {{ last_session.final_msg }}
+  {{ last_session.final_msg | clip(400) }}
 {%- endif %}
 {%- if files %}
 
@@ -29,7 +29,7 @@
 
 {{ "possibly relevant (judge each; origin and age shown):" | h1 }}
 {%- for r in relevant %}
-  {{ ("[" ~ r.tag ~ "]") | dim }} {{ r.text }}{% if not loop.last %}
+  {{ ("[" ~ r.tag ~ "]") | dim }} {{ r.text | clip(160) }}{% if not loop.last %}
 {% endif %}
 {%- endfor %}
 {%- endif %}
@@ -37,7 +37,7 @@
 
 {{ "current understanding (agent-asserted, newest wins):" | h1 }}
 {%- for s in subjects %}
-  {{ s.subject | accent }}{{ (" (" ~ s.count ~ " obs") | dim }}{% if not s.cited %}{{ ", uncited" | warn }}{% endif %}{{ (", " ~ s.age ~ "):") | dim }} {{ s.text }}{% if not loop.last %}
+  {{ s.subject | accent }}{{ (" (" ~ s.count ~ " obs") | dim }}{% if not s.cited %}{{ ", uncited" | warn }}{% endif %}{{ (", " ~ s.age ~ "):") | dim }} {{ s.text | clip(120) }}{% if not loop.last %}
 {% endif %}
 {%- endfor %}
 {%- endif %}

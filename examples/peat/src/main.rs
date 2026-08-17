@@ -371,7 +371,7 @@ beside the shared db); pass --session"
                             "age": age_label(now, t.ts_ms),
                             "session": short_sess(&id.0),
                             "seq": id.1,
-                            "text": clip(&t.text, 220),
+                            "text": t.text,
                         }))
                     })
                     .take(limit)
@@ -388,7 +388,7 @@ beside the shared db); pass --session"
                         h["kind"].as_str().unwrap_or("?"),
                         if h["kind"] == "obs" && h["cited"] == true { "·cited" } else { "" },
                         h["age"].as_str().unwrap_or(""),
-                        h["text"].as_str().unwrap_or(""),
+                        clip(h["text"].as_str().unwrap_or(""), 220),
                     );
                 }
             }
@@ -537,7 +537,7 @@ pub fn assemble<R: Readable>(
             serde_json::json!({
                 "age_hours": (now.saturating_sub(s.end_ms)) / 3_600_000,
                 "branch": s.branch,
-                "final_msg": clip(&s.final_msg, 400),
+                "final_msg": s.final_msg,
             })
         });
 
@@ -594,7 +594,7 @@ pub fn assemble<R: Readable>(
             }
             relevant.push(serde_json::json!({
                 "tag": format!("{tag} · {}", age_label(now, t.ts_ms)),
-                "text": clip(&t.text, 160),
+                "text": t.text,
             }));
         }
     }
@@ -611,7 +611,7 @@ pub fn assemble<R: Readable>(
                 "count": s.count,
                 "cited": s.cited,
                 "age": age_label(now, s.last_ms),
-                "text": clip(&s.text, 120),
+                "text": s.text,
             })
         })
         .collect();
@@ -637,6 +637,9 @@ fn render(brief: &Brief) -> String {
         .unwrap_or_else(|_| DEFAULT_TMPL.to_string());
     let mut env = minijinja::Environment::new();
     ui::add_style_filters(&mut env);
+    // display-time truncation lives HERE, not in the JSON — --json is the
+    // API and carries full text; templates opt into clipping
+    env.add_filter("clip", |s: String, n: usize| clip(&s, n));
     env.add_template("brief", &tmpl).unwrap();
     env.get_template("brief")
         .unwrap()
