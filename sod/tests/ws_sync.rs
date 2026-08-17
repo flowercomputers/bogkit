@@ -33,8 +33,9 @@ fn two_processes_converge() {
     let mut attempts = 0;
     loop {
         match sync_with(&format!("ws://{ADDR}"), &mut client, SCHEMA) {
-            Ok(skipped) => {
-                assert!(skipped.is_empty(), "clean sync must skip nothing");
+            Ok(report) => {
+                assert!(report.skipped.is_empty(), "clean sync must skip nothing");
+                assert_eq!(report.peer, ReplicaId([1; 16]), "report names the peer");
                 break;
             }
             Err(e) => {

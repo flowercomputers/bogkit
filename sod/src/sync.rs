@@ -35,10 +35,26 @@ pub enum Msg {
     Hello {
         protocol: u16,
         schema: u32,
+        /// The sender's replica id — peers are identifiable, which is
+        /// what lets applications show "N bogs connected".
+        id: crate::ReplicaId,
         vector: VersionVector,
     },
     Frames(Vec<Frame>),
     Done,
+}
+
+/// The outcome of one completed sync session.
+#[derive(Debug, Clone)]
+pub struct SyncReport {
+    /// Who we synced with.
+    pub peer: crate::ReplicaId,
+    /// The peer's version vector as of its `Hello`.
+    pub peer_vector: VersionVector,
+    /// Per-origin refusals recorded while the session continued (SOD-2);
+    /// at most one per origin. Surface these — a silently-refused feed is
+    /// a feed that silently stopped replicating.
+    pub skipped: Vec<SodError>,
 }
 
 /// One replica's half of one sync session.
@@ -46,6 +62,7 @@ pub struct Session {
     schema: u32,
     sent_done: bool,
     peer_done: bool,
+    peer: Option<(crate::ReplicaId, VersionVector)>,
     skipped: Vec<SodError>,
     // origins already recorded in `skipped` — one refusal per origin per
     // session, so a hostile peer flooding forged frames cannot grow
@@ -61,6 +78,7 @@ impl Session {
             schema,
             sent_done: false,
             peer_done: false,
+            peer: None,
             skipped: Vec::new(),
             skipped_origins: Default::default(),
         }
@@ -71,6 +89,7 @@ impl Session {
         Msg::Hello {
             protocol: PROTOCOL_VERSION,
             schema: self.schema,
+            id: r.id(),
             vector: r.vector().clone(),
         }
     }
@@ -90,6 +109,7 @@ impl Session {
             Msg::Hello {
                 protocol,
                 schema,
+                id,
                 vector,
             } => {
                 if protocol != PROTOCOL_VERSION || schema != self.schema {
@@ -98,6 +118,7 @@ impl Session {
                         theirs: (protocol, schema),
                     });
                 }
+                self.peer = Some((id, vector.clone()));
                 let poisoned: Vec<_> = r.poisoned().copied().collect();
                 let mut out: Vec<Msg> = Vec::new();
                 for (origin, theirs, _have) in r.vector().ahead_of(&vector) {
@@ -149,20 +170,28 @@ impl Session {
         &self.skipped
     }
 
-    /// Consume the session, yielding its recorded refusals.
-    pub fn into_skipped(self) -> Vec<SodError> {
-        self.skipped
+    /// Consume the session, yielding its report.
+    ///
+    /// # Panics
+    /// Panics if the session never saw the peer's `Hello` — transports
+    /// always exchange Hellos before anything else.
+    pub fn report(self) -> SyncReport {
+        let (peer, peer_vector) = self.peer.expect("session saw no Hello");
+        SyncReport {
+            peer,
+            peer_vector,
+            skipped: self.skipped,
+        }
     }
 }
 
-/// Drive a complete session between two in-process replicas. Returns the
-/// per-origin refusals both sides recorded while continuing (SOD-2) —
-/// empty on a fully clean sync.
+/// Drive a complete session between two in-process replicas. Returns
+/// `(a's report, b's report)`.
 pub fn sync_pair<E1: Engine, L1: LogStore, E2: Engine, L2: LogStore>(
     a: &mut Replica<E1, L1>,
     b: &mut Replica<E2, L2>,
     schema: u32,
-) -> Result<Vec<SodError>, SodError> {
+) -> Result<(SyncReport, SyncReport), SodError> {
     use std::collections::VecDeque;
     let mut sa = Session::new(schema);
     let mut sb = Session::new(schema);
@@ -178,9 +207,7 @@ pub fn sync_pair<E1: Engine, L1: LogStore, E2: Engine, L2: LogStore>(
             to_b.extend(sa.on_msg(a, m)?);
         }
     }
-    let mut skipped = sa.skipped;
-    skipped.extend(sb.skipped);
-    Ok(skipped)
+    Ok((sa.report(), sb.report()))
 }
 
 #[cfg(test)]
@@ -207,6 +234,30 @@ mod tests {
         assert_eq!(a.vector(), b.vector());
         assert_eq!(a.engine().view_bytes(), b.engine().view_bytes());
         assert_eq!(a.watermark(), b.watermark());
+    }
+
+    #[test]
+    fn hello_carries_id() {
+        let a = replica(1);
+        let s = Session::new(1);
+        match s.hello(&a) {
+            Msg::Hello { id, .. } => assert_eq!(id, ReplicaId([1; 16])),
+            other => panic!("expected hello, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sync_pair_reports_peers() {
+        let mut a = replica(1);
+        let mut b = replica(2);
+        a.commit(vec![(b"x".to_vec(), 1)], 10).unwrap();
+        let b_vector_before = b.vector().clone();
+
+        let (ra, rb) = sync_pair(&mut a, &mut b, 1).unwrap();
+        assert_eq!(ra.peer, ReplicaId([2; 16]));
+        assert_eq!(rb.peer, ReplicaId([1; 16]));
+        assert_eq!(ra.peer_vector, b_vector_before, "vector snapshot from Hello");
+        assert!(ra.skipped.is_empty() && rb.skipped.is_empty());
     }
 
     #[test]

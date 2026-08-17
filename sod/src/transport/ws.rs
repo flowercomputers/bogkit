@@ -19,7 +19,7 @@ use tungstenite::{Message, WebSocket};
 use crate::engine::Engine;
 use crate::replica::Replica;
 use crate::store::LogStore;
-use crate::sync::{Msg, Session};
+use crate::sync::{Msg, Session, SyncReport};
 use crate::SodError;
 
 fn io_err<E: std::fmt::Display>(e: E) -> SodError {
@@ -50,14 +50,13 @@ fn recv<S: std::io::Read + std::io::Write>(sock: &mut WebSocket<S>) -> Result<Ms
 }
 
 /// Run one session over an established socket. `initiator` fixes the
-/// half-duplex order; see the module docs. Returns the per-origin
-/// refusals recorded while the session continued (SOD-2).
+/// half-duplex order; see the module docs.
 fn run_session<E: Engine, L: LogStore, S: std::io::Read + std::io::Write>(
     sock: &mut WebSocket<S>,
     r: &mut Replica<E, L>,
     schema: u32,
     initiator: bool,
-) -> Result<Vec<SodError>, SodError> {
+) -> Result<SyncReport, SodError> {
     let mut session = Session::new(schema);
 
     if initiator {
@@ -93,20 +92,20 @@ fn run_session<E: Engine, L: LogStore, S: std::io::Read + std::io::Write>(
             send(sock, m)?;
         }
     }
-    Ok(session.into_skipped())
+    Ok(session.report())
 }
 
 /// Dial `url` (e.g. `ws://127.0.0.1:7171`) and run one full sync session.
 ///
-/// `Ok` carries the per-origin refusals the session recorded while
-/// continuing (equivocating or poisoned feeds, SOD-2) — empty on a fully
-/// clean sync. Callers should surface a non-empty list to the user:
-/// swallowing it hides that some feed is silently no longer replicating.
+/// The report identifies the peer and carries any per-origin refusals the
+/// session recorded while continuing (SOD-2) — surface a non-empty
+/// `skipped` to the user: swallowing it hides that some feed silently
+/// stopped replicating.
 pub fn sync_with<E: Engine, L: LogStore>(
     url: &str,
     r: &mut Replica<E, L>,
     schema: u32,
-) -> Result<Vec<SodError>, SodError> {
+) -> Result<SyncReport, SodError> {
     let (mut sock, _resp) = tungstenite::connect(url).map_err(io_err)?;
     let result = run_session(&mut sock, r, schema, true);
     let _ = sock.close(None);
@@ -133,8 +132,8 @@ pub fn serve<E: Engine, L: LogStore>(
         match tungstenite::accept(stream) {
             Ok(mut sock) => {
                 match run_session(&mut sock, r, schema, false) {
-                    Ok(skipped) => {
-                        for s in &skipped {
+                    Ok(report) => {
+                        for s in &report.skipped {
                             eprintln!("sod: refused during sync: {s}");
                         }
                         done += 1;

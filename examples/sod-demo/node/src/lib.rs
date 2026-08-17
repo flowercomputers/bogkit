@@ -136,8 +136,8 @@ pub fn count() -> Result<i64> {
 #[napi]
 pub fn sync_with_peer(url: String) -> Result<Vec<String>> {
     with_replica(|r| {
-        let skipped = sync_with(&url, r, SCHEMA).map_err(err)?;
-        Ok(skipped.iter().map(|s| s.to_string()).collect())
+        let report = sync_with(&url, r, SCHEMA).map_err(err)?;
+        Ok(report.skipped.iter().map(|s| s.to_string()).collect())
     })
 }
 

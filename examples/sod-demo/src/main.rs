@@ -138,12 +138,12 @@ fn main() {
         }
         "sync" => {
             let url = rest.first().map(String::as_str).unwrap_or_else(|| usage());
-            let skipped = sync_with(url, &mut replica, SCHEMA)
+            let report = sync_with(url, &mut replica, SCHEMA)
                 .unwrap_or_else(|e| panic!("sync failed: {e}"));
-            for s in &skipped {
+            for s in &report.skipped {
                 eprintln!("warning: refused during sync: {s}");
             }
-            println!("synced with {url}");
+            println!("synced with {url} (peer {})", report.peer);
         }
         _ => usage(),
     }

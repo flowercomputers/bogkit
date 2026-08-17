@@ -37,7 +37,7 @@ pub mod vector;
 
 pub use frame::{Frame, FrameHash, ReplicaId, ZERO_HASH, decode_record};
 pub use replica::Replica;
-pub use sync::{Msg, PROTOCOL_VERSION, Session, sync_pair};
+pub use sync::{Msg, PROTOCOL_VERSION, Session, SyncReport, sync_pair};
 pub use vector::VersionVector;
 
 /// Errors across sod's ports and protocol.
