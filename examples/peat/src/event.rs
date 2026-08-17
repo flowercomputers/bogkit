@@ -18,7 +18,13 @@ pub type SessionId = String;
 /// `peat capture` on the same transcript is the crash-recovery story.
 pub type EventId = (SessionId, u32);
 
-pub const OBS_SEQ_BASE: u32 = 100_000;
+/// High bit set: observation seqs can never collide with line-derived
+/// capture seqs (line_index * 16 + block) no matter the transcript length.
+pub const OBS_SEQ_BASE: u32 = 1 << 31;
+
+/// Reserved seq for a FinalMsg delivered by the Stop hook's
+/// `last_assistant_message` (authoritative over transcript tail parsing).
+pub const HOOK_FINAL_SEQ: u32 = OBS_SEQ_BASE - 1;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Envelope {

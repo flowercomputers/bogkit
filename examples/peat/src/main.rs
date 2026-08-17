@@ -43,6 +43,10 @@ enum Cli {
         /// Session id if the transcript doesn't carry one
         #[arg(long)]
         session: Option<String>,
+        /// Authoritative closing message (the Stop hook passes
+        /// `.last_assistant_message`); overrides transcript tail parsing
+        #[arg(long)]
+        final_msg: Option<String>,
     },
     /// Record one observation about a subject
     Obs {
@@ -98,15 +102,31 @@ fn main() {
         Cli::Capture {
             transcript,
             session,
+            final_msg,
         } => {
             let Ok(jsonl) = std::fs::read_to_string(&transcript) else {
                 eprintln!("peat: cannot read {}", transcript.display());
                 std::process::exit(1);
             };
-            let Some(parsed) = transcript::parse(&jsonl, session.as_deref()) else {
+            let Some(mut parsed) = transcript::parse(&jsonl, session.as_deref()) else {
                 eprintln!("peat: no session id found; pass --session");
                 std::process::exit(1);
             };
+            // hook-provided closing message is authoritative over tail parsing
+            if let Some(text) = final_msg.filter(|t| !t.trim().is_empty()) {
+                parsed.events.retain(|(_, e)| !matches!(e.kind, Event::FinalMsg { .. }));
+                let ts = parsed.events.iter().map(|(_, e)| e.ts_ms).max().unwrap_or(0);
+                parsed.events.push((
+                    (parsed.session.clone(), event::HOOK_FINAL_SEQ),
+                    Envelope::new(
+                        &parsed.session,
+                        ts,
+                        Event::FinalMsg {
+                            text: event::cap(&text, event::FINAL_MSG_CAP),
+                        },
+                    ),
+                ));
+            }
             let n = parsed.events.len();
             st.wtx(|tx| {
                 for (id, env) in &parsed.events {
@@ -336,7 +356,7 @@ pub fn assemble<R: Readable>(
         .collect();
 
     Brief {
-        today: date_label(now),
+        today: local_date().unwrap_or_else(|| format!("{} (utc)", date_label(now))),
         days: days_out,
         last_session,
         files: files_out,
@@ -399,6 +419,17 @@ fn day_label(bucket: u64, today: u64) -> String {
         1 => "yesterday".into(),
         n => format!("{n}d ago"),
     }
+}
+
+/// Local calendar date via `date` — the brief header should read as the
+/// user's "today". Render-side only; the fold path never sees this.
+fn local_date() -> Option<String> {
+    let out = std::process::Command::new("date")
+        .arg("+%Y-%m-%d")
+        .output()
+        .ok()?;
+    let s = String::from_utf8(out.stdout).ok()?.trim().to_string();
+    (s.len() == 10).then_some(s)
 }
 
 fn date_label(ms: u64) -> String {

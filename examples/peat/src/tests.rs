@@ -189,10 +189,16 @@ fn ledger() -> Vec<(EventId, Envelope)> {
 
 /// What the views must contain after folding `prefix`, computed by an
 /// independent plain scan (no fold involved).
-fn predict(prefix: &[(EventId, Envelope)]) -> (BTreeMap<u64, (i64, i64)>, BTreeMap<String, (String, i64, u64)>) {
+fn predict(
+    prefix: &[(EventId, Envelope)],
+) -> (
+    BTreeMap<u64, (i64, i64)>,
+    BTreeMap<String, (String, i64, (u64, u32))>,
+) {
     let mut days: BTreeMap<u64, (i64, i64)> = BTreeMap::new(); // day -> (tools, fails)
-    let mut subj: BTreeMap<String, (String, i64, u64)> = BTreeMap::new(); // subject -> (text, count, last)
-    for (_, e) in prefix {
+    // subject -> (text, count, (last_ms, last_seq))
+    let mut subj: BTreeMap<String, (String, i64, (u64, u32))> = BTreeMap::new();
+    for (id, e) in prefix {
         match &e.kind {
             Event::ToolCall { ok, .. } => {
                 let d = days.entry(e.ts_ms / DAY_MS).or_default();
@@ -202,9 +208,9 @@ fn predict(prefix: &[(EventId, Envelope)]) -> (BTreeMap<u64, (i64, i64)>, BTreeM
             Event::Obs { subject, text, .. } => {
                 let s = subj.entry(subject.clone()).or_default();
                 s.1 += 1;
-                if e.ts_ms >= s.2 {
+                if (e.ts_ms, id.1) >= s.2 {
                     s.0 = text.clone();
-                    s.2 = e.ts_ms;
+                    s.2 = (e.ts_ms, id.1);
                 }
             }
             _ => {}
@@ -231,9 +237,11 @@ fn replay_prefix_matches_independent_prediction() {
                 .iter()
                 .map(|(k, v): (u64, DayStats)| (k, (v.tools, v.fails)))
                 .collect();
-            let s: BTreeMap<String, (String, i64, u64)> = subjects
+            let s: BTreeMap<String, (String, i64, (u64, u32))> = subjects
                 .iter()
-                .map(|(k, v): (String, SubjStats)| (k, (v.text, v.count, v.last_ms)))
+                .map(|(k, v): (String, SubjStats)| {
+                    (k, (v.text, v.count, (v.last_ms, v.last_seq)))
+                })
                 .collect();
             (d, s)
         });
@@ -281,6 +289,30 @@ fn batching_is_unobservable() {
         )
     });
     assert_eq!(a, b);
+}
+
+/// Two obs on one subject with the SAME timestamp in one transaction:
+/// the winner must be the higher seq, not whichever drained last.
+#[test]
+fn equal_timestamp_obs_resolve_by_seq() {
+    for _ in 0..8 {
+        // repeated runs guard against hash-order flakiness going unseen
+        let mut st = open!(tmp());
+        st.wtx(|tx| {
+            tx.upsert(
+                &("s1".to_string(), OBS_SEQ_BASE),
+                &obs("s1", 0, 5000, "staging", "first claim").1,
+            );
+            tx.upsert(
+                &("s1".to_string(), OBS_SEQ_BASE + 1),
+                &obs("s1", 1, 5000, "staging", "second claim").1,
+            );
+        });
+        let text = st.rtx(|(_, _, _, (subjects, _), _)| {
+            subjects.get(&"staging".to_string()).map(|s: SubjStats| s.text)
+        });
+        assert_eq!(text.as_deref(), Some("second claim"));
+    }
 }
 
 // ------------------------------------------------------------ capture path

@@ -59,6 +59,9 @@ pub struct SubjStats {
     pub text: String,
     pub count: i64,
     pub last_ms: u64,
+    /// seq of the winning obs; tie-breaks equal timestamps so the fold is
+    /// independent of within-transaction drain order
+    pub last_seq: u32,
     /// whether the winning obs cited mechanical events
     pub cited: bool,
 }
@@ -188,11 +191,21 @@ pub fn obs_row(k: &Keyed<EventId, Envelope>) -> Option<Keyed<String, ObsRow>> {
     }
 }
 
+/// Newest obs wins, ties broken by seq. Deliberately asymmetric under
+/// retraction: a negative delta decrements `count` but never re-derives the
+/// winning text (the previous winner is not recoverable from one delta).
+/// Correct for peat's write paths — append + same-id revision, where the
+/// replacement insert immediately re-wins — but a bare remove of the
+/// current winner would leave its text as a ghost. If a delete verb ever
+/// exists, rebuild this view from the evidence Multimap instead.
 pub fn subj_step(acc: &mut SubjStats, v: &ObsRow, delta: isize) {
     acc.count += delta as i64;
-    if delta > 0 && v.ts_ms >= acc.last_ms {
+    if delta > 0
+        && (v.ts_ms, v.seq) >= (acc.last_ms, acc.last_seq)
+    {
         acc.text = v.text.clone();
         acc.last_ms = v.ts_ms;
+        acc.last_seq = v.seq;
         acc.cited = !v.derived_from.is_empty();
     }
 }
@@ -207,6 +220,8 @@ pub fn sess_row(k: &Keyed<EventId, Envelope>) -> Option<Keyed<String, Envelope>>
     }
 }
 
+/// Same declared asymmetry as [`subj_step`]: retraction adjusts counts but
+/// does not un-derive `final_msg`/`cwd`; peat's write paths never bare-remove.
 pub fn sess_step(acc: &mut SessStats, e: &Envelope, delta: isize) {
     let d = delta as i64;
     if delta > 0 {
