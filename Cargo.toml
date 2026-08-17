@@ -1,6 +1,17 @@
 [workspace]
 resolver = "3"
-members = ["fold", "anny", "ese", "sod", "examples/*", "examples/sod-demo/node"]
+members = [
+    "fold",
+    "anny",
+    "ese",
+    "sod",
+    "examples/*",
+    "examples/sod-demo/node",
+    "examples/sod-web/addon",
+]
+# examples/sod-web is a Next.js app (no Cargo.toml at its root); its Rust
+# crate is the explicit member above
+exclude = ["examples/sod-web"]
 
 # hoisted from fold; applies workspace-wide
 [profile.release]

@@ -1,0 +1,24 @@
+{
+  "name": "sod-web",
+  "private": true,
+  "scripts": {
+    "build:addon": "cargo build -p sod-web-addon --release && node scripts/copy-addon.mjs",
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "smoke": "node scripts/smoke.mjs",
+    "demo:local": "node scripts/demo-local.mjs"
+  },
+  "dependencies": {
+    "next": "^15",
+    "react": "^19",
+    "react-dom": "^19",
+    "sod-web-addon": "file:./addon"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "typescript": "^5"
+  }
+}

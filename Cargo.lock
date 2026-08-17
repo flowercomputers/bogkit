@@ -2027,6 +2027,7 @@ dependencies = [
  "napi-derive",
  "napi-sys",
  "once_cell",
+ "tokio",
 ]
 
 [[package]]
@@ -2987,6 +2988,18 @@ dependencies = [
 
 [[package]]
 name = "sod-demo-node"
+version = "0.0.1"
+dependencies = [
+ "fold",
+ "napi",
+ "napi-build",
+ "napi-derive",
+ "postcard",
+ "sod",
+]
+
+[[package]]
+name = "sod-web-addon"
 version = "0.0.1"
 dependencies = [
  "fold",
