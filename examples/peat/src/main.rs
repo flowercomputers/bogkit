@@ -266,7 +266,12 @@ fn main() {
         }
 
         Cli::Asof { date, task, json } => {
-            let Some(cutoff) = transcript::iso_to_ms(&format!("{date}T23:59:59.999Z")) else {
+            // end of DATE in the caller's local day, not UTC: subtract the
+            // local offset (render/capture boundary — the fold never sees
+            // wall-clock or timezone)
+            let Some(cutoff) = transcript::iso_to_ms(&format!("{date}T23:59:59.999Z"))
+                .map(|utc| (utc as i64 - local_offset_ms()) as u64)
+            else {
                 eprintln!("peat: bad date {date:?}; expected YYYY-MM-DD");
                 std::process::exit(1);
             };
@@ -311,6 +316,13 @@ fn main() {
                 },
             );
             brief.today = format!("{date} · as of that day · {} events", events.len());
+            if events.is_empty() {
+                eprintln!(
+                    "peat: no events at or before {date} — either this ledger's \
+history starts later, or the db predates the ledger mirror \
+(re-run `peat capture` on the transcripts to backfill it)"
+                );
+            }
             if json {
                 println!("{}", serde_json::to_string_pretty(&brief).unwrap());
             } else {
@@ -552,6 +564,25 @@ fn local_date() -> Option<String> {
         .ok()?;
     let s = String::from_utf8(out.stdout).ok()?.trim().to_string();
     (s.len() == 10).then_some(s)
+}
+
+/// Local UTC offset in ms via `date +%z` (e.g. "-0700"). Render/capture
+/// boundary only. Zero on any failure — falls back to UTC semantics.
+fn local_offset_ms() -> i64 {
+    let Ok(out) = std::process::Command::new("date").arg("+%z").output() else {
+        return 0;
+    };
+    let s = String::from_utf8_lossy(&out.stdout);
+    let s = s.trim();
+    if s.len() != 5 {
+        return 0;
+    }
+    let sign = if s.starts_with('-') { -1 } else { 1 };
+    let (h, m) = (s[1..3].parse::<i64>(), s[3..5].parse::<i64>());
+    match (h, m) {
+        (Ok(h), Ok(m)) => sign * (h * 60 + m) * 60_000,
+        _ => 0,
+    }
 }
 
 fn date_label(ms: u64) -> String {
