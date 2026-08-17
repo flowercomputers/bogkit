@@ -2898,6 +2898,7 @@ dependencies = [
  "axum",
  "ese",
  "fold",
+ "model2vec-rs",
  "serde",
  "serde_json",
  "tokio",

@@ -2,8 +2,8 @@
 //!
 //! Alinery's filesystem is the database. This crate is the query engine
 //! that filesystem never had: one KeyedStream of Alinery-shaped chunks
-//! (ticket, artifact, comment, wiki) fans out to BM25, ESE+HNSW, and a
-//! doc table. The product is not another search box — it is a packed,
+//! (ticket, artifact, comment, wiki) fans out to BM25, ESE+HNSW,
+//! Potion+HNSW, and a doc table. The product is not another search box — it is a packed,
 //! token-budgeted briefing that resticks when a human comment lands or a
 //! stale decision is retracted.
 //!
@@ -15,7 +15,7 @@
 //!   cargo run -p sundew   # http://localhost:3000
 
 use std::collections::HashMap;
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 
 use anny::metric::Cosine;
 use axum::{
@@ -28,11 +28,17 @@ use axum::{
 };
 use fold::pipeline::{Aggregate, KeyBy, Keyed, Map, Scored, Unkey, terminal};
 use fold::stream::KeyedStream;
+use model2vec_rs::model::StaticModel;
 use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
 
 const DIM: usize = ese::DIMENSIONS;
+const POTION_DIM: usize = 256;
+const POTION_MODEL: &str = "minishlab/potion-code-16M-v2";
 const RRF_K: f64 = 60.0;
+const BM25_WEIGHT: f64 = 1.0;
+const ESE_WEIGHT: f64 = 0.5;
+const POTION_WEIGHT: f64 = 0.5;
 const TOKEN_BUDGET: usize = 1800;
 const DEFAULT_QUERY: &str = "how should we store refresh tokens?";
 
@@ -88,6 +94,25 @@ impl Chunk {
     fn tokens(&self) -> usize {
         self.search_text().len().div_ceil(4).max(1)
     }
+}
+
+fn load_potion() -> Arc<StaticModel> {
+    Arc::new(
+        StaticModel::from_pretrained(POTION_MODEL, None, Some(true), None)
+            .unwrap_or_else(|error| panic!("load {POTION_MODEL}: {error}")),
+    )
+}
+
+fn potion_encode(model: &StaticModel, text: &str) -> [f32; POTION_DIM] {
+    model
+        .encode_single(text)
+        .try_into()
+        .unwrap_or_else(|vector: Vec<f32>| {
+            panic!(
+                "{POTION_MODEL} dimension is {}, expected {POTION_DIM}",
+                vector.len()
+            )
+        })
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -164,16 +189,17 @@ enum Ingest {
 }
 
 macro_rules! snapshot {
-    ($st:expr, $query:expr) => {{
+    ($st:expr, $potion:expr, $query:expr) => {{
         let query: String = $query;
-        $st.rtx(|(bm25, vecs, docs, kind_counts)| {
+        $st.rtx(|(bm25, ese_vecs, potion_vecs, docs, kind_counts)| {
             let mut chunks: Vec<Chunk> = docs.iter().map(|(_, c)| c).collect();
             chunks.sort_by(|a, b| a.id.cmp(&b.id));
 
             let started = std::time::Instant::now();
             let keyword = bm25.search(&query, 10);
-            let semantic = vecs.search(&ese::encode_single(&query));
-            let briefing = pack(&query, &keyword, &semantic, &chunks);
+            let semantic = ese_vecs.search(&ese::encode_single(&query));
+            let code = potion_vecs.search(&potion_encode(($potion).as_ref(), &query));
+            let briefing = pack(&query, &keyword, &semantic, &code, &chunks);
             let pack_us = started.elapsed().as_micros() as u64;
             let briefing = Briefing {
                 pack_us,
@@ -212,7 +238,7 @@ macro_rules! snapshot {
                 ghost: wiki_retracted.then(|| RetractGhost {
                     id: STALE_WIKI_ID.to_string(),
                     title: "session-lifecycle".to_string(),
-                    left: "BM25 + HNSW + table".to_string(),
+                    left: "BM25 + ESE + Potion + table".to_string(),
                 }),
             }
         })
@@ -248,9 +274,10 @@ fn main() {
 }
 
 macro_rules! open_db {
-    () => {{
+    ($potion:expr) => {{
         let db_path = std::env::temp_dir().join("bog-kit-sundew.db");
         let _ = std::fs::remove_dir_all(&db_path);
+        let potion_index = Arc::clone(&$potion);
         KeyedStream::new(
             &db_path,
             (
@@ -263,6 +290,19 @@ macro_rules! open_db {
                         Keyed::new(d.key.clone(), ese::encode_single(&d.val.search_text()))
                     },
                     terminal::search::Hnsw::<String, f32, Cosine, DIM>::new("vecs", Cosine, 42),
+                ),
+                Map::new(
+                    move |d: &Keyed<String, Chunk>| {
+                        Keyed::new(
+                            d.key.clone(),
+                            potion_encode(&potion_index, &d.val.search_text()),
+                        )
+                    },
+                    terminal::search::Hnsw::<String, f32, Cosine, POTION_DIM>::new(
+                        "vecs_potion",
+                        Cosine,
+                        43,
+                    ),
                 ),
                 terminal::Table::new("docs"),
                 Unkey::new(KeyBy::new(
@@ -288,9 +328,10 @@ fn seed(st: &mut KeyedStream<String, Chunk, impl fold::pipeline::Push<Keyed<Stri
 }
 
 fn probe(query: &str) {
-    let mut st = open_db!();
+    let potion = load_potion();
+    let mut st = open_db!(potion);
     seed(&mut st);
-    let snap = snapshot!(st, query.to_string());
+    let snap = snapshot!(st, potion, query.to_string());
     println!("query: {}", snap.briefing.query);
     println!(
         "pack: {} tokens / {}  ({} µs)",
@@ -351,21 +392,30 @@ fn print_snap(label: &str, snap: &Snapshot) {
 }
 
 fn script() {
-    let mut st = open_db!();
+    let potion = load_potion();
+    let mut st = open_db!(potion);
     seed(&mut st);
     let q = DEFAULT_QUERY.to_string();
-    print_snap("seed", &snapshot!(st, q.clone()));
+    let snap = snapshot!(st, potion, q.clone());
+    assert!(
+        snap.briefing
+            .lines
+            .iter()
+            .any(|line| line.why.contains("Potion #")),
+        "Potion must contribute to the briefing"
+    );
+    print_snap("seed", &snap);
 
     let comment = correcting_comment();
     st.wtx(|tx| {
         tx.upsert(&comment.id, &comment);
     });
-    print_snap("after human comment", &snapshot!(st, q.clone()));
+    print_snap("after human comment", &snapshot!(st, potion, q.clone()));
 
     st.wtx(|tx| {
         tx.remove(&STALE_WIKI_ID.to_string());
     });
-    print_snap("after retracting stale wiki", &snapshot!(st, q));
+    print_snap("after retracting stale wiki", &snapshot!(st, potion, q));
 }
 
 fn serve() {
@@ -376,10 +426,11 @@ fn serve() {
 }
 
 fn ingest(rx: mpsc::Receiver<Ingest>, state_tx: watch::Sender<Snapshot>) {
-    let mut st = open_db!();
+    let potion = load_potion();
+    let mut st = open_db!(potion);
     seed(&mut st);
     let mut query = DEFAULT_QUERY.to_string();
-    let _ = state_tx.send(snapshot!(st, query.clone()));
+    let _ = state_tx.send(snapshot!(st, potion, query.clone()));
 
     for msg in rx {
         match msg {
@@ -410,7 +461,7 @@ fn ingest(rx: mpsc::Receiver<Ingest>, state_tx: watch::Sender<Snapshot>) {
                 query = DEFAULT_QUERY.to_string();
             }
         }
-        let _ = state_tx.send(snapshot!(st, query.clone()));
+        let _ = state_tx.send(snapshot!(st, potion, query.clone()));
     }
 }
 
@@ -438,19 +489,25 @@ fn pack(
     query: &str,
     keyword: &[Scored<f64, String>],
     semantic: &[Scored<f32, String>],
+    code: &[Scored<f32, String>],
     chunks: &[Chunk],
 ) -> Briefing {
     let by_id: HashMap<&str, &Chunk> = chunks.iter().map(|c| (c.id.as_str(), c)).collect();
     let mut fused: HashMap<String, f64> = HashMap::new();
     let mut bm25_at: HashMap<String, usize> = HashMap::new();
-    let mut hnsw_at: HashMap<String, usize> = HashMap::new();
+    let mut ese_at: HashMap<String, usize> = HashMap::new();
+    let mut potion_at: HashMap<String, usize> = HashMap::new();
     for (rank, hit) in keyword.iter().enumerate() {
-        *fused.entry(hit.val.clone()).or_default() += 1.0 / (RRF_K + rank as f64 + 1.0);
+        *fused.entry(hit.val.clone()).or_default() += BM25_WEIGHT / (RRF_K + rank as f64 + 1.0);
         bm25_at.entry(hit.val.clone()).or_insert(rank);
     }
     for (rank, hit) in semantic.iter().enumerate() {
-        *fused.entry(hit.val.clone()).or_default() += 1.0 / (RRF_K + rank as f64 + 1.0);
-        hnsw_at.entry(hit.val.clone()).or_insert(rank);
+        *fused.entry(hit.val.clone()).or_default() += ESE_WEIGHT / (RRF_K + rank as f64 + 1.0);
+        ese_at.entry(hit.val.clone()).or_insert(rank);
+    }
+    for (rank, hit) in code.iter().enumerate() {
+        *fused.entry(hit.val.clone()).or_default() += POTION_WEIGHT / (RRF_K + rank as f64 + 1.0);
+        potion_at.entry(hit.val.clone()).or_insert(rank);
     }
 
     let mut ranked: Vec<(String, f64, bool)> = fused
@@ -469,7 +526,7 @@ fn pack(
             Some((id, score, phrase))
         })
         .collect();
-    ranked.sort_by(|a, b| b.1.total_cmp(&a.1));
+    ranked.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
 
     let mut lines = Vec::new();
     let mut tokens = 0usize;
@@ -494,7 +551,8 @@ fn pack(
             why: why_stuck(
                 chunk,
                 bm25_at.get(&id).copied(),
-                hnsw_at.get(&id).copied(),
+                ese_at.get(&id).copied(),
+                potion_at.get(&id).copied(),
                 phrase,
             ),
         });
@@ -514,13 +572,22 @@ fn pack(
     }
 }
 
-fn why_stuck(chunk: &Chunk, bm25: Option<usize>, hnsw: Option<usize>, phrase: bool) -> String {
+fn why_stuck(
+    chunk: &Chunk,
+    bm25: Option<usize>,
+    ese: Option<usize>,
+    potion: Option<usize>,
+    phrase: bool,
+) -> String {
     let mut parts = Vec::new();
     if let Some(rank) = bm25 {
         parts.push(format!("BM25 #{}", rank + 1));
     }
-    if let Some(rank) = hnsw {
-        parts.push(format!("HNSW #{}", rank + 1));
+    if let Some(rank) = ese {
+        parts.push(format!("ESE #{}", rank + 1));
+    }
+    if let Some(rank) = potion {
+        parts.push(format!("Potion #{}", rank + 1));
     }
     parts.push(format!(
         "{} ×{:.2}",
