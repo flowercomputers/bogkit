@@ -1,0 +1,420 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="dark light" />
+<title>Sundew</title>
+<link rel="icon" type="image/png" href="/favicon.png" />
+<style>
+  /* Tokens and type from Alinery DESIGN.md + alinery-app/src/theme.css.
+     Sundew is still one HTML page — no Tauri, kanban, or Alinery chrome. */
+  :root {
+    --canvas: #000104;
+    --surface: #08090b;
+    --surface-raised: #0e1013;
+    --surface-subtle: #1b1d21;
+    --text-strong: #fffefa;
+    --text: #f4f1ea;
+    --text-muted: #9b9b97;
+    --text-faint: #84867f;
+    --border: rgb(244 241 234 / 0.12);
+    --border-strong: rgb(244 241 234 / 0.24);
+    --accent: #587aff;
+    --accent-base: #315bff;
+    --accent-subtle: rgb(49 91 255 / 0.24);
+    --on-accent: #0a0a0a;
+    --success: #55c58a;
+    --warning: #ffb347;
+    --danger: #ff3d1f;
+    --radius-sm: 6px;
+    --radius-md: 8px;
+    --control-h: 32px;
+    --control-h-lg: 36px;
+    --dur-fast: 140ms;
+    --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", sans-serif;
+    --font-mono: SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    --h-top: 48px;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --canvas: #fffefa;
+      --surface: #ffffff;
+      --surface-raised: #ffffff;
+      --surface-subtle: #f4f1ea;
+      --text-strong: #0a0a0a;
+      --text: #0a0a0a;
+      --text-muted: #60625e;
+      --text-faint: #6c6e68;
+      --border: rgb(10 10 10 / 0.12);
+      --border-strong: rgb(10 10 10 / 0.22);
+      --accent: #315bff;
+      --accent-subtle: rgb(49 91 255 / 0.12);
+      --on-accent: #ffffff;
+      --success: #147a46;
+      --warning: #8a5a00;
+      --danger: #a62715;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    :root { --dur-fast: 0ms }
+  }
+  * { box-sizing: border-box }
+  html, body {
+    margin: 0; height: 100%;
+    background: var(--canvas); color: var(--text);
+    font: 14px/1.45 var(--font-ui);
+    -webkit-font-smoothing: antialiased;
+  }
+  header {
+    height: var(--h-top);
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; padding: 0 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--canvas);
+  }
+  header .brand { display: flex; align-items: center; gap: 12px; min-width: 0 }
+  header .mark {
+    width: 32px; height: 32px; flex-shrink: 0;
+    border-radius: 8px; overflow: hidden; background: var(--accent-base);
+  }
+  header .mark img {
+    width: 118%; height: 118%; margin: -9%;
+    display: block; object-fit: cover;
+  }
+  header h1 {
+    margin: 0; font: 600 20px/1.1 var(--font-ui);
+    color: var(--text-strong); letter-spacing: -0.02em;
+  }
+  header .lede {
+    margin: 2px 0 0; color: var(--text-muted); font-size: 12px; line-height: 1.35;
+    text-wrap: pretty;
+  }
+  header .tools { display: flex; align-items: center; gap: 12px; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end }
+  .grid {
+    display: grid;
+    grid-template-columns: 240px minmax(0, 1fr) 220px;
+    height: calc(100% - var(--h-top));
+  }
+  .grid.stage { grid-template-columns: minmax(0, 1fr) 220px }
+  .grid.stage .index { display: none }
+  section { overflow: auto; padding: 16px }
+  section + section { border-left: 1px solid var(--border) }
+  .hero { padding: 20px 24px 32px }
+  h2 {
+    margin: 0 0 12px;
+    font: 600 12px/1.2 var(--font-ui);
+    color: var(--text-muted);
+  }
+  .item {
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .item:first-child { padding-top: 0 }
+  .item.out { opacity: 0.6 }
+  .item.out .title { text-decoration: line-through; text-decoration-color: var(--text-faint) }
+  .item .title {
+    display: block; margin: 2px 0 0;
+    font: 500 13px/1.35 var(--font-ui); color: var(--text-strong);
+  }
+  .line {
+    padding: 16px 0;
+    border-bottom: 1px solid var(--border);
+    max-width: 72ch;
+  }
+  .line:first-child { padding-top: 0 }
+  .line .title {
+    display: block; margin: 6px 0 6px;
+    font: 600 20px/1.2 var(--font-ui);
+    color: var(--text-strong);
+    letter-spacing: -0.02em;
+    text-wrap: balance;
+  }
+  .line .body {
+    margin: 0;
+    color: var(--text);
+    font-size: 16px; line-height: 1.5;
+    white-space: pre-wrap;
+    text-wrap: pretty;
+    overflow-wrap: break-word;
+  }
+  .kicker {
+    display: flex; flex-wrap: wrap; gap: 8px 12px;
+    font: 12px/1.3 var(--font-mono);
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .kicker .kind { color: var(--text); font-weight: 500 }
+  .kicker .delta { color: var(--accent) }
+  .kicker .out { color: var(--warning) }
+  .bar {
+    height: 4px; background: var(--surface-subtle); border-radius: 99px;
+    overflow: hidden; margin: 8px 0 16px; max-width: 72ch;
+  }
+  .bar > i {
+    display: block; height: 100%; width: 0;
+    background: var(--accent);
+    transition: width var(--dur-fast) ease-out;
+  }
+  .ask { display: flex; gap: 8px; margin: 0 0 12px; align-items: center }
+  input {
+    flex: 1; min-width: 0; height: var(--control-h-lg);
+    background: var(--surface); color: var(--text);
+    border: 1px solid var(--border); border-radius: var(--radius-md);
+    padding: 0 10px; font: 16px/1.3 var(--font-ui);
+  }
+  button {
+    height: var(--control-h-lg); padding: 0 12px;
+    background: var(--surface-subtle); color: var(--text);
+    border: 1px solid var(--border); border-radius: var(--radius-md);
+    font: 500 13px/1 var(--font-ui); cursor: pointer;
+    transition: background-color var(--dur-fast) ease-out, border-color var(--dur-fast) ease-out, transform var(--dur-fast) ease-out;
+  }
+  button.primary {
+    background: var(--accent); border-color: var(--accent); color: var(--on-accent);
+  }
+  button:hover { background: var(--surface-raised); border-color: var(--border-strong) }
+  button.primary:hover { background: var(--accent-base); border-color: var(--accent-base) }
+  button:active { transform: scale(0.96) }
+  button:disabled { opacity: 0.5; cursor: wait; transform: none }
+  :where(button, input):focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px;
+  }
+  input:focus-visible { outline-offset: 0 }
+  .meta {
+    color: var(--text-muted); font: 12px/1.4 var(--font-mono);
+    font-variant-numeric: tabular-nums; margin: 0 0 10px;
+    overflow-wrap: anywhere;
+  }
+  .beat {
+    margin: 0 0 8px; min-height: 1.3em;
+    font: 500 13px/1.3 var(--font-ui); color: var(--text-strong);
+  }
+  .ghost {
+    margin: 0 0 12px; padding: 8px 10px;
+    border: 1px solid var(--border); border-radius: var(--radius-md);
+    background: var(--surface);
+    color: var(--warning);
+    font: 12px/1.4 var(--font-mono);
+    text-decoration: line-through;
+    text-decoration-color: var(--text-faint);
+  }
+  .flag { font: 12px/1.3 var(--font-ui); color: var(--success) }
+  .flag.off { color: var(--text-faint) }
+  .actions p { margin: 0 0 8px }
+  .actions button { width: 100% }
+  @media (prefers-reduced-motion: reduce) {
+    button:active { transform: none }
+    .bar > i { transition: none }
+  }
+  @media (max-width: 900px) {
+    header { height: auto; min-height: var(--h-top); padding: 10px 16px; align-items: flex-start }
+    .grid, .grid.stage { grid-template-columns: 1fr; height: auto }
+    .grid.stage .index { display: block }
+    section + section { border-left: 0; border-top: 1px solid var(--border) }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <div class="mark"><img src="/icon.png" width="32" height="32" alt="" /></div>
+    <div>
+      <h1>Sundew</h1>
+      <p class="lede">Alinery’s filesystem is the database. Sundew is the query engine.</p>
+    </div>
+  </div>
+  <div class="tools">
+    <button id="stage" type="button" aria-pressed="false">Full briefing</button>
+    <div class="meta" id="flags" aria-live="polite"></div>
+  </div>
+</header>
+<div class="grid" id="layout">
+  <section class="index" aria-labelledby="index-h">
+    <h2 id="index-h">Index</h2>
+    <div class="meta" id="kinds"></div>
+    <div id="ghost-swamp"></div>
+    <div id="departed"></div>
+    <div id="swamp"></div>
+  </section>
+  <section class="hero" aria-labelledby="brief-h">
+    <h2 id="brief-h">Briefing</h2>
+    <div class="ask">
+      <input id="q" value="how should we store refresh tokens?" aria-label="Ask the briefing" />
+      <button id="ask" type="button">Ask</button>
+      <button id="copy" type="button">Copy briefing</button>
+    </div>
+    <p class="beat" id="beat" role="status">Seed</p>
+    <div class="meta" id="packmeta"></div>
+    <div class="bar" aria-hidden="true"><i id="bar"></i></div>
+    <div id="ghost-brief"></div>
+    <div id="briefing" role="status"></div>
+  </section>
+  <section class="actions" aria-labelledby="actions-h">
+    <h2 id="actions-h">Actions</h2>
+    <p class="meta">A comment resticks the pack. Retract removes the stale decision from every view.</p>
+    <p><button class="primary" id="replay" type="button">Replay</button></p>
+    <p><button id="comment" type="button">Land comment</button></p>
+    <p><button id="retract" type="button">Retract wiki</button></p>
+    <p><button id="reset" type="button">Reset index</button></p>
+    <p class="meta">comment &gt; wiki &gt; artifact &gt; ticket · 1800 token budget</p>
+    <p class="meta" id="copied" aria-live="polite"></p>
+  </section>
+</div>
+<script>
+const ws = new WebSocket(`ws://${location.host}/ws`);
+const $ = (id) => document.getElementById(id);
+const send = (op, q) => ws.send(JSON.stringify({ op, q: q || "" }));
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+let lastSeed = "";
+let prevIndex = new Set();
+let indexMeta = new Map();
+let firstPaint = true;
+let staged = false;
+
+const el = (tag, attrs = {}, ...kids) => {
+  const node = document.createElement(tag);
+  for (const [key, value] of Object.entries(attrs)) {
+    if (value == null || value === false) continue;
+    if (key === "class") node.className = value;
+    else if (key === "text") node.textContent = value;
+    else node.setAttribute(key, value === true ? "" : value);
+  }
+  for (const kid of kids) if (kid) node.append(kid);
+  return node;
+};
+
+const ghostEl = (g) => {
+  if (!g) return null;
+  return el("div", { class: "ghost", text: `Retracted: ${g.title} · ${g.left}` });
+};
+
+const kicker = (parts) => {
+  const row = el("div", { class: "kicker" });
+  for (const part of parts) {
+    if (!part) continue;
+    row.append(el("span", { class: part.class || "", text: part.text }));
+  }
+  return row;
+};
+
+const indexRow = (item, delta) => {
+  const row = el("div", { class: delta === "out" ? "item out" : "item" });
+  const bits = [{ class: "kind", text: item.kind }];
+  if (delta === "in") bits.push({ class: "delta", text: "in" });
+  if (delta === "out") bits.push({ class: "out", text: "out" });
+  row.append(
+    kicker(bits),
+    el("span", { class: "title", text: item.title }),
+    el("div", { class: "meta", text: `${item.task || "wiki"} · ${item.id}` }),
+  );
+  return row;
+};
+
+const flag = (on, onText, offText) =>
+  el("span", { class: on ? "flag" : "flag off", text: on ? onText : offText });
+
+ws.onmessage = (event) => {
+  const s = JSON.parse(event.data);
+  lastSeed = s.briefing.seed || "";
+  $("q").value = s.briefing.query;
+  $("kinds").textContent = s.kinds.map((k) => `${k.kind} ${k.n}`).join(" · ");
+  $("flags").replaceChildren(
+    flag(s.live.comment_landed, "Comment in", "Comment out"),
+    document.createTextNode(" · "),
+    flag(s.live.wiki_retracted, "Wiki retracted", "Wiki stale"),
+  );
+  $("packmeta").textContent =
+    `${s.briefing.tokens} / ${s.briefing.budget} tokens · ${s.briefing.pack_us} µs · ${s.briefing.lines.length} packed`;
+  $("bar").style.width = Math.min(100, (s.briefing.tokens / s.briefing.budget) * 100) + "%";
+
+  const nowIds = new Set(s.swamp.map((item) => item.id));
+  s.swamp.forEach((item) => indexMeta.set(item.id, item));
+  const gone = firstPaint ? [] : [...prevIndex].filter((id) => !nowIds.has(id));
+  $("departed").replaceChildren(...gone.map((id) => {
+    const item = indexMeta.get(id) || { id, kind: "wiki", title: id, task: "" };
+    return indexRow(item, "out");
+  }));
+  $("swamp").replaceChildren(...s.swamp.map((item) => {
+    const fresh = !firstPaint && !prevIndex.has(item.id);
+    return indexRow(item, fresh ? "in" : "");
+  }));
+  if (s.live.wiki_retracted && s.live.comment_landed) $("beat").textContent = "Retracted · BM25 + HNSW + table";
+  else if (s.live.comment_landed) $("beat").textContent = "Comment at #1";
+  else $("beat").textContent = "Seed";
+  prevIndex = nowIds;
+  firstPaint = false;
+
+  const gBrief = $("ghost-brief");
+  const gIndex = $("ghost-swamp");
+  gBrief.replaceChildren();
+  gIndex.replaceChildren();
+  const ghost = ghostEl(s.ghost);
+  if (ghost) {
+    gBrief.appendChild(ghost);
+    gIndex.appendChild(ghost.cloneNode(true));
+  }
+
+  $("briefing").replaceChildren(...s.briefing.lines.map((line) =>
+    el(
+      "article",
+      { class: "line" },
+      kicker([
+        { class: "kind", text: line.kind },
+        { text: `${line.tokens} tok` },
+        { text: line.why },
+      ]),
+      el("h3", { class: "title", text: line.title }),
+      el("p", { class: "body", text: line.body }),
+    )
+  ));
+};
+
+$("ask").onclick = () => send("ask", $("q").value);
+$("q").onkeydown = (e) => { if (e.key === "Enter") send("ask", $("q").value); };
+document.addEventListener("keydown", (e) => {
+  if (e.target === $("q") || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.key === "f" || e.key === "F") $("stage").click();
+});
+$("comment").onclick = () => send("comment");
+$("retract").onclick = () => send("retract");
+$("reset").onclick = () => send("reset");
+$("copy").onclick = async () => {
+  if (!lastSeed) return;
+  try {
+    await navigator.clipboard.writeText(lastSeed);
+    $("copied").textContent = "Copied next-session seed";
+  } catch {
+    $("copied").textContent = "Copy failed. Select the briefing text and copy it.";
+  }
+};
+$("stage").onclick = () => {
+  staged = !staged;
+  $("layout").classList.toggle("stage", staged);
+  $("stage").setAttribute("aria-pressed", staged ? "true" : "false");
+  $("stage").textContent = staged ? "Show index" : "Full briefing";
+};
+$("replay").onclick = async () => {
+  const btn = $("replay");
+  if (btn.disabled) return;
+  btn.disabled = true;
+  try {
+    $("beat").textContent = "Reset";
+    btn.textContent = "Reset…";
+    send("reset");
+    await sleep(900);
+    $("beat").textContent = "Comment lands";
+    btn.textContent = "Comment…";
+    send("comment");
+    await sleep(1100);
+    $("beat").textContent = "Retracted · BM25 + HNSW + table";
+    btn.textContent = "Retract…";
+    send("retract");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Replay";
+  }
+};
+</script>
+</body>
+</html>
