@@ -71,3 +71,29 @@ fn bm25_rank_and_retract() {
         assert!(idx.search("rust", 10).is_empty());
     });
 }
+
+/// A same-transaction replacement whose old and new text SHARE terms must
+/// leave the shared terms' postings correct — accumulating net deltas
+/// wrote the difference as the stored frequency (or deleted the posting
+/// outright), so the document vanished from queries for its own words.
+#[test]
+fn bm25_replacement_with_shared_terms_keeps_postings() {
+    let path = fresh_db("bm25_shared_term_replacement");
+    let mut st = KeyedStream::new(&path, terminal::search::Bm25::<u32, String>::new("idx"));
+    st.wtx(|tx| {
+        tx.upsert(&1u32, &"fold fold quick runs the".to_string());
+    });
+    // replacement in ONE tx: 'fold' tf drops 2 -> 1 (net -1 deleted the
+    // posting under delta accumulation); 'the' tf stays 1 -> 1 (net 0)
+    st.wtx(|tx| {
+        tx.upsert(&1u32, &"fold slow sleeps the".to_string());
+    });
+    st.rtx(|idx| {
+        let fold_hits: Vec<u32> = idx.search("fold", 10).into_iter().map(|h| h.val).collect();
+        assert_eq!(fold_hits, vec![1], "shared term lost after replacement");
+        let the_hits: Vec<u32> = idx.search("the", 10).into_iter().map(|h| h.val).collect();
+        assert_eq!(the_hits, vec![1]);
+        assert!(idx.search("quick", 10).is_empty(), "old-only term must be gone");
+        assert!(!idx.search("slow", 10).is_empty(), "new-only term must be indexed");
+    });
+}

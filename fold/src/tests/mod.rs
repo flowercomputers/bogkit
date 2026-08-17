@@ -3,6 +3,7 @@ use crate::{pipeline::*, stream::*};
 use std::time::Instant;
 
 #[cfg(test)]
+mod abort;
 mod bm25;
 
 #[cfg(test)]

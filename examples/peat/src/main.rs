@@ -269,7 +269,10 @@ beside the shared db); pass --session",
                         .unwrap_or(1)
                 })
             });
-            st.checkpoint();
+            // no checkpoint here: one observation is a few journal bytes,
+            // and per-command rotation emits one-row SSTs across every
+            // keyspace (L0 shredding — fjall stalls writes at 20 L0 runs).
+            // Bulk capture checkpoints; the journal absorbs single events.
             ui::note(&format!("recorded → {subject} (support {count})"));
         }
 

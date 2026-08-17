@@ -146,7 +146,11 @@ pub struct Hnsw<
     // Keyed by value as well as key — the Bm25 discipline — so a retraction
     // of the old embedding and an insertion of a new one never cancel: a
     // replacement inside one transaction must reach the graph and the store.
-    pending: FxHashMap<(Vec<u8>, Vec<u8>), (K, [T; DIM], i64)>,
+    // per-key resolution of this transaction's pushes, in push order:
+    // (net delta, whether the LAST push was positive, latest positively-
+    // pushed record). Order within one key is well-defined (push order);
+    // nothing depends on cross-key drain order.
+    pending: FxHashMap<Vec<u8>, (i64, bool, Option<(K, [T; DIM])>)>,
     vec_buf: Vec<u8>,
 }
 
@@ -220,13 +224,15 @@ where
     fn push(&mut self, tx: &mut WriteTx<'_>, data: &Keyed<K, [T; DIM]>, delta: isize) {
         tx.buf.clear();
         postcard::to_io(&data.key, &mut tx.buf).unwrap();
-        self.vec_buf.clear();
-        postcard::to_io(&data.val[..], &mut self.vec_buf).unwrap();
         let e = self
             .pending
-            .entry((tx.buf.clone(), self.vec_buf.clone()))
-            .or_insert_with(|| (data.key.clone(), data.val, 0));
-        e.2 += delta as i64;
+            .entry(tx.buf.clone())
+            .or_insert((0, false, None));
+        e.0 += delta as i64;
+        e.1 = delta > 0;
+        if delta > 0 {
+            e.2 = Some((data.key.clone(), data.val));
+        }
     }
 
     fn commit(&mut self, tx: &mut WriteTx<'_>) {
@@ -245,22 +251,27 @@ where
             let (metric, seed) = (self.metric, self.seed);
             state.rebuild(metric, seed, entries);
         }
-        for ((kenc, venc), (key, vec, delta)) in self.pending.drain() {
-            match delta {
-                1.. => {
-                    tx.insert(&ks, &kenc, &venc);
-                    state.upsert(kenc, key, vec);
-                }
-                0 => {}
-                _ => {
-                    // Remove only the value this retraction names: when the
-                    // same transaction also inserts a replacement under the
-                    // key, the insertion must win in either drain order.
-                    if tx.get(&ks, &kenc).as_deref() == Some(venc.as_slice())
-                        && state.remove(&kenc)
-                    {
-                        tx.remove(&ks, &kenc);
-                    }
+        for (kenc, (net, last_was_positive, last_pos)) in self.pending.drain() {
+            // Per-key semantics, resolved in memory with no store reads:
+            //   net > 0                        -> (re)index the latest record
+            //   net == 0, last push positive   -> replacement (-old, +new):
+            //                                     index the new record
+            //   net == 0, last push negative   -> insert+retract cancels
+            //   net < 0                        -> delete by key, regardless
+            //                                     of what value the caller
+            //                                     reproduced (embeddings may
+            //                                     be recomputed; a byte
+            //                                     mismatch must not make a
+            //                                     row undeletable)
+            if net > 0 || (net == 0 && last_was_positive) {
+                let (key, vec) = last_pos.expect("positive push recorded a record");
+                self.vec_buf.clear();
+                postcard::to_io(&vec[..], &mut self.vec_buf).unwrap();
+                tx.insert(&ks, &kenc, &self.vec_buf);
+                state.upsert(kenc, key, vec);
+            } else if net < 0 {
+                if state.remove(&kenc) {
+                    tx.remove(&ks, &kenc);
                 }
             }
         }

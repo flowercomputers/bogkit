@@ -125,3 +125,48 @@ fn hnsw_replacement_within_one_transaction_updates_the_vector() {
         assert_eq!(ids(&idx.search(&[20.0, 20.0, 20.0, 20.0]))[0], 1);
     });
 }
+
+/// A retraction whose reproduced value does not byte-match the stored one
+/// (recomputed embeddings can drift) must still delete the row — deletion
+/// is by key, never by value comparison.
+#[test]
+fn hnsw_delete_ignores_value_byte_mismatch() {
+    let path = fresh_db("hnsw_mismatch_delete");
+    let mut st = crate::stream::Stream::new(
+        &path,
+        Sink::new("vecs", L2, 42),
+    );
+    st.wtx(|tx| tx.insert(&Keyed::new(1u32, [1.0f32, 0.0, 0.0, 0.0])));
+    // retract with a slightly different vector (e.g. -0.0 vs 0.0 drift)
+    st.wtx(|tx| tx.remove(&Keyed::new(1u32, [1.0f32, -0.0, 0.0, 0.0])));
+    st.rtx(|idx| {
+        assert_eq!(idx.len(), 0, "byte-mismatched retraction left an undeletable row");
+        assert!(idx.search(&[1.0, 0.0, 0.0, 0.0]).is_empty());
+    });
+}
+
+/// Two inserts under one key in one transaction must resolve to the LAST
+/// pushed value — push order, never hash-map drain order.
+#[test]
+fn hnsw_same_key_double_insert_last_wins() {
+    for _ in 0..8 {
+        let path = fresh_db("hnsw_double_insert");
+        let mut st = crate::stream::Stream::new(
+            &path,
+            Sink::new("vecs", L2, 42),
+        );
+        st.wtx(|tx| {
+            tx.insert(&Keyed::new(1u32, [1.0f32, 0.0, 0.0, 0.0]));
+            tx.insert(&Keyed::new(1u32, [9.0f32, 9.0, 9.0, 9.0]));
+        });
+        st.rtx(|idx| {
+            let hits = idx.search(&[9.0, 9.0, 9.0, 9.0]);
+            assert_eq!(hits[0].val, 1);
+            assert!(
+                hits[0].score < 0.01,
+                "stored vector must be the last push, got distance {}",
+                hits[0].score
+            );
+        });
+    }
+}
