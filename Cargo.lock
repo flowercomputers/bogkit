@@ -3025,6 +3025,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tinymo"
+version = "0.0.0"
+dependencies = [
+ "anny",
+ "ese",
+ "fold",
+ "serde",
+]
+
+[[package]]
 name = "tinystr"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
