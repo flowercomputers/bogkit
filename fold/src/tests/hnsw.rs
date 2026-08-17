@@ -77,3 +77,51 @@ fn hnsw_nearest_upsert_retract_recover() {
         assert_eq!(ids(&idx.search(&[9.0, 9.0, 9.0, 9.0]))[0], 3);
     });
 }
+
+/// A replacement inside one transaction must reach the vector index.
+///
+/// `KeyedStream::upsert` retracts the old record and inserts the new one in
+/// the same transaction. With pending work keyed only by `K`, that -1/+1 pair
+/// nets to zero and the old vector survives in both the graph and the store —
+/// while the same-value insert+retract pair (above) must still net out.
+/// Pending is therefore keyed by (key, value), the `Bm25` posting discipline.
+#[test]
+fn hnsw_replacement_within_one_transaction_updates_the_vector() {
+    let path = fresh_db("hnsw-intra-tx-replace.db");
+    let mut st = KeyedStream::new(
+        &path,
+        Map::new(
+            |d: &Keyed<u32, [f32; 4]>| Keyed::new(d.key, d.val),
+            Sink::new("vecs", L2, 42),
+        ),
+    );
+
+    st.wtx(|tx| {
+        tx.upsert(&1u32, &[0.0f32, 0.0, 0.0, 0.0]);
+        tx.upsert(&2u32, &[10.0f32, 10.0, 10.0, 10.0]);
+    });
+    // the defect: this upsert emits remove(old) + insert(new) in ONE tx
+    st.wtx(|tx| {
+        tx.upsert(&1u32, &[20.0f32, 20.0, 20.0, 20.0]);
+    });
+
+    st.rtx(|idx| {
+        assert_eq!(idx.len(), 2);
+        // key 1 must be found at its new position, not its old one
+        assert_eq!(ids(&idx.search(&[20.0, 20.0, 20.0, 20.0]))[0], 1);
+        assert_eq!(ids(&idx.search(&[0.1, 0.0, 0.0, 0.0]))[0], 2);
+    });
+
+    // and the store agrees after a reopen (graph rebuilt from vectors)
+    drop(st);
+    let st = KeyedStream::new(
+        &path,
+        Map::new(
+            |d: &Keyed<u32, [f32; 4]>| Keyed::new(d.key, d.val),
+            Sink::new("vecs", L2, 42),
+        ),
+    );
+    st.rtx(|idx| {
+        assert_eq!(ids(&idx.search(&[20.0, 20.0, 20.0, 20.0]))[0], 1);
+    });
+}

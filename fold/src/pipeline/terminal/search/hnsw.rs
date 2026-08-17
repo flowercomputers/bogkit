@@ -142,8 +142,11 @@ pub struct Hnsw<
     metric: M,
     seed: u64,
     state: Rc<RefCell<State<K, T, M, DIM, M0, TOP_K, EF_SEARCH, EF_BUILD, MAX_LEVEL>>>,
-    // encoded key -> (key, latest embedding, net delta this tx)
-    pending: FxHashMap<Vec<u8>, (K, [T; DIM], i64)>,
+    // encoded (key, embedding) -> (key, embedding, net delta this tx).
+    // Keyed by value as well as key — the Bm25 discipline — so a retraction
+    // of the old embedding and an insertion of a new one never cancel: a
+    // replacement inside one transaction must reach the graph and the store.
+    pending: FxHashMap<(Vec<u8>, Vec<u8>), (K, [T; DIM], i64)>,
     vec_buf: Vec<u8>,
 }
 
@@ -222,11 +225,12 @@ where
     fn push(&mut self, tx: &mut WriteTx<'_>, data: &Keyed<K, [T; DIM]>, delta: isize) {
         tx.buf.clear();
         postcard::to_io(&data.key, &mut tx.buf).unwrap();
+        self.vec_buf.clear();
+        postcard::to_io(&data.val[..], &mut self.vec_buf).unwrap();
         let e = self
             .pending
-            .entry(tx.buf.clone())
+            .entry((tx.buf.clone(), self.vec_buf.clone()))
             .or_insert_with(|| (data.key.clone(), data.val, 0));
-        e.1 = data.val;
         e.2 += delta as i64;
     }
 
@@ -246,18 +250,20 @@ where
             let (metric, seed) = (self.metric, self.seed);
             state.rebuild(metric, seed, entries);
         }
-        for (kenc, (key, vec, delta)) in self.pending.drain() {
+        for ((kenc, venc), (key, vec, delta)) in self.pending.drain() {
             match delta {
                 1.. => {
-                    self.vec_buf.clear();
-                    postcard::to_io(&vec[..], &mut self.vec_buf).unwrap();
-
-                    tx.insert(&ks, &kenc, &self.vec_buf);
+                    tx.insert(&ks, &kenc, &venc);
                     state.upsert(kenc, key, vec);
                 }
                 0 => {}
                 _ => {
-                    if state.remove(&kenc) {
+                    // Remove only the value this retraction names: when the
+                    // same transaction also inserts a replacement under the
+                    // key, the insertion must win in either drain order.
+                    if tx.get(&ks, &kenc).as_deref() == Some(venc.as_slice())
+                        && state.remove(&kenc)
+                    {
                         tx.remove(&ks, &kenc);
                     }
                 }
