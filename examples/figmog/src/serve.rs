@@ -99,8 +99,14 @@ pub(crate) fn run_serve(
     let interval_dur = Duration::from_secs(interval);
     let token = std::env::var("FIGMA_TOKEN").ok();
 
-    let (mut manager, track_current) =
-        build_sessions(db_override, &files, no_watch, &token, &figmog_root)?;
+    let (mut manager, track_current) = build_sessions(
+        db_override,
+        &files,
+        no_watch,
+        &token,
+        &figmog_root,
+        interval_dur,
+    )?;
 
     // Upstream probe: no mid-session re-probe in v3 — an unreachable
     // desktop server at startup means local-only tools for the process's
@@ -198,6 +204,7 @@ pub(crate) fn run_serve(
                 upstream_status,
                 no_watch,
                 track_current,
+                interval_dur,
                 &mut next_deadline,
                 name,
                 args,
@@ -217,18 +224,29 @@ pub(crate) fn run_serve(
 /// `.figmog/current` (`track_current`) — only true in the no-override
 /// path, matching pre-v4 behavior exactly: `--db` always resolved with no
 /// established key (see `cli::resolve_db`'s old short-circuit), so it
-/// never wrote `.figmog/current` either.
+/// never wrote `.figmog/current` either. A startup pull failure is a hard
+/// error (matches old `do_pull(...)?` — the process never starts serving
+/// on a file it couldn't mirror), so only the plain message half of
+/// [`sessions::do_pull`]'s `(String, Duration)` failure is used here;
+/// there is no retry loop yet to push a deadline out on.
 fn build_sessions(
     db_override: Option<PathBuf>,
     files: &[String],
     no_watch: bool,
     token: &Option<String>,
     figmog_root: &Path,
+    interval: Duration,
 ) -> Result<(SessionManager, bool), String> {
     if let Some(path) = db_override {
         // A `file` positional may still be given alongside `--db` (pre-v4
         // behavior: `--db` fixes the store path, an optional file arg
-        // still resolves the key network operations need).
+        // still resolves the key network operations need). With neither,
+        // `network_key` stays `None` and the session's own `pull` closure
+        // refuses immediately with the old clean "no file key" message —
+        // `figmog_sync`/watch under `--no-watch` reach that at call time,
+        // same as pre-v4 (`!no_watch` is checked here too, eagerly, so
+        // watch mode still fails fast at startup rather than waiting for
+        // a tick).
         let key_opt = files.first().and_then(|f| parse_file_ref(f));
         if !no_watch {
             key_opt
@@ -238,20 +256,32 @@ fn build_sessions(
                 .clone()
                 .ok_or_else(|| "FIGMA_TOKEN not set — required for watch".to_string())?;
         }
-        let session_key = key_opt.unwrap_or_else(|| path.display().to_string());
-        let session = sessions::open_session_at(path, session_key, token.as_deref(), false)?;
+        let display_key = key_opt
+            .clone()
+            .unwrap_or_else(|| path.display().to_string());
+        let session = sessions::open_session_at(
+            path,
+            display_key.clone(),
+            key_opt.as_deref(),
+            token.as_deref(),
+            false,
+        )?;
         let mut manager = SessionManager {
             sessions: vec![session],
             root: figmog_root.to_path_buf(),
             token: token.clone(),
+            default_key: Some(display_key),
         };
         if !no_watch {
             let session = &mut manager.sessions[0];
-            if (session.watermark)().is_none() {
-                let outcome = (session.pull)()?;
-                session.note_pull_success(&outcome);
+            if !session.mirrored {
+                sessions::do_pull(session, interval).map_err(|(message, _wait)| message)?;
             }
         }
+        // `--db` never resolves a tracked key (pre-v4: `resolve_db`
+        // short-circuited to `Db { key: None, .. }` whenever `--db` was
+        // given), so it never wrote `.figmog/current` either — preserved
+        // verbatim via `track_current = false` below.
         return Ok((manager, false));
     }
 
@@ -270,19 +300,35 @@ fn build_sessions(
         sessions: Vec::new(),
         root: figmog_root.to_path_buf(),
         token: token.clone(),
+        default_key: None,
     };
-    for f in files {
+    for (i, f) in files.iter().enumerate() {
         let session = manager.open(f)?;
-        if !no_watch && (session.watermark)().is_none() {
-            let outcome = (session.pull)()?;
-            session.note_pull_success(&outcome);
+        let key = session.key.clone();
+        let just_pulled = if !no_watch && !session.mirrored {
+            sessions::do_pull(session, interval).map_err(|(message, _wait)| message)?;
+            true
+        } else {
+            false
+        };
+        if i == 0 {
+            manager.default_key = Some(key.clone());
+        }
+        // I4: a startup pull that actually ran refreshes `.figmog/current`
+        // for the default session, matching the old single-file
+        // `do_pull`'s own behavior — only on a pull that happened, not on
+        // every startup file regardless.
+        if just_pulled {
+            refresh_current(&manager, true, &key);
         }
     }
     Ok((manager, true))
 }
 
 /// One round-robin watch tick: poll exactly one session's [`Watcher`](crate::watch::Watcher)
-/// and, on `Changed`, pull it. Returns the next deadline.
+/// and, on `Changed`, pull it via [`sessions::do_pull`] (typed-error
+/// backoff, shared with every other pull call site — see that function's
+/// doc comment). Returns the next deadline.
 fn watch_tick(
     manager: &mut SessionManager,
     next_idx: &mut usize,
@@ -294,9 +340,10 @@ fn watch_tick(
     }
     // A session can only exist if opening it (an auto-open, or a startup
     // pull) already required a token — *except* a session whose own
-    // startup/auto-open pull failed (sessions.rs leaves it in place empty
-    // rather than evicting it — no idle eviction, spec §14 non-goal).
-    // Either way, without a token there's nothing safe to poll this tick.
+    // startup/auto-open pull failed (sessions.rs leaves it in place,
+    // `mirrored: false`, rather than evicting it — no idle eviction, spec
+    // §14 non-goal; a later `resolve()` retries it). Either way, without a
+    // token there's nothing safe to poll this tick.
     let Some(token) = manager.token.clone() else {
         return Instant::now() + interval;
     };
@@ -313,24 +360,13 @@ fn watch_tick(
     match session.watcher.tick(&api, &key) {
         Tick::Unchanged => Instant::now() + deadline,
         Tick::Wait { after } => Instant::now() + after,
-        Tick::Changed { .. } => match (session.pull)() {
-            Ok(outcome) => {
-                session.note_pull_success(&outcome);
+        Tick::Changed { .. } => match sessions::do_pull(session, interval) {
+            Ok(_outcome) => {
                 refresh_current(manager, track_current, &key);
                 Instant::now() + deadline
             }
-            Err(e) => {
-                eprintln!("figmog: pull failed for {key}: {e}");
-                // No typed `ApiError` survives a session's `pull` closure
-                // (spec §14's interface returns a plain `String` — see
-                // sessions.rs), so watch-triggered pull failures get plain
-                // per-session exponential backoff rather than the
-                // Retry-After-aware `cli::pull_failure_wait` the CLI's own
-                // `pull`/`watch` commands still use unchanged.
-                let session = &mut manager.sessions[idx];
-                session.watcher = crate::watch::Watcher::new((session.watermark)());
-                let wait = session.backoff;
-                session.backoff = (session.backoff * 2).min(crate::watch::BACKOFF_CAP);
+            Err((message, wait)) => {
+                eprintln!("figmog: pull failed for {key}: {message}");
                 Instant::now() + wait
             }
         },
@@ -338,11 +374,12 @@ fn watch_tick(
 }
 
 /// Refresh `.figmog/current` to `key` — only when `track` (the no-`--db`-
-/// override startup path) and `key` is the *default* session's, matching
-/// old single-file behavior for the one invocation shape that used to do
-/// this (`figmog serve <file>`, no `--db`).
+/// override startup path) and `key` is the *default* session's (spec §14's
+/// default rule via [`SessionManager::effective_default_key`], not merely
+/// index 0), matching old single-file behavior for the one invocation
+/// shape that used to do this (`figmog serve <file>`, no `--db`).
 fn refresh_current(manager: &SessionManager, track: bool, key: &str) {
-    if track && manager.sessions.first().map(|s| s.key.as_str()) == Some(key) {
+    if track && manager.effective_default_key().as_deref() == Some(key) {
         let _ = crate::cli::write_current(key);
     }
 }
@@ -352,6 +389,12 @@ fn refresh_current(manager: &SessionManager, track: bool, key: &str) {
 /// argument is extracted (and stripped before tool-specific arg parsing)
 /// and routed through [`SessionManager::resolve`]; non-local names are
 /// proxied — see this module's doc comment for the cache-routing choice.
+/// A pull failure anywhere here (auto-open inside `resolve`, an explicit
+/// `figmog_sync`, `figmog_open`) pushes `next_deadline` out by the same
+/// Retry-After-aware wait [`sessions::do_pull`] computed, so a rate-limited
+/// on-demand pull doesn't let the background watch loop immediately
+/// re-hit the same limit for that session (build design §12, restored
+/// from the pre-refactor single-session `figmog_sync` handler).
 #[allow(clippy::too_many_arguments)]
 fn handle_tool_call(
     manager: &mut SessionManager,
@@ -359,6 +402,7 @@ fn handle_tool_call(
     upstream_status: &'static str,
     no_watch: bool,
     track_current: bool,
+    interval: Duration,
     next_deadline: &mut Instant,
     name: &str,
     args: &Value,
@@ -370,8 +414,13 @@ fn handle_tool_call(
     if name == "figmog_open" {
         let file = dispatch::require_str(args, "file")?;
         let session = manager.open(&file)?;
-        let outcome = (session.pull)()?;
-        session.note_pull_success(&outcome);
+        let outcome = match sessions::do_pull(session, interval) {
+            Ok(outcome) => outcome,
+            Err((message, wait)) => {
+                *next_deadline = Instant::now() + wait;
+                return Err(message);
+            }
+        };
         let key = session.key.clone();
         // The node count alone — everything else in the result comes
         // straight from `outcome`, which already has this pull's
@@ -401,11 +450,30 @@ fn handle_tool_call(
     }
 
     if proxy::is_local_tool(name) {
-        let session = manager.resolve(file_arg.as_deref())?;
+        let (session, just_pulled) =
+            manager
+                .resolve(file_arg.as_deref(), interval)
+                .map_err(|e| {
+                    if let Some(wait) = e.retry_after {
+                        *next_deadline = Instant::now() + wait;
+                    }
+                    e.message
+                })?;
 
         if name == "figmog_sync" {
-            let outcome = (session.pull)()?;
-            session.note_pull_success(&outcome);
+            // `resolve` already spent this call's one pull if the session
+            // was new/unmirrored — skip the redundant second Tier-1 pull
+            // `figmog_sync` would otherwise always perform.
+            let outcome = match just_pulled {
+                Some(outcome) => outcome,
+                None => match sessions::do_pull(session, interval) {
+                    Ok(outcome) => outcome,
+                    Err((message, wait)) => {
+                        *next_deadline = Instant::now() + wait;
+                        return Err(message);
+                    }
+                },
+            };
             let key = session.key.clone();
             let churn_value = serde_json::to_value(&outcome.churn).map_err(|e| e.to_string())?;
             refresh_current(manager, track_current, &key);
