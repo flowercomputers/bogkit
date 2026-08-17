@@ -15,36 +15,41 @@
     font-family: Georgia, 'Iowan Old Style', serif;
   }
   .page {
-    display: grid; grid-template-columns: 1fr minmax(0, 640px) 300px 1fr;
-    gap: 28px; padding: 48px 24px 120px;
+    display: grid; grid-template-columns: 1fr minmax(0, 700px) 330px 1fr;
+    gap: 42px; padding: 40px 24px 72px;
   }
   main { grid-column: 2; }
   aside { grid-column: 3; }
-  h1 { font-size: 20px; font-weight: normal; letter-spacing: .04em; margin: 0 0 2px; }
-  .sub { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--faint); margin-bottom: 22px; }
-  .chips { display: flex; gap: 8px; margin-bottom: 6px; }
+  h1 { font-size: 34px; font-weight: normal; letter-spacing: .01em; margin: 0 0 4px; }
+  .sub { display: flex; align-items: baseline; font-family: Georgia, serif; font-style: italic; font-size: 15px; color: var(--faint); margin-bottom: 18px; }
+  .chips { display: flex; gap: 9px; margin: 12px 0 8px; align-items: center; }
+  .chips::before { content: "views"; font-family: ui-monospace, Menlo, monospace; font-size: 10px;
+    letter-spacing: .16em; text-transform: uppercase; color: var(--faint); margin-right: 4px; }
   .chip {
-    font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; cursor: pointer;
-    border: 1px solid var(--line); background: var(--card); color: var(--faint);
-    padding: 4px 10px; border-radius: 999px;
+    font-family: ui-monospace, Menlo, monospace; font-size: 13px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--card); color: var(--ink);
+    padding: 6px 14px; border-radius: 999px;
   }
-  .chip.on { color: var(--ink); border-color: var(--ink); }
-  #mast { display: flex; gap: 46px; margin: 18px 0 10px; flex-wrap: wrap; }
+  .chip.on { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+  #mast { display: flex; gap: 46px; margin: 20px 0 0; flex-wrap: wrap;
+    border-bottom: 4px double var(--line); padding-bottom: 16px; }
   .slot { position: relative; cursor: pointer; min-width: 120px; }
-  .slot .sl { font-style: italic; font-size: 12.5px; color: var(--faint); margin-bottom: 3px; }
-  .slot .sv { font-weight: 700; font-size: 15.5px; color: var(--ink); }
-  .slot .sv .caret { font-size: 10px; color: var(--faint); }
-  .slot .sv .none { font-weight: 400; color: var(--faint); font-style: italic; font-size: 13.5px; }
-  .slot .sv .sub2 { display: block; font-weight: 400; font-family: ui-monospace, Menlo, monospace; font-size: 9.5px; color: var(--faint); margin-top: 2px; max-width: 260px; }
+  .slot .sl { font-family: Georgia, serif; font-size: 11px; text-transform: uppercase; letter-spacing: .1em; color: var(--faint); margin-bottom: 4px; }
+  .slot .sv { font-weight: 400; font-size: 19px; color: var(--ink); display: inline-block;
+    border-bottom: 1px dotted var(--faint); padding-bottom: 2px; }
+  .slot:hover .sv { border-bottom-color: var(--ink); }
+  .slot .sv .caret { font-size: 11px; color: var(--faint); }
+  .slot .sv .none { font-weight: 400; color: var(--faint); font-style: italic; font-size: 15px; }
+  .slot .sv .sub2 { display: block; font-weight: 400; font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--faint); margin-top: 3px; max-width: 280px; border: none; }
   .slot .sv .x { font-weight: 400; color: var(--faint); margin-left: 6px; cursor: pointer; }
   .slot .sv .x:hover { color: #8c3b2e; }
   .sm { display: none; position: absolute; z-index: 30; top: calc(100% + 6px); left: -8px; min-width: 230px;
     background: var(--card); border: 1px solid var(--line); border-radius: 5px; box-shadow: 0 10px 30px rgba(40,30,10,.14); padding: 5px; }
   .slot.open .sm { display: block; }
-  .sm .mi { display: flex; align-items: baseline; gap: 8px; padding: 6px 9px; border-radius: 3px; cursor: pointer; font-size: 13.5px; }
+  .sm .mi { display: flex; align-items: baseline; gap: 8px; padding: 7px 10px; border-radius: 3px; cursor: pointer; font-size: 14.5px; }
   .sm .mi:hover { background: rgba(40,30,10,.05); }
   .sm .mi.on { font-weight: 700; }
-  .sm .mi .k { font-family: ui-monospace, Menlo, monospace; font-size: 9.5px; color: var(--faint); margin-left: auto; white-space: nowrap; }
+  .sm .mi .k { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--faint); margin-left: auto; white-space: nowrap; }
   .sm .mi.dis { color: var(--faint); cursor: default; font-style: italic; }
   .sm .mi .hue { display: inline-block; width: 14px; height: 8px; border-radius: 2px; }
   .sm .mi .x2 { color: var(--faint); padding: 0 4px; }
@@ -54,14 +59,15 @@
   #ctip { position: absolute; z-index: 25; background: var(--card); border: 1px solid var(--line); border-radius: 4px;
     padding: 7px 10px; font-size: 12px; line-height: 1.45; max-width: 250px; pointer-events: none;
     box-shadow: 0 8px 22px rgba(40,30,10,.12); }
-  #ctip .m { font-family: ui-monospace, Menlo, monospace; font-size: 9.5px; color: var(--faint); margin-top: 3px; }
+  #ctip .m { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--faint); margin-top: 3px; }
   .page.galing #constel, .page.galing #constelchip, .page.galing #readerchip { display: none; }
-  #voice .seam { font-family: ui-monospace, Menlo, monospace; font-size: 9.5px; color: #8c3b2e;
+  #voice .seam { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: #8c3b2e;
     border-top: 1px dashed #8c3b2e; margin: 2px 0 8px; padding-top: 3px; }
-  #voice .rfoot { font-family: ui-monospace, Menlo, monospace; font-size: 9.5px; color: var(--faint); margin-top: 8px; }
+  #voice .rfoot { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--faint); margin-top: 8px; }
   #voice .gist { font-style: italic; }
-  .lenskey { font-family: ui-monospace, Menlo, monospace; font-size: 10.5px; color: var(--faint); min-height: 16px; margin-bottom: 26px; }
-  #doc { font-size: 18.5px; line-height: 1.85; }
+  .lenskey { font-family: Georgia, serif; font-style: italic; font-size: 13px; color: var(--faint); min-height: 20px; margin-bottom: 18px; }
+  .lenskey .sw { display: inline-block; width: 15px; height: 10px; border-radius: 2px; vertical-align: -1px; margin: 0 4px 0 2px; border: 1px solid rgba(0,0,0,.07); }
+  #doc { font-size: 21px; line-height: 1.62; }
   #doc .para { margin: 0 0 15px; }
   .s {
     cursor: pointer; border-radius: 3px; padding: 1px 2px;
@@ -85,21 +91,31 @@
   .lane { position: sticky; top: 48px; }
   #pullrow { display: flex; gap: 6px; margin: -4px 0 10px; min-height: 22px; }
   #pullrow button, .hit .pull {
-    font-family: ui-monospace, Menlo, monospace; font-size: 10px; letter-spacing: .04em; cursor: pointer;
-    border: 1px solid var(--line); background: var(--card); color: var(--faint); border-radius: 999px; padding: 2px 9px;
+    font-family: ui-monospace, Menlo, monospace; font-size: 12px; letter-spacing: .02em; cursor: pointer;
+    border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 999px; padding: 4px 12px;
   }
   #pullrow button:hover, .hit .pull:hover { color: var(--ink); border-color: var(--ink); }
   .hit .pull { display: block; margin-top: 6px; }
-  #proposal .ch-p { font-size: 13.5px; line-height: 1.55; font-style: italic; margin: 6px 0 4px; }
+  #proposal .ch-p { font-size: 14.5px; line-height: 1.55; font-style: italic; margin: 6px 0 4px; }
   #proposal .ch-h { color: #4a6b4f; }
-  #proposal .verdict { font-family: ui-monospace, Menlo, monospace; font-size: 10px; margin-top: 4px; }
+  #proposal .verdict { font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; margin-top: 4px; }
   #proposal .verdict.ok { color: #1D5C49; }
   #proposal .verdict.meh { color: #8c3b2e; }
-  .lanehead { font-family: ui-monospace, Menlo, monospace; font-size: 10.5px; letter-spacing: .12em; color: var(--faint); text-transform: uppercase; margin-bottom: 10px; }
-  #voice .hit { background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: 10px 12px; margin-bottom: 8px; }
-  #voice .hit .t { font-size: 13.5px; line-height: 1.5; }
-  #voice .hit .m { font-family: ui-monospace, Menlo, monospace; font-size: 10px; color: var(--faint); margin-top: 6px; }
-  #voice .empty { font-size: 12.5px; color: var(--faint); font-style: italic; line-height: 1.6; }
+  .lanehead { font-family: Georgia, serif; font-size: 13px; letter-spacing: .07em; color: var(--ink); text-transform: uppercase; margin-bottom: 10px; }
+  .lanehead .stat { display: block; font-family: ui-monospace, Menlo, monospace; font-size: 12px;
+    font-variant-numeric: tabular-nums; letter-spacing: 0; color: var(--faint); text-transform: none; margin-top: 5px; min-height: 16px; }
+  .lanehead .ramp { display: inline-block; width: 72px; height: 6px; border-radius: 3px; vertical-align: -1px; margin: 0 6px 0 2px; position: relative;
+    background: linear-gradient(90deg, rgba(63,96,121,.55), rgba(214,206,190,.45), rgba(161,112,28,.55)); }
+  .lanehead .ramp i { position: absolute; top: -2.5px; width: 10px; height: 10px; border-radius: 50%; background: var(--ink); border: 2px solid var(--paper); margin-left: -5px; }
+  .lane { transition: transform .45s cubic-bezier(.22,1,.36,1); }
+  @media (prefers-reduced-motion: reduce) { .lane { transition: none; } }
+  #voice .hit { background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: 11px 13px; margin-bottom: 9px; }
+  #voice .hit .t { font-size: 15px; line-height: 1.55; }
+  #voice .hit .ttl { font-family: Georgia, serif; font-size: 12px; color: var(--ink); margin-top: 7px; }
+  #voice .hit .m { display: flex; align-items: center; gap: 8px; font-family: ui-monospace, Menlo, monospace; font-size: 11px; font-variant-numeric: tabular-nums; color: var(--faint); margin-top: 5px; }
+  #voice .hit .ax { flex: none; width: 64px; height: 3px; background: var(--line); border-radius: 2px; position: relative; }
+  #voice .hit .ax i { position: absolute; top: -2.5px; width: 8px; height: 8px; border-radius: 50%; background: var(--ink); margin-left: -4px; }
+  #voice .empty { font-size: 14px; color: var(--faint); font-style: italic; line-height: 1.65; }
   /* the instrument plate — black-and-amber, numbers that cannot be faked.
      tokens from docs/corrigenda-and-chalk.html `.plate` */
   #hud {
@@ -127,6 +143,7 @@
   #hud .stage { border: 1px solid var(--pl-line); border-radius: 3px; padding: 1px 6px; white-space: nowrap; }
   #hud .stage b, #hud b { color: var(--pl-amber); font-weight: 600; }
   #hud .stage .neg { color: var(--pl-crim); }
+  #hud .stage { min-width: 92px; }
   #hud .wall { margin-left: auto; white-space: nowrap; }
   #hud .stage .lbl { color: var(--pl-dim); font-size: 9px; letter-spacing: .06em; }
   #hud .wall .note { color: var(--pl-dim); font-size: 9.5px; margin-left: 10px; }
@@ -208,7 +225,7 @@
     font-family: 'American Typewriter', 'Courier New', Courier, monospace; font-size: 11px; color: #4A4234; line-height: 1.55; margin-bottom: 8px; }
   .chit .hole { position: absolute; top: 9px; right: 10px; width: 10px; height: 10px; border-radius: 50%; background: #A2231F; border: 1.5px solid #A2231F; }
   .chit .ch-h { text-transform: uppercase; letter-spacing: .1em; color: #33567A; font-size: 10px; margin-bottom: 3px; padding-right: 18px; }
-  .chit .ch-b { font-family: Georgia, 'Iowan Old Style', serif; font-size: 12px; color: #29231B; }
+  .chit .ch-b { font-family: Georgia, 'Iowan Old Style', serif; font-size: 13px; color: #29231B; }
   .chit .ch-m { color: #8D8271; font-size: 10px; margin-top: 3px; }
   .chit .ch-row { display: flex; gap: 6px; margin-top: 7px; }
   .chit button { font-family: inherit; font-size: 10px; letter-spacing: .06em; cursor: pointer; background: transparent;
@@ -240,14 +257,15 @@
   .page.galing #lenscard, .page.galing .chip.user, .page.galing #lensadd { display: none; }
   #hud .head .op.unlens { color: var(--pl-crim); }
   /* ---- gutter chips (D): felt latency beside the edited sentence + length percentile vs canon ---- */
-  #doc { position: relative; outline: none; min-height: 200px; caret-color: var(--ink); white-space: pre-wrap; }
-  #doc.empty::before { content: "write — the lenses read as you go…"; color: var(--faint); font-style: italic; position: absolute; pointer-events: none; }
-  #instru { font-family: ui-monospace, Menlo, monospace; font-size: 10px; letter-spacing: .05em; cursor: pointer;
-    border: 1px solid var(--line); background: none; color: var(--faint); border-radius: 999px; padding: 2px 9px; margin-left: 14px; vertical-align: 1px; }
+  #doc { position: relative; outline: none; min-height: 55vh; caret-color: var(--ink); white-space: pre-wrap; }
+  #doc.empty::before { content: "Write, or paste a page — the lenses read as you go."; color: var(--faint); font-style: italic; position: absolute; pointer-events: none; }
+  #doc.empty::after { content: "Put your caret in a sentence and the margin answers: its nearest voices, its measurements, its company."; color: var(--faint); font-size: 14px; line-height: 1.6; position: absolute; top: 44px; max-width: 34em; pointer-events: none; }
+  #instru { font-family: ui-monospace, Menlo, monospace; font-style: normal; font-size: 11px; letter-spacing: .05em; cursor: pointer;
+    border: 1px solid var(--line); background: none; color: var(--faint); border-radius: 999px; padding: 3px 11px; margin-left: auto; }
   #instru:hover { color: var(--ink); border-color: var(--ink); }
-  body.instruments #instru { color: var(--ink); border-color: var(--ink); }
+  body.instruments #instru { background: var(--ink); color: var(--paper); border-color: var(--ink); }
   body:not(.instruments) #hud, body:not(.instruments) #galechip { display: none; }
-  .chit .ch-t { font-size: 12.5px; color: #8a7f6d; line-height: 1.45; margin: 4px 0 2px;
+  .chit .ch-t { font-size: 13.5px; color: #8a7f6d; line-height: 1.45; margin: 4px 0 2px;
     text-decoration: line-through; text-decoration-color: #A2231F; text-decoration-thickness: 0.12em; text-decoration-skip-ink: none; }
   .gchip {
     position: absolute; left: -100px; width: 88px; text-align: right;
@@ -418,7 +436,7 @@ function renderText() {
 
 function render() {
   renderLensChips();
-  $("lenskey").textContent = lensKey();
+  $("lenskey").innerHTML = lensKeyHtml();
   const quiet = Date.now() - dirtyAt > 800;
   if (!editorFocused() || quiet) renderText();
   paintHighlights();
@@ -681,9 +699,10 @@ function penFollow() {
   if (constelOn) drawConstel();
   if (readerMode) { renderPullRow(); return; }
   const row = state.rows.find((r) => r.para === cs.para && r.text === cs.text);
-  $("voicehead").textContent = row
-    ? `Nearest voices — at your caret · t ${row.t.toFixed(2)} · ${row.words}w` + (row.pct != null ? ` · ${ordinal(row.pct)} pct` : "")
-    : "Nearest voices — following your pen";
+  $("voicehead").innerHTML = row
+    ? `Nearest voices — at your caret<span class="stat"><span class="ramp"><i style="left:${(row.t * 100).toFixed(0)}%"></i></span>t ${row.t.toFixed(2)} · ${row.words} words${row.pct != null ? ` · ${ordinal(row.pct)} pct of ${esc(libNoun())}` : ""}</span>`
+    : `Nearest voices — following your pen<span class="stat"></span>`;
+  laneFollow(row);
   renderPullRow();
   fetchVoice(cs.text, row ? row.id : null);
 }
@@ -737,9 +756,11 @@ async function askRestyle(opts) {
     return;
   }
   const toward = opts.mode === "voice" ? `toward ${opts.target_title || "the canon"}` : `toward ${opts.dir}`;
+  const dlt = opts.mode === "voice" ? resp.after.dist - resp.before.dist : resp.after.t - resp.before.t;
+  const dtxt = `<b style="color:${resp.verified ? "#1D5C49" : "#8c3b2e"}">${dlt >= 0 ? "+" : ""}${dlt.toFixed(opts.mode === "voice" ? 3 : 2)}</b>`;
   const receipt = opts.mode === "voice"
-    ? `cos-dist ${resp.before.dist.toFixed(3)} → ${resp.after.dist.toFixed(3)}`
-    : `t ${resp.before.t.toFixed(2)} → ${resp.after.t.toFixed(2)}`;
+    ? `cos-dist ${resp.before.dist.toFixed(3)} → ${resp.after.dist.toFixed(3)} ${dtxt}`
+    : `t ${resp.before.t.toFixed(2)} → ${resp.after.t.toFixed(2)} ${dtxt}`;
   const verdict = resp.verified
     ? `<div class="verdict ok">${receipt} · VERIFIED in ${resp.attempts} draft${resp.attempts === 1 ? "" : "s"}</div>`
     : `<div class="verdict meh">${receipt} · did not move the needle — your call</div>`;
@@ -759,6 +780,24 @@ async function askRestyle(opts) {
     box.innerHTML = "";
   };
   box.querySelector(".dismiss").onclick = () => (box.innerHTML = "");
+}
+
+// the margin listens to where the pen is: the lane glides down to sit
+// beside the caret's sentence (Wattenberger's move; sticky fallback <1020px)
+function laneFollow(row) {
+  const lane = document.querySelector(".lane");
+  if (!lane || window.innerWidth < 1020) return;
+  let y = 0;
+  if (row) {
+    const top = chipTop($("doc"), row);
+    if (top != null) {
+      const docTop = $("doc").getBoundingClientRect().top + window.scrollY;
+      const laneTop = lane.parentElement.getBoundingClientRect().top + window.scrollY;
+      y = Math.max(0, docTop + top - laneTop - 8);
+      y = Math.min(y, Math.max(0, document.body.scrollHeight - laneTop - lane.offsetHeight - 40));
+    }
+  }
+  lane.style.transform = `translateY(${y}px)`;
 }
 
 // ---------- instruments: the machinery is passive until surfaced ----------
@@ -793,7 +832,11 @@ function noteRetract(r) {
   // release the lane's cards if they were fetched for this sentence
   if (voiceForId === r.id) {
     const hits = [...document.querySelectorAll("#voice .hit")];
-    hits.forEach((h) => { h.classList.add("released"); const m = h.querySelector(".m"); if (m && !/released$/.test(m.textContent)) m.textContent += " · released"; });
+    hits.forEach((h) => {
+      h.classList.add("released");
+      const t = h.querySelector(".ttl") || h.querySelector(".m");
+      if (t && !/released$/.test(t.textContent)) t.textContent += " · released";
+    });
     g.released = hits.length;
   }
   renderCorrigenda();
@@ -893,6 +936,23 @@ function lensKey() {
     return d ? `cool = toward “${d.a}” · warm = toward “${d.b}” — your axis, ${state.rows.length} rows backfilled in one wtx · painted relative to this document’s median` : "";
   }
   return LENSKEY[lens] || "";
+}
+// the legend shows the ink itself, not a description of it
+function lensKeyHtml() {
+  const sw = (bg) => `<span class="sw" style="background:${bg}"></span>`;
+  if (lens === "axis") {
+    return `${sw("rgba(63,96,121,.30)")}concrete — ${sw("rgba(161,112,28,.30)")}abstract · projection onto a sentence-anchored axis`;
+  }
+  if (lens === "len") {
+    return `${sw("rgba(74,107,79,.10)")}shorter — ${sw("rgba(74,107,79,.30)")}longer (relative to this document) · the margin shows your caret sentence's percentile vs the active library`;
+  }
+  if (lens.startsWith("user:")) {
+    const d = (state.lenses || []).find((x) => x.id === +lens.slice(5));
+    if (!d) return "";
+    const i = userLensIndex(d.id), pr = LENS_PAIR(i < 0 ? 0 : i);
+    return `${sw(pr.cool(0.3))}toward “${esc(d.a.slice(0, 34))}…” — ${sw(pr.warm(0.3))}toward “${esc(d.b.slice(0, 34))}…” · your axis, painted relative to this document's median`;
+  }
+  return "";
 }
 
 let lensCard = null, pendingLensSelect = false, knownLensIds = [];
@@ -1382,9 +1442,12 @@ async function fetchVoice(text, forId) {
     v.replaceChildren(...data.hits.map((h) => {
       const d = document.createElement("div");
       d.className = "hit";
-      d.innerHTML = `<div class="t"></div><div class="m"></div>`;
+      // dot on a FIXED shared scale (cos-dist 0.20–0.80): closer = further right
+      const pos = Math.max(2, Math.min(98, (1 - (h.score - 0.2) / 0.6) * 100));
+      d.innerHTML = `<div class="t"></div><div class="ttl"></div><div class="m"><span class="ax"><i style="left:${pos.toFixed(0)}%"></i></span><span class="n"></span></div>`;
       d.querySelector(".t").textContent = h.text.length > 140 ? h.text.slice(0, 140) + "…" : h.text;
-      d.querySelector(".m").textContent = `${h.title} · cos-dist ${h.score.toFixed(3)}`;
+      d.querySelector(".ttl").textContent = h.title;
+      d.querySelector(".n").textContent = `cos-dist ${h.score.toFixed(3)}`;
       if (lastCaret) {
         const b = document.createElement("button");
         b.className = "pull";
