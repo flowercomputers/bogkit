@@ -4,3 +4,4 @@ target/
 *.node
 node_modules/
 .next/
+.sod-*/

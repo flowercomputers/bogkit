@@ -71,12 +71,19 @@ the nerd panel partition selectively.
 
 ## Deploying the hub to Fly.io
 
-> Status: **deployed and verified** — `https://sod-web-demo.fly.dev`
+> Status: **live** — `https://sod-web-demo.fly.dev`
 > (sanctuary-computer org), sync on `ws://sod-web-demo.fly.dev:10700`.
-> A laptop replica has synced bidirectionally with it over the public
-> internet. Note: the raw-TCP sync port requires a **dedicated IPv4**
-> (~$2/mo, `fly ips allocate-v4`) — Fly's free shared IPv4 only routes
-> HTTP/TLS-handler services. The TLS flip (below) would lift that.
+> The full three-bog demo (Fly hub + two laptop replicas) has run
+> end-to-end over the public internet.
+>
+> Two deploy gotchas learned the hard way:
+> - The raw-TCP sync port needs a **dedicated IPv4** (~$2/mo,
+>   `fly ips allocate-v4`) — Fly's free shared IPv4 only routes
+>   HTTP/TLS-handler services. The TLS flip (below) would lift that.
+> - Allocate IPs **immediately** after the first deploy: until an IP
+>   exists, resolvers cache "no such domain" for the app hostname, and
+>   some home routers hold that stale answer for up to an hour (use the
+>   sync port's IP directly, or an `/etc/hosts` line, while it clears).
 
 From the **repo root** (the Docker context needs `sod/` and `fold/`):
 
