@@ -59,6 +59,30 @@ canon are back before you can alt-tab.
   needle gets one retry with its own score as feedback; accepting is an
   ordinary edit — one fold upsert, every view updates. Optional: set
   `OPENAI_API_KEY` (the targeting and receipts are local either way).
+- **The constellation (✦).** Every sentence as a point in lens-space, over
+  ~1,500 sentences of the active library projected through the same axes.
+  The dashed path is your essay in reading order; empty space is where
+  nobody has written; click a dot to jump the caret there.
+- **The reader (👓).** One stranger's single-sentence takeaway per
+  paragraph — no advice, no praise; a misreading IS the diagnosis.
+  Fidelity = cos(gist, paragraph); seams between consecutive gists mark
+  where a reader feels a jump. Gists cache in a fold Table keyed by
+  content hash: unchanged paragraphs are never re-read.
+- **The sounding line.** Always-on strip under the lens key: every
+  sentence as a tick on the concrete——abstract rail, your caret in
+  crimson, the library's own distribution in grey beneath.
+- **Your voice (✍️).** `prep_self.py` ingests your own past writing as a
+  fourth shelf — "closest you've come" voice cards, for-you percentiles,
+  your own cloud under the constellation. Local only, gitignored,
+  embedded by ese inside the binary; nothing leaves the machine.
+- **The machine room (⚙ /engine).** A live slide deck of the engine:
+  Meter-counted pipeline ticking per edit, shelf inventory, the measured
+  local-vs-cloud table, and the anchor bench — an axis-quality
+  measurement (4 vs 20 vs 50 anchors/pole against a held-out graded
+  ladder) that runs at startup in under a millisecond.
+- **Demo affordances.** ⚡ drops a page tuned to the active shelf;
+  ❔ pins a how-it's-made tour on every region, each card naming the
+  crate behind it.
 - **The gale.** Press play: scripted edits at 60/s. The fold lane keeps every
   update; a naive lane running the *same scoring code* without deltas or an
   index falls seconds behind and drops most of its work. A referee hashes
