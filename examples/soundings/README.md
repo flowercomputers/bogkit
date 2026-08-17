@@ -1,6 +1,8 @@
 # Soundings
 
-**A live embedding-lens writing instrument.** The AI reads while you write — and writes only where you point, with the lenses checking its work.
+**An editor with a library: it reads what you write against the whole canon — or a thousand screenplays, or five thousand contracts, or your own past self — and proves every observation with a receipt.**
+
+The AI reads while you write — and writes only where you point, with the lenses checking its work.
 Every edit is a fold delta; ese re-embeds the changed sentence in microseconds;
 anny repositions it among the sentences of twenty Gutenberg classics; every
 view on screen is an eagerly-maintained materialization, and the HUD prints
