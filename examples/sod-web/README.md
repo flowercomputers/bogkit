@@ -71,9 +71,12 @@ the nerd panel partition selectively.
 
 ## Deploying the hub to Fly.io
 
-> Status: config validated by a local `docker build`; not yet deployed —
-> deploying needs a Fly account (`flyctl` was not available in the
-> environment this was built in).
+> Status: **deployed and verified** — `https://sod-web-demo.fly.dev`
+> (sanctuary-computer org), sync on `ws://sod-web-demo.fly.dev:10700`.
+> A laptop replica has synced bidirectionally with it over the public
+> internet. Note: the raw-TCP sync port requires a **dedicated IPv4**
+> (~$2/mo, `fly ips allocate-v4`) — Fly's free shared IPv4 only routes
+> HTTP/TLS-handler services. The TLS flip (below) would lift that.
 
 From the **repo root** (the Docker context needs `sod/` and `fold/`):
 
@@ -87,8 +90,10 @@ The hub serves the UI at `https://sod-web-demo.fly.dev` and sync on raw
 TCP port `10700`. Point the locals at it:
 
 ```console
-$ SOD_PEERS=ws://127.0.0.1:7301,ws://sod-web-demo.fly.dev:10700 ... PORT=3000 npm run dev
-$ SOD_PEERS=ws://127.0.0.1:7300,ws://sod-web-demo.fly.dev:10700 ... PORT=3001 npm run dev
+$ SOD_DATA_DIR=./.sod-a SOD_SERVE_ADDR=127.0.0.1:7300 \
+  SOD_PEERS=ws://127.0.0.1:7301,ws://sod-web-demo.fly.dev:10700 PORT=3000 npm run dev
+$ SOD_DATA_DIR=./.sod-b SOD_SERVE_ADDR=127.0.0.1:7301 \
+  SOD_PEERS=ws://127.0.0.1:7300,ws://sod-web-demo.fly.dev:10700 PORT=3001 npm run dev
 ```
 
 Plain TCP first; before showing outside the room, add `handlers = ["tls"]`
