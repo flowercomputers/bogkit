@@ -700,9 +700,32 @@ One self-contained command that makes the value proposition measurable:
 local reads at memory speed against a rate-limited API that allows ~10
 file requests per minute.
 
-`figmog bench [--nodes N] [--calls M] [--json] [--keep]`
-(defaults: N=10000, M=5000; `--keep` leaves the temp store on disk and
-prints its path).
+`figmog bench [FILE] [--nodes N] [--calls M] [--api-calls K] [--skip-api]
+[--json] [--keep]`
+(defaults: N=10000, M=5000, K=5; `--keep` leaves the temp store on disk
+and prints its path).
+
+**Two sources.** With no `FILE` argument, the corpus is synthetic
+(deterministic, phase 1 below). With a Figma URL/key, the corpus is the
+real file: fetched once via `FIGMA_TOKEN` (exactly one Tier-1 call — the
+no-churn re-pull phase reuses the same in-memory JSON rather than
+fetching twice), and the load-test query mix derives its parameters from
+the flattened data itself: search words sampled from real layer
+names/text, node ids from real ids, the instances target from a real
+component name (each falling back gracefully when a category is absent).
+The same derivation runs in synthetic mode, so the two modes share one
+code path.
+
+**API comparison phase** (real-file mode only, unless `--skip-api`):
+after the serve load, issue K sequential calls to
+`GET /v1/files/:key/nodes?ids=<real id>` — the native API's closest
+equivalent of `figmog_node` — timing each, plus one Tier-3
+`GET /v1/files/:key/meta` for reference. K defaults to 5 because this
+spends the user's real Tier-1 budget (~10/min); a 429 is recorded (with
+its Retry-After) and ends the phase gracefully, reporting whatever was
+measured. The report then shows figmog vs API latency side by side and
+computes the budget math: how long the M-call load test would take at
+the API's rate limit versus figmog's measured wall time.
 
 ### Phases (all timed, all reported)
 
@@ -731,18 +754,24 @@ prints its path).
 ### Report
 
 Per-tool table: calls, p50 / p95 / p99 / max (ms), plus overall
-sustained req/s and total wall time. `--json` emits one JSON object with
-the same fields (stdout purity as elsewhere: human table OR json, never
-both). Ends with the headline line comparing sustained req/s against
-Figma's Tier-1 budget ("~10 file requests/min on Starter").
+sustained req/s and total wall time. In real-file mode with the API
+phase: an additional side-by-side block — `figmog_node p50` vs
+`API /nodes p50`, the speedup factor, and the budget line ("the M-call
+load test at ~10 req/min would take ≈X; figmog: Ts"). `--json` emits one
+JSON object with the same fields (stdout purity as elsewhere: human
+table OR json, never both). Ends with the headline comparison in both
+modes.
 
 ### Constraints
 
 No new dependencies. Percentiles via sort. `Instant`-based timing only
-(no SystemTime in the measurement path). The bench must not touch the
-network (`--no-upstream`, corpus from memory) and must clean up its temp
-dir unless `--keep`. Exit nonzero if any phase fails or any tool call
-returns `isError`.
+(no SystemTime in the measurement path). Synthetic mode must not touch
+the network at all; real-file mode makes exactly 1 Tier-1 file fetch, an
+opportunistic variables call, and (unless `--skip-api`) K+1 comparison
+calls — the report states every API call it spent. Temp dir cleaned
+unless `--keep`. Exit nonzero if any phase fails or any tool call
+returns `isError` (a graceful 429 in the comparison phase is a recorded
+result, not a failure).
 
 ### Non-goals
 
