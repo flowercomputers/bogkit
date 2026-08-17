@@ -91,6 +91,20 @@ enum Cli {
         #[arg(long)]
         json: bool,
     },
+    /// Dump the raw ledger, oldest first, auto-paged on a terminal
+    Events {
+        /// Only this session (prefix ok)
+        #[arg(long)]
+        session: Option<String>,
+        /// Only this kind: meta|user|tool|file|commit|final|compact|said|obs
+        #[arg(long)]
+        kind: Option<String>,
+        /// Only events from the last N days
+        #[arg(long)]
+        since: Option<u64>,
+        #[arg(long)]
+        json: bool,
+    },
     /// List every subject in the claims register
     Subjects {
         #[arg(long)]
@@ -498,6 +512,56 @@ beside the shared db); pass --session",
             }
         }
 
+        Cli::Events {
+            session,
+            kind,
+            since,
+            json,
+        } => {
+            let now = now_ms();
+            let cutoff = since.map(|d| now.saturating_sub(d * DAY_MS));
+            let mut rows: Vec<(EventId, Envelope)> =
+                st.rtx(|(_, _, _, _, _, ledger)| {
+                    ledger
+                        .iter()
+                        .filter(|((sess, _), e): &(EventId, Envelope)| {
+                            session.as_ref().is_none_or(|p| sess.starts_with(p.as_str()))
+                                && cutoff.is_none_or(|c| e.ts_ms >= c)
+                                && kind.as_ref().is_none_or(|k| kind_tag(&e.kind) == k)
+                        })
+                        .collect()
+                });
+            rows.sort_by(|a, b| (a.1.ts_ms, &a.0).cmp(&(b.1.ts_ms, &b.0)));
+            if json {
+                for ((sess, seq), e) in &rows {
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "session": sess, "seq": seq, "ts_ms": e.ts_ms,
+                            "v": e.v, "event": &e.kind,
+                        })
+                    );
+                }
+                return;
+            }
+            // git-log style: page through less on a terminal
+            let mut out = String::with_capacity(rows.len() * 96);
+            for ((sess, seq), e) in &rows {
+                out.push_str(&format!(
+                    "{} {} {:>9}  {:<7} {}
+",
+                    ui::dim(&date_label(e.ts_ms)),
+                    ui::dim(&short_sess(sess)),
+                    ui::dim(&seq.to_string()),
+                    ui::accent(kind_tag(&e.kind)),
+                    event_line(&e.kind),
+                ));
+            }
+            out.push_str(&ui::dim(&format!("({} events)
+", rows.len())));
+            page(&out);
+        }
+
         Cli::Subjects { json } => {
             let now = now_ms();
             let mut subj: Vec<(String, SubjStats)> =
@@ -839,6 +903,73 @@ fn render(brief: &Brief) -> String {
 }
 
 // ---------------------------------------------------------------- helpers
+
+fn kind_tag(e: &Event) -> &'static str {
+    match e {
+        Event::SessionMeta { .. } => "meta",
+        Event::UserMsg { .. } => "user",
+        Event::ToolCall { .. } => "tool",
+        Event::FileTouch { .. } => "file",
+        Event::Commit { .. } => "commit",
+        Event::FinalMsg { .. } => "final",
+        Event::Compaction { .. } => "compacted",
+        Event::Said { .. } => "said",
+        Event::CompactSummary { .. } => "compact",
+        Event::Obs { .. } => "obs",
+    }
+}
+
+fn event_line(e: &Event) -> String {
+    let one = |s: &str| clip(s, 150);
+    match e {
+        Event::SessionMeta { cwd, branch, .. } => format!(
+            "{} {}",
+            one(cwd),
+            branch.as_deref().unwrap_or("")
+        ),
+        Event::UserMsg { text } | Event::FinalMsg { text } | Event::Said { text } => one(text),
+        Event::CompactSummary { text } => one(text),
+        Event::ToolCall { tool, detail, ok } => format!(
+            "{}{} {}",
+            tool,
+            if *ok { "" } else { " FAILED" },
+            one(detail)
+        ),
+        Event::FileTouch { path } => one(path),
+        Event::Commit { hash, message } => format!("{} {}", &hash[..hash.len().min(8)], one(message)),
+        Event::Compaction {} => "— context window compacted —".into(),
+        Event::Obs {
+            subject,
+            text,
+            derived_from,
+        } => format!(
+            "{}: {}{}",
+            subject,
+            one(text),
+            if derived_from.is_empty() { String::new() } else { format!(" [cites {} events]", derived_from.len()) }
+        ),
+    }
+}
+
+/// Write through `less -RFX` on a terminal (quit-if-one-screen, keep ANSI),
+/// plain stdout otherwise.
+fn page(text: &str) {
+    use std::io::{IsTerminal, Write};
+    if std::io::stdout().is_terminal() {
+        if let Ok(mut p) = std::process::Command::new("less")
+            .args(["-RFX"])
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+        {
+            if let Some(stdin) = p.stdin.as_mut() {
+                let _ = stdin.write_all(text.as_bytes());
+            }
+            let _ = p.wait();
+            return;
+        }
+    }
+    print!("{text}");
+}
 
 fn clip(s: &str, max: usize) -> String {
     let s = s.split_whitespace().collect::<Vec<_>>().join(" ");
