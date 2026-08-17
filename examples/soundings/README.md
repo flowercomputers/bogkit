@@ -95,6 +95,23 @@ with credit.
 | canon reopen (129,097 sentences) | 195s rebuild → **0.27s** snapshot fast-load |
 | gale, 60 edits/s × 6s | fold **360/360** at median ~400µs · naive arm drops 75 (trial canon) to 347 (full canon) |
 
+## Local vs cloud (measured, not asserted)
+
+Same sentences, same machine, this venue's wifi — ese in-process vs the
+cloud embedder this project's sibling (Loupe) used four days ago:
+
+| | latency per sentence |
+|---|---|
+| ese (in the binary) | **~3.4µs** (291k sentences/s; 206µs cold first call) |
+| voyage-3-large (API) | **p50 181ms** · min 164 · max 264 (n=3 — the free tier rate-limited the benchmark at call 4) |
+| ratio | ~**50,000×** |
+
+Retrieval: an anny kNN answers in ~230–870µs in-process; the TCP connect
+floor to the cloud measured **29ms** — any cloud retrieval pays ≥1 round
+trip before doing any work. The rate limit is part of the finding: the
+local embedder had read the entire 129k-sentence canon many times over
+before the cloud allowed a fourth sentence.
+
 ## Honesty notes
 
 - The naive lane scopes the ANN index out (it linear-scans) — stated on
