@@ -108,6 +108,30 @@ enum Outbound<'a> {
 
 // ------------------------------------------------------------- the brain --
 
+/// Longest single timed-motor command the cube accepts.
+const MAX_DRIVE_MS: u16 = 2500;
+
+/// A key held down auto-repeats: the driver sends the same drive every few
+/// tens of ms, each restarting the cube's timer. Treat a burst of identical
+/// drives, each arriving before the previous one would have expired, as ONE
+/// move lasting until the last one expires. `Some(merged)` if `next` extends
+/// `open`; the caller then retracts `open` and stores `merged`.
+fn merged(open: &Move, next: &Move) -> Option<Move> {
+    if open.left != next.left || open.right != next.right {
+        return None;
+    }
+    let open_ends = open.at_ms + open.duration_ms as u64;
+    if next.at_ms > open_ends + MERGE_SLACK_MS {
+        return None;
+    }
+    let dur = (next.at_ms + next.duration_ms as u64).saturating_sub(open.at_ms);
+    Some(Move {
+        duration_ms: dur.min(u16::MAX as u64) as u16,
+        ..open.clone()
+    })
+}
+const MERGE_SLACK_MS: u64 = 120;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
     Record,
@@ -119,6 +143,8 @@ enum Mode {
 /// types are inferred and the rest of the program talks to bog through them.
 struct Db<'a> {
     insert: Box<dyn FnMut(&Move) + 'a>,
+    /// retract `old` and insert `new` in one transaction
+    replace: Box<dyn FnMut(&Move, &Move) + 'a>,
     session_moves: Box<dyn Fn(u64) -> Vec<Move> + 'a>,
     session_count: Box<dyn Fn(u64) -> i64 + 'a>,
     max_session: Box<dyn Fn() -> Option<u64> + 'a>,
@@ -172,6 +198,12 @@ fn main() {
     let st = std::cell::RefCell::new(st);
     let mut db = Db {
         insert: Box::new(|m: &Move| st.borrow_mut().wtx(|tx| tx.insert(m))),
+        replace: Box::new(|old: &Move, new: &Move| {
+            st.borrow_mut().wtx(|tx| {
+                tx.remove(old);
+                tx.insert(new);
+            })
+        }),
         session_moves: Box::new(|session: u64| {
             let mut v: Vec<Move> = st.borrow().rtx(|(_, log, _)| {
                 log.iter()
@@ -249,27 +281,36 @@ impl Driver {
                 m.right,
                 m.duration_ms
             ))?;
-            self.send(&Outbound::Drive {
-                left: m.left,
-                right: m.right,
-                duration_ms: m.duration_ms,
-                label: &m.label,
-            })?;
-            // a little slack so consecutive timed commands don't overlap
-            std::thread::sleep(Duration::from_millis(m.duration_ms as u64 + 60));
+            // the cube's timed-motor command caps at 2550ms; chain chunks
+            let mut left_ms = m.duration_ms;
+            while left_ms > 0 {
+                let chunk = left_ms.min(MAX_DRIVE_MS);
+                self.send(&Outbound::Drive {
+                    left: m.left,
+                    right: m.right,
+                    duration_ms: chunk,
+                    label: &m.label,
+                })?;
+                left_ms -= chunk;
+                std::thread::sleep(Duration::from_millis(chunk as u64));
+            }
+            // a little slack so consecutive moves don't blur together
+            std::thread::sleep(Duration::from_millis(80));
         }
         self.send(&Outbound::Input { enabled: true })
     }
 }
 
 fn serve_driver(conn: TcpStream, mode: Mode, db: &mut Db<'_>) -> std::io::Result<()> {
-    let reader = BufReader::new(conn.try_clone()?);
+    let mut reader = BufReader::new(conn.try_clone()?);
     let mut drv = Driver { out: conn };
 
     // session bookkeeping (in memory; the moves themselves are in bog)
     let mut next_session: u64 = (db.max_session)().map(|s| s + 1).unwrap_or(0);
-    let mut recording: Option<u64> = None; // record mode: active session
+    let mut recording: Option<u64> = None; // active session, if any
     let mut seq: u64 = 0;
+    let merge = !std::env::args().any(|a| a == "--no-merge");
+    let mut open: Option<Move> = None; // last stored move, still extendable
 
     match mode {
         Mode::Record => {
@@ -287,8 +328,40 @@ fn serve_driver(conn: TcpStream, mode: Mode, db: &mut Db<'_>) -> std::io::Result
         }
     }
 
-    for line in reader.lines() {
-        let line = line?;
+    // Store one reported move: either extend the open one (held key) or
+    // start a new one. Returns the session's move count if a NEW move began.
+    let store = |db: &mut Db<'_>,
+                     open: &mut Option<Move>,
+                     seq: &mut u64,
+                     session: u64,
+                     left: i16,
+                     right: i16,
+                     duration_ms: u16,
+                     label: String|
+     -> Option<i64> {
+        let m = Move { session, seq: *seq, at_ms: now_ms(), left, right, duration_ms, label };
+        if merge
+            && let Some(prev) = open.as_ref().filter(|o| o.session == session)
+            && let Some(ext) = merged(prev, &m)
+        {
+            // held key: same move, longer — retract + reinsert in bog
+            (db.replace)(prev, &ext);
+            println!("  session {session}: {} extended to {}ms", ext.label, ext.duration_ms);
+            *open = Some(ext);
+            return None;
+        }
+        *seq += 1;
+        (db.insert)(&m);
+        *open = Some(m);
+        Some((db.session_count)(session))
+    };
+
+    let mut line = String::new();
+    loop {
+        line.clear();
+        if reader.read_line(&mut line)? == 0 {
+            return Ok(()); // driver hung up
+        }
         if line.trim().is_empty() {
             continue;
         }
@@ -300,48 +373,68 @@ fn serve_driver(conn: TcpStream, mode: Mode, db: &mut Db<'_>) -> std::io::Result
             }
         };
         match msg {
-            Inbound::Hello { name } => {
-                println!("driver hello: {name}");
-            }
+            Inbound::Hello { name } => println!("driver hello: {name}"),
             Inbound::Move { left, right, duration_ms, label } => {
                 let Some(session) = recording else {
                     println!("  move {label} (not recording)");
                     continue;
                 };
-                let m = Move {
-                    session,
-                    seq,
-                    at_ms: now_ms(),
-                    left,
-                    right,
-                    duration_ms,
-                    label,
+                let Some(n) = store(db, &mut open, &mut seq, session, left, right, duration_ms, label) else {
+                    continue;
                 };
-                seq += 1;
-                (db.insert)(&m);
-                let n = (db.session_count)(session);
-                drv.status(format!("session {session}: {n} moves  (+{} L={left:+} R={right:+})", m.label))?;
+                let last = open.as_ref().unwrap();
+                drv.status(format!(
+                    "session {session}: {n} moves  (+{} L={left:+} R={right:+})",
+                    last.label
+                ))?;
 
                 if let Mode::Boomerang { limit } = mode
                     && n >= limit as i64
                 {
+                    // Let the last move finish (a held key keeps extending it)
+                    // before we reverse, otherwise the tail of the hold would
+                    // slip past the reversal. Anything else that arrives while
+                    // settling still counts — it moved the cube.
+                    loop {
+                        let cur = open.as_ref().unwrap();
+                        let ends = cur.at_ms + cur.duration_ms as u64 + MERGE_SLACK_MS;
+                        let wait = ends.saturating_sub(now_ms());
+                        if wait == 0 {
+                            break;
+                        }
+                        drv.out.set_read_timeout(Some(Duration::from_millis(wait)))?;
+                        line.clear();
+                        match reader.read_line(&mut line) {
+                            Ok(0) => return Ok(()),
+                            Ok(_) => {}
+                            Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => break,
+                            Err(e) => return Err(e),
+                        }
+                        if let Ok(Inbound::Move { left, right, duration_ms, label }) = serde_json::from_str(&line) {
+                            store(db, &mut open, &mut seq, session, left, right, duration_ms, label);
+                        }
+                    }
+                    drv.out.set_read_timeout(None)?;
+
                     let moves = (db.session_moves)(session);
                     drv.send(&Outbound::Beep { effect: 4 })?;
                     drv.led(0, 80, 255)?;
                     drv.status(format!("limit reached — reversing {} moves", moves.len()))?;
-                    std::thread::sleep(Duration::from_millis(500));
+                    std::thread::sleep(Duration::from_millis(400));
                     drv.execute(&reversed(moves))?;
                     drv.led(255, 120, 0)?;
                     // next trip
                     recording = Some(next_session);
                     next_session += 1;
                     seq = 0;
+                    open = None;
                     drv.status(format!("back home. new session {}", next_session - 1))?;
                 }
             }
             Inbound::Key { key } => match (mode, key.as_str()) {
                 (Mode::Record, "r") => {
                     if let Some(session) = recording.take() {
+                        open = None;
                         let n = (db.session_count)(session);
                         drv.led(0, 255, 0)?;
                         drv.status(format!("stopped recording session {session} ({n} moves)"))?;
@@ -349,6 +442,7 @@ fn serve_driver(conn: TcpStream, mode: Mode, db: &mut Db<'_>) -> std::io::Result
                         recording = Some(next_session);
                         next_session += 1;
                         seq = 0;
+                        open = None;
                         drv.led(255, 0, 0)?;
                         drv.status(format!("recording session {} ...", next_session - 1))?;
                     }
@@ -358,7 +452,6 @@ fn serve_driver(conn: TcpStream, mode: Mode, db: &mut Db<'_>) -> std::io::Result
                         drv.status("stop recording first (R)")?;
                         continue;
                     }
-                    // most recent non-empty session
                     let Some(session) = (db.max_session)() else {
                         drv.status("nothing recorded yet")?;
                         continue;
@@ -374,7 +467,6 @@ fn serve_driver(conn: TcpStream, mode: Mode, db: &mut Db<'_>) -> std::io::Result
             },
         }
     }
-    Ok(())
 }
 
 fn now_ms() -> u64 {
@@ -419,6 +511,29 @@ mod tests {
         let out = reversed(vec![mv(2, 1, 1, "c"), mv(0, 3, 3, "a"), mv(1, 2, 2, "b")]);
         let seqs: Vec<u64> = out.iter().map(|m| m.seq).collect();
         assert_eq!(seqs, vec![2, 1, 0]);
+    }
+
+    fn at(at_ms: u64, left: i16, right: i16) -> Move {
+        Move { at_ms, ..mv(0, left, right, "m") }
+    }
+
+    #[test]
+    fn merged_extends_autorepeat_burst() {
+        let open = at(1000, 90, 90);
+        let ext = merged(&open, &at(1050, 90, 90)).unwrap();
+        assert_eq!(ext.duration_ms, 450); // ends when the new one ends
+        let ext2 = merged(&ext, &at(1400, 90, 90)).unwrap();
+        assert_eq!(ext2.duration_ms, 800);
+        assert_eq!(ext2.at_ms, 1000);
+    }
+
+    #[test]
+    fn merged_rejects_different_wheels_or_gap() {
+        let open = at(1000, 90, 90);
+        assert!(merged(&open, &at(1050, -90, 90)).is_none());
+        // 400ms move started at 1000 ends at 1400; slack 120 -> 1520 is the cutoff
+        assert!(merged(&open, &at(1600, 90, 90)).is_none());
+        assert!(merged(&open, &at(1500, 90, 90)).is_some());
     }
 
     #[test]

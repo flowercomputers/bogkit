@@ -16,6 +16,12 @@ toio/              Python BLE driver (from ../toio): tinymo_driver.py talks to t
                    and to the brain over newline-delimited JSON
 ```
 
+**What counts as a move.** Holding a key auto-repeats, sending the same 400 ms drive every
+few tens of ms. The brain merges such a burst into ONE move lasting as long as you held the
+key (it retracts the stored move and re-inserts the extended one — fold makes that cheap), so
+"5 moves" means five distinct presses/holds, not five auto-repeat ticks. `--no-merge` turns
+that off. In boomerang mode the brain waits for the last move to finish before reversing.
+
 Moves are stored as `Move { session, seq, at_ms, left, right, duration_ms, label }` in a
 `Bag<Move>` plus a `KeyBy(session) → Aggregate → Table<session, count>` — the boomerang limit is
 read straight from that incrementally-maintained count. The db lives in
