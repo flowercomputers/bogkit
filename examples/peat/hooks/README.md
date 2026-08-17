@@ -49,7 +49,7 @@ the debug log only, so `peat capture` output is invisible; rely on exit code 0.
         "hooks": [
           {
             "type": "command",
-            "command": "cat | jq -r '.transcript_path' | xargs -I{} peat capture {} 2>/dev/null || true"
+            "command": "in=$(cat); tp=$(printf '%s' \"$in\" | jq -r '.transcript_path // empty'); fm=$(printf '%s' \"$in\" | jq -r '.last_assistant_message // empty'); [ -n \"$tp\" ] && peat capture \"$tp\" --final-msg \"$fm\" 2>/dev/null || true"
           }
         ]
       }
@@ -61,6 +61,10 @@ the debug log only, so `peat capture` output is invisible; rely on exit code 0.
 Notes:
 
 - **peat failing may never break a session** — every command ends `|| true`.
+- The Stop hook reads stdin **once** and extracts both `transcript_path` and
+  `last_assistant_message`; the latter is passed as `--final-msg`, which is
+  authoritative over transcript tail parsing (the transcript file may lag the
+  final turn). The empty-path guard skips capture rather than erroring.
 - The SessionStart hook writes `.peat/current-session` so that `peat obs`
   (run by the agent mid-session, which has no session id in its environment)
   can resolve the session without a `--session` flag. `$CLAUDE_SESSION_ID`
