@@ -941,6 +941,8 @@ async fn serve_http(state: AppState) {
         .route("/pct", get(pct))
         .route("/library", get(library))
         .route("/cloud", get(cloud))
+        .route("/engine", get(engine))
+        .route("/engine-info", get(engine_info))
         .route("/reader", axum::routing::post(reader))
         .route("/gale", get(gale_start))
         .with_state(state);
@@ -1080,6 +1082,35 @@ async fn reader(State(app): State<AppState>, Json(inp): Json<ReaderIn>) -> Json<
         "cached": hit,
         "reread": cached_flags.len() - hit,
     }))
+}
+
+async fn engine() -> Html<&'static str> {
+    Html(include_str!("engine.html"))
+}
+
+/// `/engine-info` — the machine room's shelf inventory, read straight from
+/// the filesystem the instrument maintains: completion markers carry row
+/// counts, snapshots report their bytes.
+async fn engine_info(State(app): State<AppState>) -> Json<serde_json::Value> {
+    let (active, _) = app.lib_rx.borrow().clone();
+    let libs: Vec<serde_json::Value> = LIBRARIES
+        .iter()
+        .map(|l| {
+            let sentences = std::fs::read_to_string(format!("{}/.soundings-complete", l.db))
+                .ok()
+                .and_then(|t| t.trim().parse::<u64>().ok());
+            let snap_bytes = std::fs::metadata(l.snap).map(|m| m.len()).unwrap_or(0);
+            serde_json::json!({
+                "id": l.id,
+                "label": l.label,
+                "active": l.id == active,
+                "sentences": sentences,
+                "snap_bytes": snap_bytes,
+                "prepped": std::path::Path::new(l.jsonl).exists() || std::path::Path::new(l.db).exists(),
+            })
+        })
+        .collect();
+    Json(serde_json::json!({ "libs": libs, "model": crate::restyle::model_name() }))
 }
 
 async fn index() -> Html<&'static str> {
