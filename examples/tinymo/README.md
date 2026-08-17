@@ -44,7 +44,7 @@ python3 examples/tinymo/toio/tinymo_driver.py                     # or --list / 
 python3 examples/tinymo/toio/tinymo_driver.py --no-cube           # protocol only, no hardware
 ```
 
-Keys: `W/S A/D` or arrows drive, `Q/E` curve, `1-9` speed, `R` record on/off, `P` play,
+Keys: `W/S A/D` or arrows drive, `Q/E` curve, `1-9` speed (starts at 1), `R` record on/off, `P` play,
 `L` LED, `B` beep, `X` quit. LED: green = idle, red = recording, blue = brain is driving
 (keys locked), orange = boomerang armed.
 

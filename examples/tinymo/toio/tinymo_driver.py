@@ -28,6 +28,8 @@ from toio_demo import (
     CLEAR, HOME, EOL,
 )
 
+DEFAULT_SPEED = 30  # same as pressing "1"
+
 MOVE_KEYS = {"w", "up", "s", "down", "a", "left", "d", "right", "q", "e"}
 BRAIN_KEYS = {"r", "p"}
 
@@ -221,7 +223,7 @@ async def run(address: str | None, timeout: float, host: str, port: int, no_cube
     quit_event = asyncio.Event()
 
     if no_cube:
-        state = CubeState(name="(no cube)")
+        state = CubeState(name="(no cube)", speed=DEFAULT_SPEED)
         client = FakeClient()
         return await _session(client, state, link, quit_event)
 
@@ -231,7 +233,7 @@ async def run(address: str | None, timeout: float, host: str, port: int, no_cube
         print("no toio cube found. Make sure it's powered on (LED blinking) and near the Mac.")
         return 1
     print(f"connecting to {device.name} ({device.address}) ...")
-    state = CubeState(name=device.name or device.address)
+    state = CubeState(name=device.name or device.address, speed=DEFAULT_SPEED)
 
     def on_disconnect(_client) -> None:
         state.log("disconnected")
