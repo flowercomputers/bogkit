@@ -128,6 +128,21 @@ fn main() {
         * 1000;
     let mut st = {
         let phase = ui::Phase::new("opening ledger");
+        // catch_unwind does not silence the default panic hook: without
+        // this, every caught-and-retried Locked attempt still prints a
+        // full backtrace, which reads as a crash while we quietly wait.
+        let quiet_hook = std::sync::Arc::new(std::sync::Mutex::new(Some(
+            std::panic::take_hook(),
+        )));
+        std::panic::set_hook(Box::new(|_| {}));
+        let restore = {
+            let h = quiet_hook.clone();
+            move || {
+                if let Some(hook) = h.lock().unwrap().take() {
+                    std::panic::set_hook(hook);
+                }
+            }
+        };
         let mut delay_ms = 200u64;
         let mut waited = 0u64;
         let st = loop {
@@ -135,13 +150,34 @@ fn main() {
                 KeyedStream::<EventId, Envelope, _>::new(db_path(), peat_pipeline!())
             }) {
                 Ok(st) => break st,
-                Err(_) if waited < wait_max_ms => {
+                Err(p) => {
+                    // only lock contention is retryable; anything else
+                    // (corruption, schema) must fail loudly and now
+                    let msg = p
+                        .downcast_ref::<String>()
+                        .map(String::as_str)
+                        .or_else(|| p.downcast_ref::<&str>().copied())
+                        .unwrap_or("");
+                    if !msg.contains("Locked") {
+                        restore();
+                        std::panic::resume_unwind(p);
+                    }
+                    if waited >= wait_max_ms {
+                        restore();
+                        eprintln!(
+                            "peat: ledger still locked after {}s — another peat \
+process holds it (reads are exclusive too; a bulk capture can hold it for \
+minutes). Retry shortly, or raise PEAT_LOCK_WAIT_SECS.",
+                            wait_max_ms / 1000
+                        );
+                        std::process::exit(75); // EX_TEMPFAIL
+                    }
                     if waited == 0 && !ui::fancy_err() {
                         // non-tty gets one plain line instead of a spinner
-                        eprintln!("peat: db busy (another agent writing); waiting…");
+                        eprintln!("peat: ledger busy (another peat process); waiting…");
                     }
                     phase.tick(format!(
-                        "ledger busy — another writer · waiting {}s (gives up at {}s)",
+                        "ledger busy — another peat process · waiting {}s (gives up at {}s)",
                         waited / 1000,
                         wait_max_ms / 1000
                     ));
@@ -149,16 +185,9 @@ fn main() {
                     waited += delay_ms;
                     delay_ms = (delay_ms * 2).min(3_000);
                 }
-                Err(_) => {
-                    eprintln!(
-                        "peat: ledger still locked after {}s — another process is \
-writing (a bulk capture?). Retry shortly, or raise PEAT_LOCK_WAIT_SECS.",
-                        wait_max_ms / 1000
-                    );
-                    std::process::exit(75); // EX_TEMPFAIL
-                }
             }
         };
+        restore();
         phase.done();
         st
     };
