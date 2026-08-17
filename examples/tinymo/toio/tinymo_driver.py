@@ -57,15 +57,32 @@ class Link:
         self.reader, self.writer = await asyncio.open_connection(self.host, self.port)
         await self.send({"type": "hello", "name": "tinymo_driver"})
 
+    async def close(self) -> None:
+        if self.writer is not None:
+            try:
+                self.writer.close()
+            except Exception:
+                pass
+        self.reader = self.writer = None
+
     async def send(self, msg: dict) -> None:
         if self.writer is None:
             return
-        self.writer.write((json.dumps(msg) + "\n").encode())
-        await self.writer.drain()
+        try:
+            self.writer.write((json.dumps(msg) + "\n").encode())
+            await self.writer.drain()
+        except (ConnectionError, OSError):
+            await self.close()
 
     async def recv(self) -> dict | None:
-        line = await self.reader.readline()
+        if self.reader is None:
+            return None
+        try:
+            line = await self.reader.readline()
+        except (ConnectionError, OSError):
+            line = b""
         if not line:
+            await self.close()
             return None
         return json.loads(line)
 
@@ -134,25 +151,36 @@ async def handle_key(key: str, cube: BrainCube, quit_event: asyncio.Event) -> No
 
 
 async def brain_loop(cube: BrainCube, quit_event: asyncio.Event) -> None:
-    """Apply commands coming from the brain."""
+    """Apply commands coming from the brain; reconnect if it goes away."""
     st = cube.state
     while not quit_event.is_set():
         msg = await cube.link.recv()
         if msg is None:
-            st.log("brain disconnected")
-            cube.status_lines.append("brain disconnected — restart the driver after the brain")
-            return
-        t = msg.get("type")
-        if t == "drive":
-            await cube.replay_drive(msg["left"], msg["right"], msg["duration_ms"], msg.get("label", ""))
-        elif t == "led":
-            await cube.set_led((msg["r"], msg["g"], msg["b"]))
-        elif t == "beep":
-            await cube.beep(msg.get("effect", 4))
-        elif t == "status":
-            cube.status_lines.append(f"{time.strftime('%H:%M:%S')}  {msg['text']}")
-        elif t == "input":
-            cube.input_enabled = bool(msg["enabled"])
+            st.log("brain disconnected — reconnecting")
+            cube.status_lines.append(f"{time.strftime('%H:%M:%S')}  brain disconnected — reconnecting ...")
+            cube.input_enabled = True  # never leave the keys locked
+            while not quit_event.is_set():
+                try:
+                    await cube.link.connect()
+                    st.log("brain reconnected")
+                    break
+                except OSError:
+                    await asyncio.sleep(1.0)
+            continue
+        try:
+            t = msg.get("type")
+            if t == "drive":
+                await cube.replay_drive(msg["left"], msg["right"], msg["duration_ms"], msg.get("label", ""))
+            elif t == "led":
+                await cube.set_led((msg["r"], msg["g"], msg["b"]))
+            elif t == "beep":
+                await cube.beep(msg.get("effect", 4))
+            elif t == "status":
+                cube.status_lines.append(f"{time.strftime('%H:%M:%S')}  {msg['text']}")
+            elif t == "input":
+                cube.input_enabled = bool(msg["enabled"])
+        except Exception as e:  # a BLE hiccup must not kill the brain link
+            st.log(f"brain cmd {t} failed: {e}")
 
 
 def render(cube: BrainCube) -> str:
@@ -231,7 +259,10 @@ async def _session(client, state: CubeState, link: Link, quit_event: asyncio.Eve
     async def key_loop() -> None:
         while not quit_event.is_set():
             key = await key_queue.get()
-            await handle_key(key, cube, quit_event)
+            try:
+                await handle_key(key, cube, quit_event)
+            except Exception as e:
+                state.log(f"key {key!r} failed: {e}")
 
     async def render_loop() -> None:
         while not quit_event.is_set():
