@@ -20,6 +20,7 @@ pub mod mcp;
 pub mod model;
 mod proxy;
 pub mod query;
+mod repl;
 pub mod serve;
 pub mod store;
 pub mod upstream;

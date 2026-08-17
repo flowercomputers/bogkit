@@ -20,6 +20,14 @@
 //! the load-test's query mix (search words, node ids, the instances
 //! target) is always *derived* from the flattened records, never
 //! hardcoded — see [`derive_query_pool`].
+//!
+//! Phases 1-3 (`prepare`) are shared by two entry points: [`run`] (this
+//! module's automated one-shot phases 4/5 above) and [`run_interactive`]
+//! (`--interactive`, build design §13 "Interactive mode"), which spawns
+//! the same serve child via [`BenchSession`] and hands it to
+//! [`crate::repl::run`] for a live REPL instead of the automated load/API
+//! phases. [`BenchSession::fire`] — one raw `tools/call` frame, timed — is
+//! the primitive both the one-shot load phase and the REPL drive.
 
 use std::collections::BTreeSet;
 use std::io::{BufRead, BufReader, Write};
@@ -338,8 +346,11 @@ pub fn generate_corpus(nodes: usize) -> Value {
 /// flattened records rather than hardcoded — the same derivation runs in
 /// synthetic mode (the corpus's own generated names/text) and real-file
 /// mode (whatever's actually in the file), so bench exercises one code
-/// path regardless of source.
-struct QueryPool {
+/// path regardless of source. `Clone` so [`BenchSession`] can own its own
+/// copy while [`PreparedBench`] keeps the original for the API comparison
+/// phase.
+#[derive(Clone)]
+pub(crate) struct QueryPool {
     /// Distinct words drawn from node names and TEXT `characters`, sorted
     /// (a `BTreeSet` collection — deterministic, never a `HashMap`).
     words: Vec<String>,
@@ -506,19 +517,43 @@ pub struct BenchOpts {
     pub skip_api: bool,
 }
 
-// ---- run ----
+// ---- setup shared by one-shot `run` and interactive `run_interactive` ----
 
-/// Run every phase and return the assembled report, or `Err` if any phase
-/// fails or any tool call comes back `isError` (a graceful 429 in the API
-/// comparison phase is a *recorded* result, not a failure — see
-/// [`ApiStats`]).
-pub fn run(opts: BenchOpts) -> Result<BenchReport, String> {
+/// Phases 1-3 (corpus → cold sync → no-churn re-pull), assembled once and
+/// reused by both entry points: [`run`]'s automated phase 4/5, and
+/// [`run_interactive`]'s REPL. Owns the temp store's cleanup ([`TempDirGuard`])
+/// so it survives exactly as long as whichever caller holds this struct.
+struct PreparedBench {
+    source: &'static str,
+    corpus: CorpusStats,
+    cold: ColdStats,
+    repull: RepullStats,
+    pool: QueryPool,
+    db_path: PathBuf,
+    exe: PathBuf,
+    /// Real-file mode only (see [`BenchOpts::file`]).
+    file_key: Option<String>,
+    /// Real-file mode only: the same authenticated client phase 1 used to
+    /// fetch the file, reused for the API comparison phase (one-shot) or
+    /// the REPL's `api …` commands (interactive) instead of re-reading
+    /// `FIGMA_TOKEN`.
+    api_for_comparison: Option<UreqApi>,
+    tmp_dir: PathBuf,
+    keep: bool,
+    #[allow(dead_code)] // held only for its Drop
+    cleanup: TempDirGuard,
+}
+
+/// Phases 1-3 of [`run`]/[`run_interactive`]: corpus (synthetic generation
+/// or one real-file Tier-1 fetch), cold sync into a fresh temp store, and a
+/// no-churn re-pull of the identical in-memory data (the engine's headline
+/// invariant, asserted in code). Returns `Err` if any phase fails or the
+/// re-pull churns.
+fn prepare(opts: &BenchOpts) -> Result<PreparedBench, String> {
     // ---- phase 1: corpus ----
     // `vars_resp` carries the opportunistic Enterprise `variables_local`
     // response (real-file mode only, like `do_pull` — spec §12); `Ok(None)`
-    // on non-Enterprise plans is not an error. `api_for_comparison` is kept
-    // alive only so phase 5 can reuse the same authenticated client instead
-    // of re-reading `FIGMA_TOKEN`.
+    // on non-Enterprise plans is not an error.
     let (resp, vars_resp, api_for_comparison, source, gen_ms): (
         Value,
         Option<Value>,
@@ -601,28 +636,8 @@ pub fn run(opts: BenchOpts) -> Result<BenchReport, String> {
     // ---- derived query mix (one code path for both modes) ----
     let pool = derive_query_pool(&flattened);
 
-    // ---- phase 4: serve load ----
-    let load = run_load_phase(&opts, &db_path, &pool)?;
-
-    // ---- phase 5: API comparison (real-file mode only) ----
-    let api = match (&opts.file, api_for_comparison) {
-        (Some(key), Some(api)) if !opts.skip_api => Some(run_api_comparison_phase(
-            &api,
-            key,
-            opts.api_calls,
-            &pool,
-            &load,
-        )?),
-        _ => None,
-    };
-
-    if opts.keep {
-        eprintln!("figmog: kept temp store at {}", tmp_dir.display());
-    }
-    drop(cleanup);
-
-    Ok(BenchReport {
-        source: source.to_string(),
+    Ok(PreparedBench {
+        source,
         corpus: CorpusStats {
             nodes: node_count,
             bytes,
@@ -638,9 +653,203 @@ pub fn run(opts: BenchOpts) -> Result<BenchReport, String> {
             ms: repull_ms,
             churn_zero: true,
         },
+        pool,
+        db_path,
+        exe: opts.exe.clone(),
+        file_key: opts.file.clone(),
+        api_for_comparison,
+        tmp_dir,
+        keep: opts.keep,
+        cleanup,
+    })
+}
+
+/// Owns the spawned `figmog serve` child, its stdio pump, the derived query
+/// pool, and cumulative per-call stats — the shared primitive behind both
+/// the one-shot load phase ([`run_load_phase`]) and the interactive REPL
+/// ([`crate::repl::run`]). [`BenchSession::fire`] is the one thing both
+/// drive a `tools/call` frame over the child's stdio pipe with.
+pub(crate) struct BenchSession {
+    guard: ChildGuard,
+    stdin: Option<ChildStdin>,
+    rx: Receiver<String>,
+    pool: QueryPool,
+    rotation: Vec<&'static str>,
+    rng: Lcg,
+    next_id: i64,
+    mix_counter: usize,
+    stats: Vec<(String, Duration)>,
+}
+
+impl BenchSession {
+    /// Spawn `figmog serve --no-upstream --no-watch --db <db>` and complete
+    /// the MCP handshake. `Err` if the pool has nothing to query at all
+    /// (spec §13: "nothing to load-test") or the handshake fails.
+    pub(crate) fn start(
+        exe: &std::path::Path,
+        db_path: &std::path::Path,
+        pool: QueryPool,
+    ) -> Result<Self, String> {
+        let rotation = tool_rotation(&pool);
+        if rotation.is_empty() {
+            return Err("bench corpus has neither searchable words, nodes, nor components — nothing to load-test".into());
+        }
+        let (guard, mut stdin, rx) = spawn_serve(exe, db_path);
+
+        send(
+            &mut stdin,
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {"protocolVersion": "2025-06-18", "capabilities": {}},
+            }),
+        )?;
+        recv(&rx)?; // initialize response; contents not needed here
+        send(
+            &mut stdin,
+            &json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+        )?;
+
+        Ok(BenchSession {
+            guard,
+            stdin: Some(stdin),
+            rx,
+            pool,
+            rotation,
+            rng: Lcg::new(LCG_SEED),
+            next_id: 2,
+            mix_counter: 0,
+            stats: Vec::new(),
+        })
+    }
+
+    /// Fire one raw `tools/call` frame, timed write→response-line, and
+    /// record it into the session's cumulative stats. `Err` only on a
+    /// transport failure (send/recv/parse) — a tool result with
+    /// `isError: true` is still `Ok`, so callers (the one-shot load loop,
+    /// the REPL) each decide how to react to it.
+    pub(crate) fn fire(&mut self, tool: &str, args: Value) -> Result<(Duration, Value), String> {
+        let stdin = self
+            .stdin
+            .as_mut()
+            .ok_or_else(|| "bench session already finished".to_string())?;
+        let req_id = self.next_id;
+        self.next_id += 1;
+
+        let start = Instant::now();
+        send(
+            stdin,
+            &json!({
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "method": "tools/call",
+                "params": {"name": tool, "arguments": args},
+            }),
+        )?;
+        let resp = recv(&self.rx)?;
+        let elapsed = start.elapsed();
+        self.stats.push((tool.to_string(), elapsed));
+        Ok((elapsed, resp))
+    }
+
+    /// Next `(tool, args)` pair in the fixed rotating mix (spec §13),
+    /// derived from this session's query pool — continues the same
+    /// rotation across however many calls this session has already fired.
+    pub(crate) fn next_mixed_call(&mut self) -> (&'static str, Value) {
+        let tool = self.rotation[self.mix_counter % self.rotation.len()];
+        self.mix_counter += 1;
+        let args = call_args(tool, &self.pool, &mut self.rng);
+        (tool, args)
+    }
+
+    /// Every `(tool, elapsed)` fired this session, in fire order.
+    pub(crate) fn stats(&self) -> &[(String, Duration)] {
+        &self.stats
+    }
+
+    /// Close stdin (EOF — how `--no-watch` serve exits cleanly) and wait
+    /// for the child to exit. Idempotent: a second call just re-waits an
+    /// already-exited child. `ChildGuard`'s `Drop` is the safety net if
+    /// this is never reached (an early `?` return, a panic) — it
+    /// kills+waits unconditionally, so the child is never left a zombie.
+    pub(crate) fn finish(&mut self) -> Result<(), String> {
+        self.stdin.take(); // dropped here -> EOF on the child's stdin
+        wait_with_timeout(&mut self.guard.0, EXIT_TIMEOUT)
+    }
+}
+
+// ---- run ----
+
+/// Run every phase and return the assembled report, or `Err` if any phase
+/// fails or any tool call comes back `isError` (a graceful 429 in the API
+/// comparison phase is a *recorded* result, not a failure — see
+/// [`ApiStats`]).
+pub fn run(opts: BenchOpts) -> Result<BenchReport, String> {
+    let prepared = prepare(&opts)?;
+
+    // ---- phase 4: serve load ----
+    let load = run_load_phase(&opts, &prepared.exe, &prepared.db_path, &prepared.pool)?;
+
+    // ---- phase 5: API comparison (real-file mode only) ----
+    let api = match (&prepared.file_key, &prepared.api_for_comparison) {
+        (Some(key), Some(api)) if !opts.skip_api => Some(run_api_comparison_phase(
+            api,
+            key,
+            opts.api_calls,
+            &prepared.pool,
+            &load,
+        )?),
+        _ => None,
+    };
+
+    let report = BenchReport {
+        source: prepared.source.to_string(),
+        corpus: prepared.corpus,
+        cold: prepared.cold,
+        repull: prepared.repull,
         load,
         api,
-    })
+    };
+
+    if prepared.keep {
+        eprintln!("figmog: kept temp store at {}", prepared.tmp_dir.display());
+    }
+    // `prepared` (and its `TempDirGuard`) drops here, cleaning up the temp
+    // store unless `--keep`.
+
+    Ok(report)
+}
+
+/// `figmog bench --interactive` (build design §13 "Interactive mode"): the
+/// same setup as [`run`] (corpus/real file → cold sync → no-churn re-pull →
+/// serve child spawn), then a REPL on the terminal instead of the
+/// automated load/API phases — requests visible as they fire.
+pub fn run_interactive(opts: BenchOpts) -> Result<(), String> {
+    let mut prepared = prepare(&opts)?;
+    print_setup_human(
+        prepared.source,
+        &prepared.corpus,
+        &prepared.cold,
+        &prepared.repull,
+    );
+    println!();
+
+    let real_file = match (prepared.file_key.take(), prepared.api_for_comparison.take()) {
+        (Some(key), Some(api)) => Some(crate::repl::RealFileCtx { key, api }),
+        _ => None,
+    };
+
+    let mut session = BenchSession::start(&prepared.exe, &prepared.db_path, prepared.pool.clone())?;
+    let repl_result = crate::repl::run(&mut session, real_file);
+    let finish_result = session.finish();
+
+    if prepared.keep {
+        eprintln!("figmog: kept temp store at {}", prepared.tmp_dir.display());
+    }
+
+    repl_result?;
+    finish_result
 }
 
 // ---- temp dir management ----
@@ -813,53 +1022,20 @@ fn call_args(tool: &str, pool: &QueryPool, rng: &mut Lcg) -> Value {
 
 fn run_load_phase(
     opts: &BenchOpts,
+    exe: &std::path::Path,
     db_path: &std::path::Path,
     pool: &QueryPool,
 ) -> Result<LoadStats, String> {
-    let rotation = tool_rotation(pool);
-    if rotation.is_empty() {
-        return Err("bench corpus has neither searchable words, nodes, nor components — nothing to load-test".into());
-    }
-
-    let (mut guard, mut stdin, rx) = spawn_serve(&opts.exe, db_path);
-
-    send(
-        &mut stdin,
-        &json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {"protocolVersion": "2025-06-18", "capabilities": {}},
-        }),
-    )?;
-    recv(&rx)?; // initialize response; contents not needed here
-    send(
-        &mut stdin,
-        &json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
-    )?;
-
-    let mut rng = Lcg::new(LCG_SEED);
-    let mut timings: Vec<Vec<Duration>> = vec![Vec::new(); rotation.len()];
+    let mut session = BenchSession::start(exe, db_path, pool.clone())?;
+    let rotation = session.rotation.clone();
+    let rotation_len = rotation.len();
+    let mut timings: Vec<Vec<Duration>> = vec![Vec::new(); rotation_len];
 
     let wall_start = Instant::now();
     for i in 0..opts.calls {
-        let tool_idx = i % rotation.len();
-        let tool = rotation[tool_idx];
-        let args = call_args(tool, pool, &mut rng);
-        let req_id = (i as i64) + 2;
-
-        let start = Instant::now();
-        send(
-            &mut stdin,
-            &json!({
-                "jsonrpc": "2.0",
-                "id": req_id,
-                "method": "tools/call",
-                "params": {"name": tool, "arguments": args},
-            }),
-        )?;
-        let resp = recv(&rx)?;
-        let elapsed = start.elapsed();
+        let tool_idx = i % rotation_len;
+        let (tool, args) = session.next_mixed_call();
+        let (elapsed, resp) = session.fire(tool, args)?;
 
         if resp["result"]["isError"] == json!(true) {
             let text = resp["result"]["content"][0]["text"]
@@ -873,10 +1049,9 @@ fn run_load_phase(
     }
     let wall = wall_start.elapsed();
 
-    drop(stdin); // stdin EOF: how `--no-watch` serve exits cleanly
-    wait_with_timeout(&mut guard.0, EXIT_TIMEOUT)?;
+    session.finish()?;
 
-    let mut per_tool = Vec::with_capacity(rotation.len());
+    let mut per_tool = Vec::with_capacity(rotation_len);
     for (tool, mut durations) in rotation.into_iter().zip(timings) {
         durations.sort();
         per_tool.push(ToolStats {
@@ -902,6 +1077,36 @@ fn run_load_phase(
         wall_s,
         req_per_s,
     })
+}
+
+/// Group timed calls by tool, preserving each tool's first-appearance
+/// order (never a `HashMap` — spec's no-HashMap-iteration-order-at-an-
+/// output-boundary rule applies here too). Used by the REPL's `run N`
+/// burst table and cumulative `report` table, where (unlike the one-shot
+/// load phase's fixed rotation) the set of tools fired isn't known ahead
+/// of time.
+pub(crate) fn group_tool_stats(entries: &[(String, Duration)]) -> Vec<ToolStats> {
+    let mut grouped: Vec<(String, Vec<Duration>)> = Vec::new();
+    for (tool, d) in entries {
+        match grouped.iter_mut().find(|(t, _)| t == tool) {
+            Some((_, durations)) => durations.push(*d),
+            None => grouped.push((tool.clone(), vec![*d])),
+        }
+    }
+    grouped
+        .into_iter()
+        .map(|(tool, mut durations)| {
+            durations.sort();
+            ToolStats {
+                tool,
+                calls: durations.len(),
+                p50_ms: percentile_ms(&durations, 50),
+                p95_ms: percentile_ms(&durations, 95),
+                p99_ms: percentile_ms(&durations, 99),
+                max_ms: max_ms(&durations),
+            }
+        })
+        .collect()
 }
 
 // ---- API comparison phase (real-file mode) ----
@@ -993,32 +1198,46 @@ fn run_api_comparison_phase(
 
 // ---- human-readable report ----
 
-/// The phase lines + per-tool table + headline (`--json`'s alternative;
-/// stdout purity means callers pick exactly one).
-pub fn print_human(report: &BenchReport) {
+/// The corpus/cold-sync/re-pull setup lines, shared by [`print_human`]
+/// (the one-shot report) and [`run_interactive`] (printed once before the
+/// REPL takes over).
+fn print_setup_human(source: &str, corpus: &CorpusStats, cold: &ColdStats, repull: &RepullStats) {
     println!(
-        "corpus  [{}]  {} nodes, {} bytes, {:.1}ms",
-        report.source, report.corpus.nodes, report.corpus.bytes, report.corpus.gen_ms
+        "corpus  [{source}]  {} nodes, {} bytes, {:.1}ms",
+        corpus.nodes, corpus.bytes, corpus.gen_ms
     );
     println!(
         "cold sync    {:.1}ms flatten + {:.1}ms sync, {} records ({:.0} records/s)",
-        report.cold.flatten_ms, report.cold.sync_ms, report.cold.records, report.cold.records_per_s
+        cold.flatten_ms, cold.sync_ms, cold.records, cold.records_per_s
     );
     println!(
         "re-pull      {:.1}ms, churn zero: {}",
-        report.repull.ms, report.repull.churn_zero
+        repull.ms, repull.churn_zero
     );
-    println!();
+}
+
+/// The per-tool percentile table, shared by [`print_human`] (the one-shot
+/// load phase's fixed rotation) and the REPL's `run N`/`report` commands
+/// (an arbitrary set of tools, grouped by [`group_tool_stats`]).
+pub(crate) fn print_tool_table(per_tool: &[ToolStats]) {
     println!(
         "{:<18} {:>8} {:>10} {:>10} {:>10} {:>10}",
         "tool", "calls", "p50 (ms)", "p95 (ms)", "p99 (ms)", "max (ms)"
     );
-    for t in &report.load.per_tool {
+    for t in per_tool {
         println!(
             "{:<18} {:>8} {:>10.3} {:>10.3} {:>10.3} {:>10.3}",
             t.tool, t.calls, t.p50_ms, t.p95_ms, t.p99_ms, t.max_ms
         );
     }
+}
+
+/// The phase lines + per-tool table + headline (`--json`'s alternative;
+/// stdout purity means callers pick exactly one).
+pub fn print_human(report: &BenchReport) {
+    print_setup_human(&report.source, &report.corpus, &report.cold, &report.repull);
+    println!();
+    print_tool_table(&report.load.per_tool);
     println!();
     println!(
         "figmog served {} queries in {:.1}s ({:.0} req/s). Figma's Tier-1 API budget on a free plan: ~10 file requests per MINUTE.",

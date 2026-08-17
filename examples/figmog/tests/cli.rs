@@ -542,3 +542,54 @@ fn bench_e2e_synthetic_json_report() {
         assert!(p50 >= 0.0, "p50 should be non-negative: {tool}");
     }
 }
+
+/// End-to-end smoke for `figmog bench --interactive` (build design §13
+/// "Interactive mode"), driven non-interactively by piping a command
+/// script into stdin — this is exactly how CI (a non-TTY pipe) exercises
+/// it, and it's also the scenario the "no ANSI in plain mode" guarantee
+/// matters for.
+#[test]
+fn bench_interactive_e2e_scripted_session_is_plain_and_clean() {
+    let script = "help\nstats\nsearch garden\nrun 20\nreport\nquit\n";
+
+    let out = Command::cargo_bin("figmog")
+        .unwrap()
+        .args(["bench", "--nodes", "300", "--interactive"])
+        .write_stdin(script)
+        .assert()
+        .success();
+    let output = out.get_output();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(
+        !stdout.as_bytes().contains(&0x1b),
+        "non-TTY stdout must contain zero ANSI escape bytes:\n{stdout}"
+    );
+
+    assert!(
+        stdout.contains("figmog_search"),
+        "expected a per-request line naming figmog_search:\n{stdout}"
+    );
+
+    // `run 20`: 20 numbered per-request lines, `#   1` through `#  20`.
+    for n in [1, 20] {
+        let needle = format!("#{n:>4}");
+        assert!(
+            stdout.contains(&needle),
+            "expected a `run 20` burst line numbered {n} ({needle:?}):\n{stdout}"
+        );
+    }
+
+    // A report table (headers shared by both `run`'s burst table and
+    // `report`'s cumulative one).
+    assert!(
+        stdout.contains("p50 (ms)") && stdout.contains("p95 (ms)"),
+        "expected a percentile report table:\n{stdout}"
+    );
+
+    // `help`'s command list and a clean `quit`.
+    assert!(
+        stdout.contains("commands:"),
+        "expected `help`'s output:\n{stdout}"
+    );
+}

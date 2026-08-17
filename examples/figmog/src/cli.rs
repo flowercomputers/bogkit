@@ -198,6 +198,11 @@ enum Cmd {
         /// Leave the temp store on disk and print its path.
         #[arg(long)]
         keep: bool,
+        /// Drop into a live REPL instead of the automated phases (build
+        /// design §13 "Interactive mode") — watch tool calls fire in real
+        /// time. Human-only: combining with `--json` is a usage error.
+        #[arg(long)]
+        interactive: bool,
     },
 }
 
@@ -232,6 +237,7 @@ fn dispatch(cli: Cli) -> Result<(), String> {
         api_calls,
         skip_api,
         keep,
+        interactive,
     } = &cli.cmd
     {
         return cmd_bench(
@@ -241,6 +247,7 @@ fn dispatch(cli: Cli) -> Result<(), String> {
             *api_calls,
             *skip_api,
             *keep,
+            *interactive,
             cli.json,
         );
     }
@@ -773,8 +780,9 @@ fn cmd_import_variables(db: &Db, path: PathBuf, json: bool) -> Result<(), String
 }
 
 /// `figmog bench [file] [--nodes N] [--calls M] [--api-calls K] [--skip-api]
-/// [--keep]` (build design §13). Needs no resolved `Db` — see `dispatch`'s
-/// early handling — so it never touches `.figmog/current` or `--db`.
+/// [--keep] [--interactive]` (build design §13). Needs no resolved `Db` —
+/// see `dispatch`'s early handling — so it never touches `.figmog/current`
+/// or `--db`.
 #[allow(clippy::too_many_arguments)]
 fn cmd_bench(
     file: Option<String>,
@@ -783,13 +791,19 @@ fn cmd_bench(
     api_calls: usize,
     skip_api: bool,
     keep: bool,
+    interactive: bool,
     json: bool,
 ) -> Result<(), String> {
+    if interactive && json {
+        return Err(
+            "--interactive is a human-only REPL and cannot be combined with --json".to_string(),
+        );
+    }
     let file = file
         .map(|f| parse_file_ref(&f).ok_or_else(|| format!("not a Figma file key or URL: {f}")))
         .transpose()?;
     let exe = std::env::current_exe().map_err(|e| format!("resolving current exe: {e}"))?;
-    let report = crate::bench::run(crate::bench::BenchOpts {
+    let opts = crate::bench::BenchOpts {
         nodes,
         calls,
         keep,
@@ -797,7 +811,11 @@ fn cmd_bench(
         file,
         api_calls,
         skip_api,
-    })?;
+    };
+    if interactive {
+        return crate::bench::run_interactive(opts);
+    }
+    let report = crate::bench::run(opts)?;
     if json {
         println!(
             "{}",
@@ -1240,8 +1258,10 @@ fn cmd_vars<R: Readable>(
 // ---- whole-file structural queries ----
 
 /// `--equals <json>`: parse as JSON, falling back to treating the bare word
-/// as a JSON string (so `--equals VERTICAL` works without quoting).
-fn parse_equals(raw: &str) -> Value {
+/// as a JSON string (so `--equals VERTICAL` works without quoting). Also
+/// used by the interactive REPL's `where <pointer> [value]` shorthand
+/// (`repl::parse_line`) — same fallback semantics there.
+pub(crate) fn parse_equals(raw: &str) -> Value {
     serde_json::from_str(raw).unwrap_or_else(|_| Value::String(raw.to_string()))
 }
 

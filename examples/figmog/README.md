@@ -50,7 +50,7 @@ store location (default `.figmog/<file-key>/db`).
 | `figmog text [--page <id>]` | by_type + nodes | every TEXT node's `(id, characters, page_id)`, sorted by id |
 | `figmog where --pointer </p> [--equals <json>] [--page <id>]` | nodes | nodes whose raw JSON matches an RFC 6901 `pointer`, optionally filtered by `equals` (parsed as JSON, falling back to a bare string so `--equals VERTICAL` works) |
 | `figmog at --x N --y N` | nodes | nodes whose absolute bounds contain the point, sorted by area ascending (deepest/smallest first) |
-| `figmog bench [file] [--nodes N] [--calls M] [--api-calls K] [--skip-api] [--keep]` | — | self-contained load-test demo (see "Demo: load-testing the server" below) — needs no mirror/`--db` |
+| `figmog bench [file] [--nodes N] [--calls M] [--api-calls K] [--skip-api] [--keep] [--interactive]` | — | self-contained load-test demo, or (`--interactive`) a live REPL — see "Demo: load-testing the server" below — needs no mirror/`--db` |
 
 Node ids accept both `12:34` and `12-34` forms everywhere. Auth is a
 personal access token from `FIGMA_TOKEN`. Since `pull`/`watch` are the only
@@ -376,6 +376,109 @@ real rate-limit budget**: 1 file fetch + 1 opportunistic
 states every call it made; a 429 mid-phase is recorded (with its
 `Retry-After`) and ends the phase gracefully rather than failing the
 whole bench.
+
+### Interactive mode (`--interactive`)
+
+`figmog bench [file] --interactive` runs the same setup (corpus/real file
+→ cold sync → no-churn re-pull → serve child spawn) and then, instead of
+the automated load/API phases, drops into a REPL so requests are visible
+as they fire — one aligned line per call: sequence number, tool, arg
+digest, latency, and a result digest. Colors (green under 10ms, yellow
+under 100ms, red above; errors always red) are raw ANSI, emitted only
+when stdout is a real terminal — piped/non-TTY output (CI, this README's
+transcripts) is always plain text.
+
+| command | does |
+| --- | --- |
+| `search <words…>` | BM25 search over layer names/text |
+| `node <id> [children]` | full node JSON |
+| `tree [id] [depth]` | subtree outline |
+| `find <TYPE> [page]` | nodes by Figma node type |
+| `where <pointer> [value]` | nodes matching an RFC 6901 pointer (`value` parsed as JSON, falling back to a bare string) |
+| `stats` | node counts, totals, max depth |
+| `path <id>` | ancestor chain to a node |
+| `text [page]` | every TEXT node's characters |
+| `at <x> <y>` | nodes containing a point |
+| `instances <target>` | instances of a component |
+| `components` | design-system inventory |
+| `styles [type]` | styles with usage counts |
+| `uses <id>` | nodes using a style/variable id |
+| `vars [id]` | variables |
+| `pages` | list pages |
+| `status` | file name/version/node count |
+| `run <N>` | fire N requests of the derived mixed workload, streaming each line live, then a burst percentile table |
+| `report` | cumulative per-tool percentiles for everything fired this session |
+| `api node <id>` / `api meta` | real-file mode only — one live Figma API call (`/nodes` or `/meta`), timed the same way and labeled with the API cost it spent; a 429 prints its `Retry-After` in red and the REPL keeps going |
+| `call <tool> <json-args>` | raw escape hatch (works for proxied tools too, when an upstream is attached) |
+| `help` | this table |
+| `quit` | exit cleanly (EOF also works — the serve child is always reaped, never left a zombie) |
+
+Sample transcript (same machine as above: Apple M4, 16GB, `cargo run
+--release -p figmog -- bench --nodes 10000 --interactive`, piped
+non-interactively so this is plain text — a real terminal shows it in
+color):
+
+```console
+$ printf 'search garden\nnode 1:1\nrun 8\nreport\nquit\n' \
+  | cargo run --release -p figmog -- bench --nodes 10000 --interactive
+corpus  [synthetic]  10000 nodes, 2391449 bytes, 54.7ms
+cold sync    36.9ms flatten + 139.2ms sync, 10005 records (71850 records/s)
+re-pull      6.3ms, churn zero: true
+
+figmog bench --interactive — type `help` for commands, `quit` to exit.
+#   1  figmog_search      {"query":"garden"}                   0.07ms  0 hits
+#   2  figmog_node        {"id":"1:1"}                         0.08ms  Button
+#   3  figmog_search      {"query":"Nav"}                      0.42ms  10 hits
+#   4  figmog_node        {"id":"25:177"}                      0.04ms  Slider Body Banner Table Toolbar Button
+#   5  figmog_where       {"equals":"VERTICAL","pointer":"    13.51ms  1809 hits
+#   6  figmog_stats       {}                                  20.49ms  ok
+#   7  figmog_tree        {"depth":2}                          3.37ms  Document
+#   8  figmog_instances   {"target":"Button"}                  0.66ms  407 hits
+#   9  figmog_search      {"query":"12"}                       0.04ms  1 hits
+#  10  figmog_node        {"id":"37:78"}                       0.05ms  Grid Field Preview Progress Divider Toggle Row Header
+
+tool                  calls   p50 (ms)   p95 (ms)   p99 (ms)   max (ms)
+figmog_search             2      0.040      0.040      0.040      0.422
+figmog_node               2      0.041      0.041      0.041      0.051
+figmog_where              1     13.508     13.508     13.508     13.508
+figmog_stats              1     20.490     20.490     20.490     20.490
+figmog_tree               1      3.369      3.369      3.369      3.369
+figmog_instances          1      0.656      0.656      0.656      0.656
+
+tool                  calls   p50 (ms)   p95 (ms)   p99 (ms)   max (ms)
+figmog_search             3      0.071      0.071      0.071      0.422
+figmog_node               3      0.051      0.051      0.051      0.076
+figmog_where              1     13.508     13.508     13.508     13.508
+figmog_stats              1     20.490     20.490     20.490     20.490
+figmog_tree               1      3.369      3.369      3.369      3.369
+figmog_instances          1      0.656      0.656      0.656      0.656
+```
+
+`search garden`/`node 1:1` are the first two typed commands; `run 8`
+streams 8 requests of the derived mixed workload live (lines 3-10) then
+prints its own burst table; `report` prints the session's cumulative
+table (same six tools, now 3 `figmog_search`/3 `figmog_node` calls
+counted). `quit` closes stdin to the serve child and waits for it to
+exit — no zombie process left behind.
+
+**Against a real file** (`figmog bench <file> --interactive`, needs
+`FIGMA_TOKEN`), the `api node <id>` / `api meta` commands become the
+demo's centerpiece: firing one alongside a `node <id>` for the same id
+puts figmog's local read and Figma's real Tier-1 API call side by side,
+live. Illustrative shape (not a captured run — no token in this repo's
+CI/dev environment — but the format is exactly what `format_latency_line`
+and the `api node` line print):
+
+```
+#  11  figmog_node        {"id":"1:234"}                       0.05ms  Icon/Star
+#  12  API node           1:234                              ~400.00ms  ok  (spent 1 Tier-1 call)
+```
+
+figmog's read is a local, indexed point lookup (sub-millisecond); the API
+call pays a real network round trip — that gap, live, is the whole
+pitch. Every `api …` call spends real rate-limit budget (Figma's Tier-1 files
+allow ~10/minute) — the line's `(spent …)` note says exactly what it
+cost, and a 429 prints its `Retry-After` in red instead of exiting.
 
 ## Manual live check
 
