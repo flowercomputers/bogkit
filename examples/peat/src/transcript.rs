@@ -43,7 +43,8 @@ pub fn parse(jsonl: &str, fallback_session: Option<&str>) -> Option<Parsed> {
     // matching tool_result reports an error
     let mut call_sites: std::collections::HashMap<String, usize> = Default::default();
     let mut meta_done = false;
-    let mut final_msg: Option<(u32, u64, String)> = None;
+    // borrowed until the end of the loop; capped exactly once when kept
+    let mut final_msg: Option<(u32, u64, &str)> = None;
 
     for (li, line) in lines.iter().enumerate() {
         let seq0 = (li as u32) * SEQ_STRIDE;
@@ -69,7 +70,7 @@ pub fn parse(jsonl: &str, fallback_session: Option<&str>) -> Option<Parsed> {
                                 .get("gitBranch")
                                 .and_then(Value::as_str)
                                 .map(String::from),
-                            ese_version: crate::ese_version(),
+                            ese_version: crate::event::ese_version(),
                         },
                     ),
                 ));
@@ -159,7 +160,7 @@ pub fn parse(jsonl: &str, fallback_session: Option<&str>) -> Option<Parsed> {
                                 }
                                 // remember the last assistant text: it becomes
                                 // FinalMsg (replacing its Said at the same seq)
-                                final_msg = Some((seq, ts, cap(text, FINAL_MSG_CAP)));
+                                final_msg = Some((seq, ts, text));
                             }
                         }
                         Some("tool_use") => {
@@ -167,8 +168,10 @@ pub fn parse(jsonl: &str, fallback_session: Option<&str>) -> Option<Parsed> {
                                 .get("name")
                                 .and_then(Value::as_str)
                                 .unwrap_or("unknown");
-                            let input = block.get("input").cloned().unwrap_or(Value::Null);
-                            let detail = tool_detail(tool, &input);
+                            // borrow: tool inputs can be arbitrarily large
+                            // (Edit old/new strings, MCP payloads)
+                            let input = block.get("input").unwrap_or(&Value::Null);
+                            let detail = tool_detail(tool, input);
                             if let Some(id) = block.get("id").and_then(Value::as_str) {
                                 call_sites.insert(id.to_string(), events.len());
                             }
@@ -185,14 +188,14 @@ pub fn parse(jsonl: &str, fallback_session: Option<&str>) -> Option<Parsed> {
                                 ),
                             ));
                             // Edit/Write-family calls also touch a file
-                            if let Some(path) = file_touch(tool, &input) {
+                            if let Some(path) = file_touch(tool, input) {
                                 events.push((
                                     (session.clone(), seq0 + SEQ_STRIDE - 1),
                                     Envelope::new(&session, ts, Event::FileTouch { path }),
                                 ));
                             }
                             // best-effort commit detection from git commit commands
-                            if let Some((hash, message)) = commit_of(tool, &input, line) {
+                            if let Some((hash, message)) = commit_of(tool, input, line) {
                                 events.push((
                                     (session.clone(), seq0 + SEQ_STRIDE - 2),
                                     Envelope::new(&session, ts, Event::Commit { hash, message }),
@@ -234,7 +237,13 @@ pub fn parse(jsonl: &str, fallback_session: Option<&str>) -> Option<Parsed> {
         events.retain(|(id, e)| !(id.1 == seq && matches!(e.kind, Event::Said { .. })));
         events.push((
             (session.clone(), seq),
-            Envelope::new(&session, ts, Event::FinalMsg { text }),
+            Envelope::new(
+                &session,
+                ts,
+                Event::FinalMsg {
+                    text: cap(text, FINAL_MSG_CAP),
+                },
+            ),
         ));
     }
 
@@ -305,6 +314,26 @@ fn commit_of(tool: &str, input: &Value, line: &Value) -> Option<(String, String)
     Some((hash, cap(&message, 200)))
 }
 
+/// Replace any parsed FinalMsg with the hook-provided closing message
+/// (`Stop` passes `last_assistant_message`, which is authoritative — the
+/// transcript file may lag the final turn).
+pub fn override_final_msg(parsed: &mut Parsed, text: &str) {
+    parsed
+        .events
+        .retain(|(_, e)| !matches!(e.kind, Event::FinalMsg { .. }));
+    let ts = parsed.events.iter().map(|(_, e)| e.ts_ms).max().unwrap_or(0);
+    parsed.events.push((
+        (parsed.session.clone(), crate::event::HOOK_FINAL_SEQ),
+        Envelope::new(
+            &parsed.session,
+            ts,
+            Event::FinalMsg {
+                text: cap(text, FINAL_MSG_CAP),
+            },
+        ),
+    ));
+}
+
 /// "2026-08-10T19:18:11.311Z" -> unix ms. Hand-rolled to keep peat
 /// dependency-light; returns None on anything malformed.
 pub fn iso_to_ms(s: &str) -> Option<u64> {
@@ -328,4 +357,43 @@ pub fn iso_to_ms(s: &str) -> Option<u64> {
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
     let days = era * 146097 + doe - 719468;
     Some(((days * 24 + h) * 60 + mi) * 60_000 + sec * 1000 + ms)
+}
+
+/// Unix ms -> "YYYY-MM-DD" (UTC). Inverse of [`iso_to_ms`]'s date part;
+/// the civil-days constants are stated only in this file.
+pub fn date_label(ms: u64) -> String {
+    let days = ms / 86_400_000;
+    let era = (days + 719_468) / 146_097;
+    let doe = days + 719_468 - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + u64::from(m <= 2);
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// Local UTC offset in ms via `date +%z`. Render/capture boundary only —
+/// the fold path never sees timezones. Zero (UTC semantics) on failure.
+pub fn local_offset_ms() -> i64 {
+    let Ok(out) = std::process::Command::new("date").arg("+%z").output() else {
+        return 0;
+    };
+    let s = String::from_utf8_lossy(&out.stdout);
+    let s = s.trim();
+    if s.len() != 5 {
+        return 0;
+    }
+    let sign = if s.starts_with('-') { -1 } else { 1 };
+    match (s[1..3].parse::<i64>(), s[3..5].parse::<i64>()) {
+        (Ok(h), Ok(m)) => sign * (h * 60 + m) * 60_000,
+        _ => 0,
+    }
+}
+
+/// A local-day instant for `date` (YYYY-MM-DD) at `time` ("12:00:00.000"
+/// or "23:59:59.999"): shared by `obs --at` and `asof`.
+pub fn local_day_ms(date: &str, time: &str) -> Option<u64> {
+    iso_to_ms(&format!("{date}T{time}Z")).map(|utc| (utc as i64 - local_offset_ms()) as u64)
 }

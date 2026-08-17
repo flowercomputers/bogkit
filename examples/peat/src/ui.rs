@@ -8,6 +8,7 @@
 //! special-casing.
 
 use std::io::IsTerminal;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use indicatif::{ProgressBar, ProgressStyle};
@@ -17,14 +18,26 @@ fn color_ok() -> bool {
         && std::env::var_os("TERM").is_none_or(|t| t != "dumb")
 }
 
+// Stream capability cannot change within a process, and the style helpers
+// run in per-row loops — probe once, not per styled string.
+
 /// Decoration allowed on stderr (spinners, phase timings).
 pub fn fancy_err() -> bool {
-    std::io::stderr().is_terminal() && color_ok()
+    static C: OnceLock<bool> = OnceLock::new();
+    *C.get_or_init(|| std::io::stderr().is_terminal() && color_ok())
 }
 
 /// Color allowed on stdout (the rendered brief at an interactive prompt).
 pub fn fancy_out() -> bool {
-    std::io::stdout().is_terminal() && color_ok()
+    static C: OnceLock<bool> = OnceLock::new();
+    *C.get_or_init(|| std::io::stdout().is_terminal() && color_ok())
+}
+
+/// Whether stdout is a terminal at all (paging is independent of color:
+/// NO_COLOR suppresses ANSI but should not suppress `less`).
+pub fn stdout_is_tty() -> bool {
+    static C: OnceLock<bool> = OnceLock::new();
+    *C.get_or_init(|| std::io::stdout().is_terminal())
 }
 
 /// A spinner for one named phase of work, RAII-style: create it with a
@@ -144,4 +157,65 @@ pub fn add_style_filters(env: &mut minijinja::Environment<'_>) {
     env.add_filter("dim", style(|s| s.dim()));
     env.add_filter("warn", style(|s| s.red()));
     env.add_filter("accent", style(|s| s.cyan()));
+    // display-time truncation lives HERE, not in the JSON — --json is the
+    // API and carries full text; templates opt into clipping
+    env.add_filter("clip", |s: String, n: usize| clip(&s, n));
+}
+
+// ---- display formatting, shared by every verb ----
+
+/// Whitespace-collapse and truncate to `max` chars with an ellipsis.
+/// Display-only: JSON output never clips.
+pub fn clip(s: &str, max: usize) -> String {
+    let s = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    if s.chars().count() <= max {
+        return s;
+    }
+    let cut: String = s.chars().take(max).collect();
+    format!("{cut}…")
+}
+
+/// Last two path components, elided: `…/dir/file.rs`.
+pub fn short_path(p: &str) -> String {
+    let parts: Vec<&str> = p.rsplitn(3, '/').collect();
+    match parts.len() {
+        3 => format!("…/{}/{}", parts[1], parts[0]),
+        _ => p.to_string(),
+    }
+}
+
+/// First 8 chars of a session uuid.
+pub fn short_sess(s: &str) -> String {
+    s.chars().take(8).collect()
+}
+
+/// Humanized age: `<1h`, `7h`, `33d`.
+pub fn age_label(now: u64, ts: u64) -> String {
+    const DAY_MS: u64 = 86_400_000;
+    let d = now.saturating_sub(ts);
+    match d {
+        _ if d < 3_600_000 => "<1h".into(),
+        _ if d < DAY_MS => format!("{}h", d / 3_600_000),
+        _ => format!("{}d", d / DAY_MS),
+    }
+}
+
+/// Write through `less -RFX` on a terminal (quit-if-one-screen, keep
+/// ANSI), plain stdout otherwise.
+pub fn page(text: &str) {
+    use std::io::Write;
+    if stdout_is_tty() {
+        if let Ok(mut p) = std::process::Command::new("less")
+            .args(["-RFX"])
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+        {
+            if let Some(stdin) = p.stdin.as_mut() {
+                let _ = stdin.write_all(text.as_bytes());
+            }
+            let _ = p.wait();
+            return;
+        }
+    }
+    print!("{text}");
 }

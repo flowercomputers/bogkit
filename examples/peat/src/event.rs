@@ -44,9 +44,9 @@ pub enum Event {
     SessionMeta {
         cwd: String,
         branch: Option<String>,
-        /// ese crate version + dimension features at capture time. A brief
-        /// or replay running a different ese would re-embed queries with a
-        /// different model than indexed the text — warn loudly.
+        /// ese model + dimensions at capture time: embedding provenance,
+        /// recorded so future tooling can detect a model mismatch between
+        /// index-time and query-time (not yet enforced).
         ese_version: String,
     },
     /// What the user asked. Truncated to [`USER_MSG_CAP`].
@@ -100,6 +100,66 @@ pub fn cap(s: &str, cap: usize) -> String {
         end -= 1;
     }
     s[..end].to_string()
+}
+
+/// Embedding provenance stamp written into `SessionMeta`.
+pub fn ese_version() -> String {
+    format!("ese-static-retrieval-mrl-en-v1 dim={}", ese::DIMENSIONS)
+}
+
+impl Event {
+    /// Short kind tag, used by `events --kind` and the raw ledger view.
+    pub fn tag(&self) -> &'static str {
+        match self {
+            Event::SessionMeta { .. } => "meta",
+            Event::UserMsg { .. } => "user",
+            Event::ToolCall { .. } => "tool",
+            Event::FileTouch { .. } => "file",
+            Event::Commit { .. } => "commit",
+            Event::FinalMsg { .. } => "final",
+            Event::Compaction {} => "compacted",
+            Event::Said { .. } => "said",
+            Event::CompactSummary { .. } => "compact",
+            Event::Obs { .. } => "obs",
+        }
+    }
+
+    /// One display line for the raw ledger view. Adding a variant is a
+    /// one-file change: this, [`Event::tag`], and the enum live together.
+    pub fn summary(&self) -> String {
+        let one = |s: &str| crate::ui::clip(s, 150);
+        match self {
+            Event::SessionMeta { cwd, branch, .. } => {
+                format!("{} {}", one(cwd), branch.as_deref().unwrap_or(""))
+            }
+            Event::UserMsg { text }
+            | Event::FinalMsg { text }
+            | Event::Said { text }
+            | Event::CompactSummary { text } => one(text),
+            Event::ToolCall { tool, detail, ok } => {
+                format!("{}{} {}", tool, if *ok { "" } else { " FAILED" }, one(detail))
+            }
+            Event::FileTouch { path } => one(path),
+            Event::Commit { hash, message } => {
+                format!("{} {}", &hash[..hash.len().min(8)], one(message))
+            }
+            Event::Compaction {} => "— context window compacted —".into(),
+            Event::Obs {
+                subject,
+                text,
+                derived_from,
+            } => format!(
+                "{}: {}{}",
+                subject,
+                one(text),
+                if derived_from.is_empty() {
+                    String::new()
+                } else {
+                    format!(" [cites {} events]", derived_from.len())
+                }
+            ),
+        }
+    }
 }
 
 impl Envelope {

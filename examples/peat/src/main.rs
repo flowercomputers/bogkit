@@ -12,27 +12,55 @@
 //! Wall-clock time is read only at the capture/render boundary (obs
 //! timestamps, brief age labels) — never inside any fold path, so the
 //! ledger stays deterministically replayable.
+//!
+//! Crate layout: `event` (the ledger schema — the API to our past),
+//! `pipeline` (the fold graph), `transcript` (Claude Code JSONL -> events,
+//! plus the civil-date math), `db` (path/session policy and the
+//! open-with-retry), `brief` (assembly and rendering), `ui` (terminal
+//! presentation). This file is CLI dispatch.
 
+pub mod brief;
+pub mod db;
 pub mod event;
 pub mod pipeline;
 pub mod transcript;
 pub mod ui;
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 use clap::Parser;
-use fold::pipeline::terminal::{MultimapReader, TableReader};
-use fold::stream::{KeyedStream, Readable};
 
 use event::{Envelope, Event, EventId, OBS_SEQ_BASE};
-use pipeline::{DayStats, SessStats, SubjStats, TextRow, DAY_MS};
+use pipeline::{ObsRow, SessStats, SubjStats, DAY_MS};
+use ui::{age_label, clip, short_sess};
 
-/// Reciprocal-rank-fusion constant (value from the original RRF paper).
-const RRF_K: f64 = 60.0;
+/// Shared row filters for the verbs that walk indexed text or the ledger.
+#[derive(clap::Args)]
+struct Filter {
+    /// Only this session (prefix ok)
+    #[arg(long)]
+    session: Option<String>,
+    /// Only this kind: obs | said | user | final | compact | tool | file |
+    /// commit | meta | compacted
+    #[arg(long)]
+    kind: Option<String>,
+    /// Only events from the last N days
+    #[arg(long)]
+    since: Option<u64>,
+}
 
-pub fn ese_version() -> String {
-    format!("ese-static-retrieval-mrl-en-v1 dim={}", ese::DIMENSIONS)
+impl Filter {
+    fn cutoff_ms(&self, now: u64) -> Option<u64> {
+        self.since.map(|d| now.saturating_sub(d * DAY_MS))
+    }
+
+    fn matches(&self, now: u64, session: &str, kind: &str, ts_ms: u64) -> bool {
+        self.session
+            .as_ref()
+            .is_none_or(|p| session.starts_with(p.as_str()))
+            && self.kind.as_ref().is_none_or(|k| kind == k)
+            && self.cutoff_ms(now).is_none_or(|c| ts_ms >= c)
+    }
 }
 
 #[derive(Parser)]
@@ -76,15 +104,8 @@ enum Cli {
         /// Max hits to print
         #[arg(long, default_value_t = 12)]
         limit: usize,
-        /// Only this kind: obs | said | user | final | compact
-        #[arg(long)]
-        kind: Option<String>,
-        /// Only events from the last N days
-        #[arg(long)]
-        since: Option<u64>,
-        /// Only this session (prefix ok)
-        #[arg(long)]
-        session: Option<String>,
+        #[command(flatten)]
+        filter: Filter,
         /// Read one subject's full evidence trail instead of searching
         #[arg(long)]
         subject: Option<String>,
@@ -93,15 +114,8 @@ enum Cli {
     },
     /// Dump the raw ledger, oldest first, auto-paged on a terminal
     Events {
-        /// Only this session (prefix ok)
-        #[arg(long)]
-        session: Option<String>,
-        /// Only this kind: meta|user|tool|file|commit|final|compact|said|obs
-        #[arg(long)]
-        kind: Option<String>,
-        /// Only events from the last N days
-        #[arg(long)]
-        since: Option<u64>,
+        #[command(flatten)]
+        filter: Filter,
         #[arg(long)]
         json: bool,
     },
@@ -127,26 +141,6 @@ enum Cli {
     },
 }
 
-fn db_path() -> PathBuf {
-    if let Ok(p) = std::env::var("PEAT_DB") {
-        return PathBuf::from(p);
-    }
-    peat_dir().join("db")
-}
-
-/// `.peat/` beside the nearest git/jj root above cwd, else cwd.
-fn peat_dir() -> PathBuf {
-    let mut dir = std::env::current_dir().unwrap();
-    loop {
-        if dir.join(".git").exists() || dir.join(".jj").exists() {
-            return dir.join(".peat");
-        }
-        if !dir.pop() {
-            return std::env::current_dir().unwrap().join(".peat");
-        }
-    }
-}
-
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -154,84 +148,29 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
+/// One snapshot -> assembled brief. A macro because the reader tuple's
+/// type contains closures and cannot be named.
+macro_rules! make_brief {
+    ($st:expr, $query:expr, $now:expr) => {
+        $st.rtx(|(days, files, (kw, vec, texts), (subjects, _), sessions, _ledger)| {
+            brief::assemble(
+                $query,
+                $now,
+                &days,
+                &files,
+                |q, n| kw.search(q, n),
+                |v| vec.search(v),
+                |id| texts.get(id),
+                &subjects,
+                &sessions,
+            )
+        })
+    };
+}
+
 fn main() {
     let cli = Cli::parse();
-    // Shared-db concurrency: fold is single-writer, and with several
-    // worktree agents pointing PEAT_DB at one database, hook invocations
-    // can collide. Peat processes are short-lived, so waiting is correct:
-    // retry the open with backoff (default 120s, PEAT_LOCK_WAIT_SECS to
-    // change) and give up with a message, never a raw panic — a bulk
-    // capture can legitimately hold the lock for minutes.
-    let wait_max_ms: u64 = std::env::var("PEAT_LOCK_WAIT_SECS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(120u64)
-        * 1000;
-    let mut st = {
-        let phase = ui::Phase::new("opening ledger");
-        // catch_unwind does not silence the default panic hook: without
-        // this, every caught-and-retried Locked attempt still prints a
-        // full backtrace, which reads as a crash while we quietly wait.
-        let quiet_hook = std::sync::Arc::new(std::sync::Mutex::new(Some(
-            std::panic::take_hook(),
-        )));
-        std::panic::set_hook(Box::new(|_| {}));
-        let restore = {
-            let h = quiet_hook.clone();
-            move || {
-                if let Some(hook) = h.lock().unwrap().take() {
-                    std::panic::set_hook(hook);
-                }
-            }
-        };
-        let mut delay_ms = 200u64;
-        let mut waited = 0u64;
-        let st = loop {
-            match std::panic::catch_unwind(|| {
-                KeyedStream::<EventId, Envelope, _>::new(db_path(), peat_pipeline!())
-            }) {
-                Ok(st) => break st,
-                Err(p) => {
-                    // only lock contention is retryable; anything else
-                    // (corruption, schema) must fail loudly and now
-                    let msg = p
-                        .downcast_ref::<String>()
-                        .map(String::as_str)
-                        .or_else(|| p.downcast_ref::<&str>().copied())
-                        .unwrap_or("");
-                    if !msg.contains("Locked") {
-                        restore();
-                        std::panic::resume_unwind(p);
-                    }
-                    if waited >= wait_max_ms {
-                        restore();
-                        ui::error(&format!(
-                            "ledger still locked after {}s — another peat \
-process holds it (reads are exclusive too; a bulk capture can hold it for \
-minutes). Retry shortly, or raise PEAT_LOCK_WAIT_SECS.",
-                            wait_max_ms / 1000
-                        ));
-                        std::process::exit(75); // EX_TEMPFAIL
-                    }
-                    if waited == 0 && !ui::fancy_err() {
-                        // non-tty gets one plain line instead of a spinner
-                        eprintln!("peat: ledger busy (another peat process); waiting…");
-                    }
-                    phase.tick(format!(
-                        "ledger busy — another peat process · waiting {}s (gives up at {}s)",
-                        waited / 1000,
-                        wait_max_ms / 1000
-                    ));
-                    std::thread::sleep(std::time::Duration::from_millis(delay_ms));
-                    waited += delay_ms;
-                    delay_ms = (delay_ms * 2).min(3_000);
-                }
-            }
-        };
-        restore();
-        phase.done();
-        st
-    };
+    let mut st = db::open(db::db_path(), || peat_pipeline!());
 
     match cli {
         Cli::Capture {
@@ -247,20 +186,8 @@ minutes). Retry shortly, or raise PEAT_LOCK_WAIT_SECS.",
                 ui::error("no session id found; pass --session");
                 std::process::exit(1);
             };
-            // hook-provided closing message is authoritative over tail parsing
             if let Some(text) = final_msg.filter(|t| !t.trim().is_empty()) {
-                parsed.events.retain(|(_, e)| !matches!(e.kind, Event::FinalMsg { .. }));
-                let ts = parsed.events.iter().map(|(_, e)| e.ts_ms).max().unwrap_or(0);
-                parsed.events.push((
-                    (parsed.session.clone(), event::HOOK_FINAL_SEQ),
-                    Envelope::new(
-                        &parsed.session,
-                        ts,
-                        Event::FinalMsg {
-                            text: event::cap(&text, event::FINAL_MSG_CAP),
-                        },
-                    ),
-                ));
+                transcript::override_final_msg(&mut parsed, &text);
             }
             let n = parsed.events.len();
             let phase = ui::Phase::new(&format!("capturing {n} events"));
@@ -289,157 +216,87 @@ minutes). Retry shortly, or raise PEAT_LOCK_WAIT_SECS.",
         } => {
             let ts = match &at {
                 None => now_ms(),
-                Some(d) => match transcript::iso_to_ms(&format!("{d}T12:00:00.000Z")) {
-                    Some(utc) => (utc as i64 - local_offset_ms()) as u64,
+                Some(d) => match transcript::local_day_ms(d, "12:00:00.000") {
+                    Some(ts) => ts,
                     None => {
                         ui::error(&format!("bad --at date {d:?}; expected YYYY-MM-DD"));
                         std::process::exit(1);
                     }
                 },
             };
-            let text = text.join(" ");
-            // resolve the session id: this worktree's .peat first, then the
-            // shared store's anchor (a desk is not the anchor — PEAT_DB's
-            // parent dir holds the file when hooks wrote it there)
-            let session = session
-                .or_else(|| std::fs::read_to_string(peat_dir().join("current-session")).ok())
-                .or_else(|| {
-                    let anchor = db_path().parent()?.join("current-session");
-                    std::fs::read_to_string(anchor).ok()
-                })
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| {
-                    ui::error(
-                        "no session id (.peat/current-session missing here and \
+            let Some(session) = db::current_session(session) else {
+                ui::error(
+                    "no session id (.peat/current-session missing here and \
 beside the shared db); pass --session",
-                    );
-                    std::process::exit(1);
-                });
-
-            // near-subject hint: cheap drift guard, never blocking
-            let near: Vec<String> = st.rtx(|(_, _, _, (subjects, _), _, _)| {
-                subjects
-                    .iter()
-                    .filter(|(s, _): &(String, SubjStats)| {
-                        s != &subject && (s.contains(&subject) || subject.contains(s.as_str()))
-                    })
-                    .map(|(s, v)| format!("{s} ({} obs)", v.count))
-                    .take(4)
-                    .collect()
-            });
-            if !near.is_empty() {
-                ui::note(&format!("near subjects: {}", near.join(" · ")));
-            }
-
-            // first free obs seq for this session
-            let mut seq = OBS_SEQ_BASE;
-            while st.contains(&(session.clone(), seq)) {
-                seq += 1;
-            }
+                );
+                std::process::exit(1);
+            };
             let env = Envelope::new(
                 &session,
                 ts,
                 Event::Obs {
                     subject: subject.clone(),
-                    text,
+                    text: text.join(" "),
                     derived_from: from,
                 },
             );
-            st.wtx(|tx| {
+            // one transaction: hint, seq scan, insert, and count all see
+            // the same state (and the count sees our own write)
+            let count = st.wtx(|tx| {
+                let near: Vec<String> = tx.rtx(|(_, _, _, (subjects, _), _, _)| {
+                    subjects
+                        .iter()
+                        .filter(|(s, _): &(String, SubjStats)| {
+                            s != &subject
+                                && (s.contains(&subject) || subject.contains(s.as_str()))
+                        })
+                        .map(|(s, v)| format!("{s} ({} obs)", v.count))
+                        .take(4)
+                        .collect()
+                });
+                if !near.is_empty() {
+                    ui::note(&format!("near subjects: {}", near.join(" · ")));
+                }
+                let mut seq = OBS_SEQ_BASE;
+                while tx.contains(&(session.clone(), seq)) {
+                    seq += 1;
+                }
                 tx.upsert(&(session.clone(), seq), &env);
-            });
-            let count = st.rtx(|(_, _, _, (subjects, _), _, _)| {
-                subjects
-                    .get(&subject)
-                    .map(|s: SubjStats| s.count)
-                    .unwrap_or(1)
+                tx.rtx(|(_, _, _, (subjects, _), _, _)| {
+                    subjects
+                        .get(&subject)
+                        .map(|s: SubjStats| s.count)
+                        .unwrap_or(1)
+                })
             });
             st.checkpoint();
             ui::note(&format!("recorded → {subject} (support {count})"));
         }
 
         Cli::Brief { task, json } => {
-            let query = task.join(" ");
-            let brief = st.rtx(|(days, files, (kw, vec, texts), (subjects, _), sessions, _ledger)| {
-                assemble(
-                    &query,
-                    now_ms(),
-                    &days,
-                    &files,
-                    |q, n| kw.search(q, n),
-                    |v| vec.search(v),
-                    |id| texts.get(id),
-                    &subjects,
-                    &sessions,
-                )
-            });
-            if json {
-                println!("{}", serde_json::to_string_pretty(&brief).unwrap());
-            } else {
-                print!("{}", render(&brief));
-            }
+            let brief = make_brief!(st, &task.join(" "), now_ms());
+            brief::emit(&brief, json);
         }
 
         Cli::Recall {
             query,
             limit,
-            kind,
-            since,
-            session,
+            filter,
             subject,
             json,
         } => {
             let now = now_ms();
-            // --subject reads the evidence trail directly — the claims
-            // register, no search involved
             if let Some(subj) = subject {
-                let rows = st.rtx(|(_, _, _, (subjects, evidence), _, _)| {
-                    let head: Option<SubjStats> = subjects.get(&subj);
-                    let mut rows = evidence.get(&subj);
-                    rows.sort_by_key(|r: &pipeline::ObsRow| std::cmp::Reverse(r.ts_ms));
-                    (head, rows)
+                // the claims register read: current text plus the full
+                // evidence trail, straight from the evidence multimap
+                let (head, mut rows) = st.rtx(|(_, _, _, (subjects, evidence), _, _)| {
+                    (
+                        subjects.get(&subj) as Option<SubjStats>,
+                        evidence.get(&subj) as Vec<ObsRow>,
+                    )
                 });
-                let (head, rows) = rows;
-                if json {
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&serde_json::json!({
-                            "subject": subj, "current": head.as_ref().map(|h| &h.text),
-                            "support": head.as_ref().map(|h| h.count),
-                            "evidence": rows.iter().map(|r| serde_json::json!({
-                                "session": r.session, "seq": r.seq,
-                                "age": age_label(now, r.ts_ms),
-                                "cited": !r.derived_from.is_empty(),
-                                "text": r.text,
-                            })).collect::<Vec<_>>(),
-                        }))
-                        .unwrap()
-                    );
-                } else if rows.is_empty() {
-                    println!("{}", ui::dim(&format!("no such subject: {subj}")));
-                } else {
-                    if let Some(h) = head {
-                        println!(
-                            "{} — {} {}",
-                            ui::accent(&subj),
-                            h.text,
-                            ui::dim(&format!("({} obs)", h.count))
-                        );
-                    }
-                    for r in rows {
-                        println!(
-                            "  {} {}",
-                            ui::dim(&format!(
-                                "[{} · {}{}]",
-                                short_sess(&r.session),
-                                age_label(now, r.ts_ms),
-                                if r.derived_from.is_empty() { "" } else { " · cited" }
-                            )),
-                            r.text
-                        );
-                    }
-                }
+                rows.sort_by_key(|r| std::cmp::Reverse(r.ts_ms));
+                print_subject(&subj, head, &rows, now, json);
                 return;
             }
             let query = query.join(" ");
@@ -447,50 +304,40 @@ beside the shared db); pass --session",
                 ui::error("recall needs a query (or --subject)");
                 std::process::exit(1);
             }
-            let cutoff_ms = since.map(|d| now.saturating_sub(d * DAY_MS));
-            let hits = st.rtx(|(_, _, (kw, vec, texts), _, _, _)| {
-                let mut fused: HashMap<EventId, f64> = HashMap::new();
-                for (rank, hit) in kw.search(&query, limit * 2).iter().enumerate() {
-                    *fused.entry(hit.val.clone()).or_default() +=
-                        1.0 / (RRF_K + rank as f64 + 1.0);
-                }
-                for (rank, hit) in vec.search(&ese::encode_single(&query)).iter().enumerate() {
-                    *fused.entry(hit.val.clone()).or_default() +=
-                        1.0 / (RRF_K + rank as f64 + 1.0);
-                }
-                let mut fused: Vec<(EventId, f64)> = fused.into_iter().collect();
-                fused.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
-                fused
-                    .into_iter()
-                    .filter_map(|(id, score)| {
-                        let t = texts.get(&id)?;
-                        if let Some(k) = &kind {
-                            if &t.kind != k {
-                                return None;
-                            }
-                        }
-                        if let Some(c) = cutoff_ms {
-                            if t.ts_ms < c {
-                                return None;
-                            }
-                        }
-                        if let Some(sess) = &session {
-                            if !id.0.starts_with(sess.as_str()) {
-                                return None;
-                            }
-                        }
-                        Some(serde_json::json!({
-                            "score": (score * 1000.0).round() / 1000.0,
-                            "kind": t.kind,
-                            "cited": t.cited,
-                            "age": age_label(now, t.ts_ms),
-                            "session": short_sess(&id.0),
-                            "seq": id.1,
-                            "text": t.text,
-                        }))
-                    })
-                    .take(limit)
-                    .collect::<Vec<_>>()
+
+            /// One recall hit; `--json` serializes it verbatim.
+            #[derive(serde::Serialize)]
+            struct Hit {
+                score: f64,
+                kind: String,
+                cited: bool,
+                age: String,
+                session: String,
+                seq: u32,
+                text: String,
+            }
+            let hits: Vec<Hit> = st.rtx(|(_, _, (kw, vec, texts), _, _, _)| {
+                brief::rrf(
+                    &kw.search(&query, limit * 2),
+                    &vec.search(&ese::encode_single(&query)),
+                )
+                .into_iter()
+                .filter_map(|(id, score)| {
+                    let t = texts.get(&id)?;
+                    filter
+                        .matches(now, &id.0, &t.kind, t.ts_ms)
+                        .then(|| Hit {
+                            score: (score * 1000.0).round() / 1000.0,
+                            kind: t.kind,
+                            cited: t.cited,
+                            age: age_label(now, t.ts_ms),
+                            session: short_sess(&id.0),
+                            seq: id.1,
+                            text: t.text,
+                        })
+                })
+                .take(limit)
+                .collect()
             });
             if json {
                 println!("{}", serde_json::to_string_pretty(&hits).unwrap());
@@ -498,46 +345,31 @@ beside the shared db); pass --session",
                 println!("{}", ui::dim(&format!("no hits for {query:?}")));
             } else {
                 for h in &hits {
+                    let cited = if h.kind == "obs" && h.cited { "·cited" } else { "" };
                     println!(
                         "  {} {} {}",
-                        ui::dim(&format!(
-                            "[{}{} · {}]",
-                            h["kind"].as_str().unwrap_or("?"),
-                            if h["kind"] == "obs" && h["cited"] == true { "·cited" } else { "" },
-                            h["age"].as_str().unwrap_or("")
-                        )),
-                        clip(h["text"].as_str().unwrap_or(""), 200),
+                        ui::dim(&format!("[{}{} · {}]", h.kind, cited, h.age)),
+                        clip(&h.text, 200),
                         // the hit's address — paste into `peat show <sess> <seq>`
-                        ui::dim(&format!(
-                            "({} {})",
-                            h["session"].as_str().unwrap_or(""),
-                            h["seq"]
-                        )),
+                        ui::dim(&format!("({} {})", h.session, h.seq)),
                     );
                 }
             }
         }
 
-        Cli::Events {
-            session,
-            kind,
-            since,
-            json,
-        } => {
+        Cli::Events { filter, json } => {
             let now = now_ms();
-            let cutoff = since.map(|d| now.saturating_sub(d * DAY_MS));
-            let mut rows: Vec<(EventId, Envelope)> =
-                st.rtx(|(_, _, _, _, _, ledger)| {
-                    ledger
-                        .iter()
-                        .filter(|((sess, _), e): &(EventId, Envelope)| {
-                            session.as_ref().is_none_or(|p| sess.starts_with(p.as_str()))
-                                && cutoff.is_none_or(|c| e.ts_ms >= c)
-                                && kind.as_ref().is_none_or(|k| kind_tag(&e.kind) == k)
-                        })
-                        .collect()
-                });
-            rows.sort_by(|a, b| (a.1.ts_ms, &a.0).cmp(&(b.1.ts_ms, &b.0)));
+            let mut rows: Vec<(EventId, Envelope)> = st.rtx(|(_, _, _, _, _, ledger)| {
+                ledger
+                    .iter()
+                    .filter(|((sess, _), e): &(EventId, Envelope)| {
+                        filter.matches(now, sess, e.kind.tag(), e.ts_ms)
+                    })
+                    .collect()
+            });
+            // table iteration is (session, seq) key order; the ledger view
+            // is chronological
+            rows.sort_unstable_by(|a, b| (a.1.ts_ms, &a.0).cmp(&(b.1.ts_ms, &b.0)));
             if json {
                 for ((sess, seq), e) in &rows {
                     println!(
@@ -550,22 +382,21 @@ beside the shared db); pass --session",
                 }
                 return;
             }
-            // git-log style: page through less on a terminal
+            use std::fmt::Write;
             let mut out = String::with_capacity(rows.len() * 96);
             for ((sess, seq), e) in &rows {
-                out.push_str(&format!(
-                    "{} {} {:>9}  {:<7} {}
-",
-                    ui::dim(&date_label(e.ts_ms)),
+                let _ = writeln!(
+                    out,
+                    "{} {} {:>10}  {:<7} {}",
+                    ui::dim(&transcript::date_label(e.ts_ms)),
                     ui::dim(&short_sess(sess)),
                     ui::dim(&seq.to_string()),
-                    ui::accent(kind_tag(&e.kind)),
-                    event_line(&e.kind),
-                ));
+                    ui::accent(e.kind.tag()),
+                    e.kind.summary(),
+                );
             }
-            out.push_str(&ui::dim(&format!("({} events)
-", rows.len())));
-            page(&out);
+            out.push_str(&ui::dim(&format!("({} events)\n", rows.len())));
+            ui::page(&out);
         }
 
         Cli::Subjects { json } => {
@@ -605,34 +436,31 @@ beside the shared db); pass --session",
 
         Cli::Show { session, seq } => {
             let now = now_ms();
-            let found = st.rtx(|(_, _, _, (subjects, evidence), sessions, ledger)| {
+            let (hit, citing) = st.rtx(|(_, _, _, (subjects, evidence), sessions, ledger)| {
                 // resolve the session prefix against the small sessions
                 // table, then point-read the ledger — never scan it
-                let full: Option<String> = sessions
+                let hit: Option<(EventId, Envelope)> = sessions
                     .iter()
                     .map(|(sess, _): (String, SessStats)| sess)
-                    .find(|sess| sess.starts_with(session.as_str()));
-                let hit: Option<(EventId, Envelope)> = full.and_then(|sess| {
-                    let id = (sess, seq);
-                    ledger.get(&id).map(|e: Envelope| (id, e))
-                });
-                let citing: Vec<(String, pipeline::ObsRow)> = subjects
-                    .iter()
-                    .flat_map(|(name, _): (String, SubjStats)| {
-                        evidence
-                            .get(&name)
-                            .into_iter()
-                            .map(move |r| (name.clone(), r))
-                    })
-                    .filter(|(_, r)| {
-                        hit.as_ref().is_some_and(|((s, _), _)| {
-                            r.session == *s && r.derived_from.contains(&seq)
-                        })
-                    })
-                    .collect();
+                    .find(|sess| sess.starts_with(session.as_str()))
+                    .and_then(|sess| {
+                        let id = (sess, seq);
+                        ledger.get(&id).map(|e: Envelope| (id, e))
+                    });
+                // the citer walk is only worth paying on a hit, and only
+                // matching rows earn a subject-name clone
+                let mut citing: Vec<(String, ObsRow)> = Vec::new();
+                if let Some(((sess, _), _)) = &hit {
+                    for (name, _) in subjects.iter().collect::<Vec<(String, SubjStats)>>() {
+                        for r in evidence.get(&name) {
+                            if r.session == *sess && r.derived_from.contains(&seq) {
+                                citing.push((name.clone(), r));
+                            }
+                        }
+                    }
+                }
                 (hit, citing)
             });
-            let (hit, citing) = found;
             match hit {
                 None => {
                     ui::error(&format!("no event ({session}*, {seq})"));
@@ -660,24 +488,20 @@ beside the shared db); pass --session",
         }
 
         Cli::Asof { date, task, json } => {
-            // end of DATE in the caller's local day, not UTC: subtract the
-            // local offset (render/capture boundary — the fold never sees
-            // wall-clock or timezone)
-            let Some(cutoff) = transcript::iso_to_ms(&format!("{date}T23:59:59.999Z"))
-                .map(|utc| (utc as i64 - local_offset_ms()) as u64)
-            else {
+            // end of DATE in the caller's local day, not UTC — the fold
+            // never sees timezones; this is the render/capture boundary
+            let Some(cutoff) = transcript::local_day_ms(&date, "23:59:59.999") else {
                 ui::error(&format!("bad date {date:?}; expected YYYY-MM-DD"));
                 std::process::exit(1);
             };
             // the ledger mirror is what makes this possible: read every
             // event at-or-before the cutoff...
-            let events: Vec<(EventId, Envelope)> =
-                st.rtx(|(_, _, _, _, _, ledger)| {
-                    ledger
-                        .iter()
-                        .filter(|(_, e): &(EventId, Envelope)| e.ts_ms <= cutoff)
-                        .collect()
-                });
+            let events: Vec<(EventId, Envelope)> = st.rtx(|(_, _, _, _, _, ledger)| {
+                ledger
+                    .iter()
+                    .filter(|(_, e): &(EventId, Envelope)| e.ts_ms <= cutoff)
+                    .collect()
+            });
             drop(st);
             // ...and fold that prefix through the SAME pipeline into a
             // scratch database. Determinism (oracle 2) is what makes the
@@ -685,30 +509,14 @@ beside the shared db); pass --session",
             let scratch = std::env::temp_dir().join(format!("peat-asof-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&scratch);
             let phase = ui::Phase::new(&format!("replaying {} events to {date}", events.len()));
-            let mut past =
-                KeyedStream::<EventId, Envelope, _>::new(&scratch, peat_pipeline!());
+            let mut past = db::open(scratch.clone(), || peat_pipeline!());
             past.wtx(|tx| {
                 for (id, e) in &events {
                     tx.upsert(id, e);
                 }
             });
             phase.done();
-            let query = task.join(" ");
-            let mut brief = past.rtx(
-                |(days, files, (kw, vec, texts), (subjects, _), sessions, _ledger)| {
-                    assemble(
-                        &query,
-                        cutoff,
-                        &days,
-                        &files,
-                        |q, n| kw.search(q, n),
-                        |v| vec.search(v),
-                        |id| texts.get(id),
-                        &subjects,
-                        &sessions,
-                    )
-                },
-            );
+            let mut brief = make_brief!(past, &task.join(" "), cutoff);
             brief.today = format!("{date} · as of that day · {} events", events.len());
             if events.is_empty() {
                 ui::note(&format!(
@@ -717,350 +525,56 @@ history starts later, or the db predates the ledger mirror \
 (re-run `peat capture` on the transcripts to backfill it)"
                 ));
             }
-            if json {
-                println!("{}", serde_json::to_string_pretty(&brief).unwrap());
-            } else {
-                print!("{}", render(&brief));
-            }
+            brief::emit(&brief, json);
             drop(past);
             let _ = std::fs::remove_dir_all(&scratch);
         }
     }
 }
 
-// ------------------------------------------------------------------ brief
-
-#[derive(serde::Serialize)]
-pub struct Brief {
-    today: String,
-    active: Vec<serde_json::Value>,
-    days: Vec<serde_json::Value>,
-    last_session: Option<serde_json::Value>,
-    files: Vec<serde_json::Value>,
-    relevant: Vec<serde_json::Value>,
-    subjects: Vec<serde_json::Value>,
-}
-
-/// Assemble the brief from one snapshot's readers. The two search indexes
-/// arrive as closures (their reader types carry tokenizer/const params);
-/// tables and the multimap come as concrete readers.
-#[allow(clippy::too_many_arguments)]
-pub fn assemble<R: Readable>(
-    query: &str,
-    now: u64,
-    days: &TableReader<'_, R, u64, DayStats>,
-    files: &MultimapReader<'_, R, String, String>,
-    kw_search: impl Fn(&str, usize) -> Vec<fold::pipeline::Scored<f64, EventId>>,
-    vec_search: impl Fn(&[f32; ese::DIMENSIONS]) -> Vec<fold::pipeline::Scored<f32, EventId>>,
-    text_of: impl Fn(&EventId) -> Option<TextRow>,
-    subjects: &TableReader<'_, R, String, SubjStats>,
-    sessions: &TableReader<'_, R, String, SessStats>,
-) -> Brief {
-    let today_bucket = now / DAY_MS;
-
-    // ---- day digest: the 3 most recent non-empty days
-    let mut day_rows: Vec<(u64, DayStats)> = days.iter().collect();
-    day_rows.sort_by_key(|(d, _)| std::cmp::Reverse(*d));
-    let days_out: Vec<serde_json::Value> = day_rows
-        .iter()
-        .take(3)
-        .map(|(day, s)| {
-            let mut fs: Vec<(&String, &i64)> = s.files.iter().collect();
-            fs.sort_by_key(|(_, n)| std::cmp::Reverse(**n));
-            serde_json::json!({
-                "day": day_label(*day, today_bucket),
-                "tools": s.tools, "fails": s.fails,
-                "commits": s.commits, "sessions": s.sessions,
-                "files": fs.iter().take(4).map(|(f, _)| short_path(f)).collect::<Vec<_>>(),
-            })
-        })
-        .collect();
-
-    // ---- active now: sessions with activity in the last hour, by
-    // worktree — one agent's brief sees what the others are doing
-    let mut sess: Vec<(String, SessStats)> = sessions.iter().collect();
-    sess.sort_by_key(|(_, s)| std::cmp::Reverse(s.end_ms));
-    let active: Vec<serde_json::Value> = sess
-        .iter()
-        .filter(|(_, s)| now.saturating_sub(s.end_ms) < 3_600_000)
-        .take(6)
-        .map(|(id, s)| {
-            let place = s.cwd.rsplit('/').next().unwrap_or(&s.cwd);
-            serde_json::json!({
-                "where": place,
-                "session": short_sess(id),
-                "age": age_label(now, s.end_ms),
-                "commits": s.commits,
-            })
-        })
-        .collect();
-
-    let last_session = sess
-        .iter()
-        .find(|(_, s)| !s.final_msg.is_empty())
-        .map(|(_, s)| {
-            serde_json::json!({
-                "age_hours": (now.saturating_sub(s.end_ms)) / 3_600_000,
-                "branch": s.branch,
-                "final_msg": s.final_msg,
-            })
-        });
-
-    // ---- files: most-touched over the digest window, with their sessions
-    let mut touch: HashMap<String, i64> = HashMap::new();
-    for (_, s) in day_rows.iter().take(3) {
-        for (f, n) in &s.files {
-            *touch.entry(f.clone()).or_default() += n;
-        }
+/// Print one subject's evidence trail (`recall --subject`).
+fn print_subject(subj: &str, head: Option<SubjStats>, rows: &[ObsRow], now: u64, json: bool) {
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "subject": subj, "current": head.as_ref().map(|h| &h.text),
+                "support": head.as_ref().map(|h| h.count),
+                "evidence": rows.iter().map(|r| serde_json::json!({
+                    "session": r.session, "seq": r.seq,
+                    "age": age_label(now, r.ts_ms),
+                    "cited": !r.derived_from.is_empty(),
+                    "text": r.text,
+                })).collect::<Vec<_>>(),
+            }))
+            .unwrap()
+        );
+        return;
     }
-    let mut touch: Vec<(String, i64)> = touch.into_iter().collect();
-    touch.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-    let files_out: Vec<serde_json::Value> = touch
-        .iter()
-        .take(5)
-        .map(|(path, _)| {
-            let mut ss = files.get(path);
-            ss.sort();
-            ss.dedup();
-            serde_json::json!({
-                "path": short_path(path),
-                "sessions": ss.iter().map(|s| short_sess(s)).collect::<Vec<_>>(),
-            })
-        })
-        .collect();
-
-    // ---- relevant: hybrid RRF over the text indexes, disposition inline
-    let mut relevant: Vec<serde_json::Value> = Vec::new();
-    if !query.trim().is_empty() {
-        let mut fused: HashMap<EventId, f64> = HashMap::new();
-        for (rank, hit) in kw_search(query, 12).iter().enumerate() {
-            *fused.entry(hit.val.clone()).or_default() += 1.0 / (RRF_K + rank as f64 + 1.0);
-        }
-        for (rank, hit) in vec_search(&ese::encode_single(query)).iter().enumerate() {
-            *fused.entry(hit.val.clone()).or_default() += 1.0 / (RRF_K + rank as f64 + 1.0);
-        }
-        let mut fused: Vec<(EventId, f64)> = fused.into_iter().collect();
-        fused.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
-        let mut per_session: HashMap<String, usize> = HashMap::new();
-        for (id, _) in fused {
-            if relevant.len() >= 6 {
-                break;
-            }
-            // one session must not flood the list with its user/final/obs
-            let n = per_session.entry(id.0.clone()).or_default();
-            if *n >= 2 {
-                continue;
-            }
-            let Some(t) = text_of(&id) else { continue };
-            *n += 1;
-            let mut tag = t.kind.clone();
-            if t.kind == "obs" && t.cited {
-                tag.push_str("·cited");
-            }
-            relevant.push(serde_json::json!({
-                "tag": format!("{tag} · {}", age_label(now, t.ts_ms)),
-                "text": t.text,
-            }));
-        }
+    if rows.is_empty() {
+        println!("{}", ui::dim(&format!("no such subject: {subj}")));
+        return;
     }
-
-    // ---- subjects: current understanding, newest first
-    let mut subj: Vec<(String, SubjStats)> = subjects.iter().collect();
-    subj.sort_by_key(|(_, s)| std::cmp::Reverse(s.last_ms));
-    let subjects_out: Vec<serde_json::Value> = subj
-        .iter()
-        .take(5)
-        .map(|(name, s)| {
-            serde_json::json!({
-                "subject": name,
-                "count": s.count,
-                "cited": s.cited,
-                "age": age_label(now, s.last_ms),
-                "text": s.text,
-            })
-        })
-        .collect();
-
-    Brief {
-        today: local_date().unwrap_or_else(|| format!("{} (utc)", date_label(now))),
-        active,
-        days: days_out,
-        last_session,
-        files: files_out,
-        relevant,
-        subjects: subjects_out,
+    if let Some(h) = head {
+        println!(
+            "{} — {} {}",
+            ui::accent(subj),
+            h.text,
+            ui::dim(&format!("({} obs)", h.count))
+        );
     }
-}
-
-const DEFAULT_TMPL: &str = include_str!("../brief.tmpl");
-
-/// Render through `.peat/brief.tmpl` if present (the experimentation
-/// surface), else the embedded default. The template only formats — every
-/// value is precomputed.
-fn render(brief: &Brief) -> String {
-    let tmpl = std::fs::read_to_string(peat_dir().join("brief.tmpl"))
-        .unwrap_or_else(|_| DEFAULT_TMPL.to_string());
-    let mut env = minijinja::Environment::new();
-    ui::add_style_filters(&mut env);
-    // display-time truncation lives HERE, not in the JSON — --json is the
-    // API and carries full text; templates opt into clipping
-    env.add_filter("clip", |s: String, n: usize| clip(&s, n));
-    env.add_template("brief", &tmpl).unwrap();
-    env.get_template("brief")
-        .unwrap()
-        .render(minijinja::Value::from_serialize(brief))
-        .unwrap_or_else(|e| format!("peat: template error: {e}\n"))
-}
-
-// ---------------------------------------------------------------- helpers
-
-fn kind_tag(e: &Event) -> &'static str {
-    match e {
-        Event::SessionMeta { .. } => "meta",
-        Event::UserMsg { .. } => "user",
-        Event::ToolCall { .. } => "tool",
-        Event::FileTouch { .. } => "file",
-        Event::Commit { .. } => "commit",
-        Event::FinalMsg { .. } => "final",
-        Event::Compaction { .. } => "compacted",
-        Event::Said { .. } => "said",
-        Event::CompactSummary { .. } => "compact",
-        Event::Obs { .. } => "obs",
+    for r in rows {
+        println!(
+            "  {} {}",
+            ui::dim(&format!(
+                "[{} · {}{}]",
+                short_sess(&r.session),
+                age_label(now, r.ts_ms),
+                if r.derived_from.is_empty() { "" } else { " · cited" }
+            )),
+            r.text
+        );
     }
-}
-
-fn event_line(e: &Event) -> String {
-    let one = |s: &str| clip(s, 150);
-    match e {
-        Event::SessionMeta { cwd, branch, .. } => format!(
-            "{} {}",
-            one(cwd),
-            branch.as_deref().unwrap_or("")
-        ),
-        Event::UserMsg { text } | Event::FinalMsg { text } | Event::Said { text } => one(text),
-        Event::CompactSummary { text } => one(text),
-        Event::ToolCall { tool, detail, ok } => format!(
-            "{}{} {}",
-            tool,
-            if *ok { "" } else { " FAILED" },
-            one(detail)
-        ),
-        Event::FileTouch { path } => one(path),
-        Event::Commit { hash, message } => format!("{} {}", &hash[..hash.len().min(8)], one(message)),
-        Event::Compaction {} => "— context window compacted —".into(),
-        Event::Obs {
-            subject,
-            text,
-            derived_from,
-        } => format!(
-            "{}: {}{}",
-            subject,
-            one(text),
-            if derived_from.is_empty() { String::new() } else { format!(" [cites {} events]", derived_from.len()) }
-        ),
-    }
-}
-
-/// Write through `less -RFX` on a terminal (quit-if-one-screen, keep ANSI),
-/// plain stdout otherwise.
-fn page(text: &str) {
-    use std::io::{IsTerminal, Write};
-    if std::io::stdout().is_terminal() {
-        if let Ok(mut p) = std::process::Command::new("less")
-            .args(["-RFX"])
-            .stdin(std::process::Stdio::piped())
-            .spawn()
-        {
-            if let Some(stdin) = p.stdin.as_mut() {
-                let _ = stdin.write_all(text.as_bytes());
-            }
-            let _ = p.wait();
-            return;
-        }
-    }
-    print!("{text}");
-}
-
-fn clip(s: &str, max: usize) -> String {
-    let s = s.split_whitespace().collect::<Vec<_>>().join(" ");
-    if s.chars().count() <= max {
-        return s;
-    }
-    let cut: String = s.chars().take(max).collect();
-    format!("{cut}…")
-}
-
-fn short_path(p: &str) -> String {
-    let parts: Vec<&str> = p.rsplitn(3, '/').collect();
-    match parts.len() {
-        3 => format!("…/{}/{}", parts[1], parts[0]),
-        _ => p.to_string(),
-    }
-}
-
-fn short_sess(s: &str) -> String {
-    s.chars().take(8).collect()
-}
-
-fn age_label(now: u64, ts: u64) -> String {
-    let d = now.saturating_sub(ts);
-    match d {
-        _ if d < 3_600_000 => "<1h".into(),
-        _ if d < DAY_MS => format!("{}h", d / 3_600_000),
-        _ => format!("{}d", d / DAY_MS),
-    }
-}
-
-fn day_label(bucket: u64, today: u64) -> String {
-    match today.saturating_sub(bucket) {
-        0 => "today".into(),
-        1 => "yesterday".into(),
-        n => format!("{n}d ago"),
-    }
-}
-
-/// Local calendar date via `date` — the brief header should read as the
-/// user's "today". Render-side only; the fold path never sees this.
-fn local_date() -> Option<String> {
-    let out = std::process::Command::new("date")
-        .arg("+%Y-%m-%d")
-        .output()
-        .ok()?;
-    let s = String::from_utf8(out.stdout).ok()?.trim().to_string();
-    (s.len() == 10).then_some(s)
-}
-
-/// Local UTC offset in ms via `date +%z` (e.g. "-0700"). Render/capture
-/// boundary only. Zero on any failure — falls back to UTC semantics.
-fn local_offset_ms() -> i64 {
-    let Ok(out) = std::process::Command::new("date").arg("+%z").output() else {
-        return 0;
-    };
-    let s = String::from_utf8_lossy(&out.stdout);
-    let s = s.trim();
-    if s.len() != 5 {
-        return 0;
-    }
-    let sign = if s.starts_with('-') { -1 } else { 1 };
-    let (h, m) = (s[1..3].parse::<i64>(), s[3..5].parse::<i64>());
-    match (h, m) {
-        (Ok(h), Ok(m)) => sign * (h * 60 + m) * 60_000,
-        _ => 0,
-    }
-}
-
-fn date_label(ms: u64) -> String {
-    // inverse of transcript::iso_to_ms's civil-days math, date part only
-    let days = ms / DAY_MS;
-    let era = (days + 719_468) / 146_097;
-    let doe = days + 719_468 - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = yoe + era * 400 + u64::from(m <= 2);
-    format!("{y:04}-{m:02}-{d:02}")
 }
 
 #[cfg(test)]

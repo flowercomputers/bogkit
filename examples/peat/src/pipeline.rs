@@ -20,7 +20,7 @@ pub const DAY_MS: u64 = 86_400_000;
 // ---------------------------------------------------------------- rows
 
 /// One event's contribution to its day bucket.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct DayDelta {
     pub session_start: bool,
     pub tool: bool,
@@ -94,31 +94,20 @@ pub fn day_delta(k: &Keyed<EventId, Envelope>) -> Option<Keyed<u64, DayDelta>> {
     let d = match &e.kind {
         Event::SessionMeta { .. } => DayDelta {
             session_start: true,
-            tool: false,
-            fail: false,
-            commit: false,
-            file: None,
+            ..Default::default()
         },
         Event::ToolCall { ok, .. } => DayDelta {
-            session_start: false,
             tool: true,
             fail: !ok,
-            commit: false,
-            file: None,
+            ..Default::default()
         },
         Event::Commit { .. } => DayDelta {
-            session_start: false,
-            tool: false,
-            fail: false,
             commit: true,
-            file: None,
+            ..Default::default()
         },
         Event::FileTouch { path } => DayDelta {
-            session_start: false,
-            tool: false,
-            fail: false,
-            commit: false,
             file: Some(path.clone()),
+            ..Default::default()
         },
         _ => return None,
     };

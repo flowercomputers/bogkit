@@ -430,5 +430,5 @@ fn iso_timestamps_round_trip() {
     assert_eq!(ms, 1786389491311);
     assert_eq!(crate::transcript::iso_to_ms("garbage"), None);
     // date_label is the inverse's date part
-    assert_eq!(super::date_label(ms), "2026-08-10");
+    assert_eq!(crate::transcript::date_label(ms), "2026-08-10");
 }
