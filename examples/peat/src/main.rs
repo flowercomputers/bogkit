@@ -69,7 +69,7 @@ enum Cli {
     /// Time travel: the brief as it would have read at the end of DATE.
     /// Replays the ledger prefix through the same deterministic pipeline.
     Asof {
-        /// YYYY-MM-DD (UTC day boundary)
+        /// YYYY-MM-DD (cut at the end of that local calendar day)
         date: String,
         task: Vec<String>,
         #[arg(long)]
