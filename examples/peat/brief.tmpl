@@ -1,4 +1,10 @@
 == peat brief · {{ today }} ==
+{%- if active %}
+active in the last hour:
+{%- for a in active %}
+  {{ a.where }} [{{ a.session }}] — {{ a.age }} ago{% if a.commits %}, {{ a.commits }} commits{% endif %}
+{%- endfor %}
+{%- endif %}
 {%- if days %}
 recent activity:
 {%- for d in days %}

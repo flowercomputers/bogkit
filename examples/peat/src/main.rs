@@ -96,7 +96,30 @@ fn now_ms() -> u64 {
 
 fn main() {
     let cli = Cli::parse();
-    let mut st = KeyedStream::<EventId, Envelope, _>::new(db_path(), peat_pipeline!());
+    // Shared-db concurrency: fold is single-writer, and with several
+    // worktree agents pointing PEAT_DB at one database, hook invocations
+    // can collide. Peat processes are short-lived, so waiting is correct:
+    // retry the open with backoff for up to ~45s before giving up.
+    let mut st = {
+        let mut delay_ms = 200u64;
+        let mut waited = 0u64;
+        loop {
+            match std::panic::catch_unwind(|| {
+                KeyedStream::<EventId, Envelope, _>::new(db_path(), peat_pipeline!())
+            }) {
+                Ok(st) => break st,
+                Err(_) if waited < 45_000 => {
+                    if waited == 0 {
+                        eprintln!("peat: db busy (another agent writing); waiting…");
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                    waited += delay_ms;
+                    delay_ms = (delay_ms * 2).min(3_000);
+                }
+                Err(p) => std::panic::resume_unwind(p),
+            }
+        }
+    };
 
     match cli {
         Cli::Capture {
@@ -224,6 +247,7 @@ fn main() {
 #[derive(serde::Serialize)]
 pub struct Brief {
     today: String,
+    active: Vec<serde_json::Value>,
     days: Vec<serde_json::Value>,
     last_session: Option<serde_json::Value>,
     files: Vec<serde_json::Value>,
@@ -266,9 +290,25 @@ pub fn assemble<R: Readable>(
         })
         .collect();
 
-    // ---- last finished session (most recent end_ms with a final message)
+    // ---- active now: sessions with activity in the last hour, by
+    // worktree — one agent's brief sees what the others are doing
     let mut sess: Vec<(String, SessStats)> = sessions.iter().collect();
     sess.sort_by_key(|(_, s)| std::cmp::Reverse(s.end_ms));
+    let active: Vec<serde_json::Value> = sess
+        .iter()
+        .filter(|(_, s)| now.saturating_sub(s.end_ms) < 3_600_000)
+        .take(6)
+        .map(|(id, s)| {
+            let place = s.cwd.rsplit('/').next().unwrap_or(&s.cwd);
+            serde_json::json!({
+                "where": place,
+                "session": short_sess(id),
+                "age": age_label(now, s.end_ms),
+                "commits": s.commits,
+            })
+        })
+        .collect();
+
     let last_session = sess
         .iter()
         .find(|(_, s)| !s.final_msg.is_empty())
@@ -357,6 +397,7 @@ pub fn assemble<R: Readable>(
 
     Brief {
         today: local_date().unwrap_or_else(|| format!("{} (utc)", date_label(now))),
+        active,
         days: days_out,
         last_session,
         files: files_out,
