@@ -108,9 +108,10 @@ cloud embedder this project's sibling (Loupe) used four days ago:
 
 Retrieval: an anny kNN answers in ~230–870µs in-process; the TCP connect
 floor to the cloud measured **29ms** — any cloud retrieval pays ≥1 round
-trip before doing any work. The rate limit is part of the finding: the
-local embedder had read the entire 129k-sentence canon many times over
-before the cloud allowed a fourth sentence.
+trip before doing any work. The rate limit is part of the finding: in
+the window those three calls took, the local embedder could have read
+the entire 129k-sentence canon (1.4×) — the cloud refused a fourth
+sentence first.
 
 ## Honesty notes
 

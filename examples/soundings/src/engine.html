@@ -110,12 +110,12 @@
   <p class="lede">per-sentence embedding, in-process vs the cloud API this project's sibling used four days ago.</p>
   <table class="bench num">
     <tr><td>ese, inside the binary</td><td><b>3.4 µs</b> · 291k sentences/s</td></tr>
-    <tr><td>voyage-3-large, cloud API</td><td><b>181 ms</b> p50 · min 164 · max 264</td></tr>
-    <tr><td>anny kNN, in-process</td><td><b>230–870 µs</b></td></tr>
-    <tr><td>TCP floor to the cloud</td><td><b>29 ms</b> before any work begins</td></tr>
+    <tr><td>voyage-3-large, cloud API</td><td><b>181 ms</b> p50 · min 164 · max 264 · n=3</td></tr>
+    <tr><td>anny kNN, as the HUD reports it</td><td><b>0.23–1 ms</b> · query + channel hop</td></tr>
+    <tr><td>TCP floor to the cloud</td><td><b>~29 ms</b> before any work begins</td></tr>
   </table>
   <div class="quote">“429 — Too Many Requests.”
-    <span class="who">THE CLOUD, AFTER THREE SENTENCES · THE LOCAL EMBEDDER HAD READ THE 129K-SENTENCE CANON MANY TIMES OVER</span></div>
+    <span class="who">THE CLOUD, AFTER THREE SENTENCES · IN THAT SAME WINDOW THE LOCAL EMBEDDER COULD HAVE READ THE ENTIRE 129K-SENTENCE CANON (1.4×)</span></div>
 </section>
 
 <section class="slide" id="s4">
@@ -128,7 +128,7 @@
 </section>
 
 <section class="slide" id="s5">
-  <div class="kicker">the anchored axis · benched at startup, in 248µs</div>
+  <div class="kicker">the anchored axis · benched at startup, under a millisecond</div>
   <div class="head">How many examples make an axis? <b>We measured.</b></div>
   <p class="lede">The concrete——abstract axis is a centroid difference over example sentences. Nested anchor
   sets scored against a <b>held-out 30-sentence ladder</b> in six graded bands — topics overlap across
@@ -143,7 +143,7 @@
   <div class="kicker">fold · ese · anny</div>
   <div class="head">Three crates, all load-bearing — <b>and what we sent back</b>.</div>
   <div class="crates">
-    <div class="crate"><b>fold</b><br>Four KeyedStreams: document, library, lenses, reader-cache. Scores,
+    <div class="crate"><b>fold</b><br>Five keyed streams: document, library, lenses, lens definitions, reader cache. Scores,
       percentile histograms, and LLM gists as incrementally-maintained views; algebraic retraction is the
       corrigendum; Meters narrate every edit from inside.<br>
       <span class="fix">↑ upstream: the Meter operator · Bm25 same-tx retract+insert fix · Hnsw sink last-write-wins fix</span></div>
@@ -157,7 +157,7 @@
       <span class="fix">↑ upstream: snapshot stale-vector rejection + allocation caps</span></div>
   </div>
   <div class="foot">
-    <span>tests <b>27 + 17 passing</b> · clippy quiet · committed tree verified from a clean worktree</span>
+    <span>tests <b>27 + 17 passing</b> · our diff clippy-quiet · committed tree verified from a clean worktree</span>
     <span>guest model <b id="model">—</b> — drafts on request; the lenses audit every draft</span>
     <span>kill this process with <b>-9</b> — the document returns in ~15ms, the shelf in ~0.1s</span>
   </div>
