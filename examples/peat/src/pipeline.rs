@@ -148,10 +148,14 @@ pub fn file_session(k: &Keyed<EventId, Envelope>) -> Option<Keyed<String, String
 }
 
 /// Whether a text row is distilled enough to embed. Vectors are for
-/// beliefs and session summaries; the user-message firehose stays
-/// keyword-searchable (Bm25) but is not worth O(n) graph rebuild cost.
+/// beliefs, session summaries, and short user messages (directives read
+/// like "ground in the formal model" — short by nature). Long user
+/// messages are pasted walls: keyword-searchable via Bm25, but not worth
+/// the O(n) graph rebuild a query pays.
+pub const EMBED_USER_MAX: usize = 400;
+
 pub fn embeddable(t: &Keyed<EventId, TextRow>) -> Option<Keyed<EventId, [f32; ese::DIMENSIONS]>> {
-    (t.val.kind != "user")
+    (t.val.kind != "user" || t.val.text.len() <= EMBED_USER_MAX)
         .then(|| Keyed::new(t.key.clone(), ese::encode_single(&t.val.text)))
 }
 

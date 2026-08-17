@@ -66,6 +66,15 @@ enum Cli {
         #[arg(long)]
         json: bool,
     },
+    /// Search memory: hybrid keyword + semantic recall, hits only
+    Recall {
+        query: Vec<String>,
+        /// Max hits to print
+        #[arg(long, default_value_t = 12)]
+        limit: usize,
+        #[arg(long)]
+        json: bool,
+    },
     /// Time travel: the brief as it would have read at the end of DATE.
     /// Replays the ledger prefix through the same deterministic pipeline.
     Asof {
@@ -262,6 +271,59 @@ fn main() {
                 println!("{}", serde_json::to_string_pretty(&brief).unwrap());
             } else {
                 print!("{}", render(&brief));
+            }
+        }
+
+        Cli::Recall { query, limit, json } => {
+            let query = query.join(" ");
+            if query.trim().is_empty() {
+                eprintln!("peat: recall needs a query");
+                std::process::exit(1);
+            }
+            let now = now_ms();
+            let hits = st.rtx(|(_, _, (kw, vec, texts), _, _, _)| {
+                let mut fused: HashMap<EventId, f64> = HashMap::new();
+                for (rank, hit) in kw.search(&query, limit * 2).iter().enumerate() {
+                    *fused.entry(hit.val.clone()).or_default() +=
+                        1.0 / (RRF_K + rank as f64 + 1.0);
+                }
+                for (rank, hit) in vec.search(&ese::encode_single(&query)).iter().enumerate() {
+                    *fused.entry(hit.val.clone()).or_default() +=
+                        1.0 / (RRF_K + rank as f64 + 1.0);
+                }
+                let mut fused: Vec<(EventId, f64)> = fused.into_iter().collect();
+                fused.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+                fused
+                    .into_iter()
+                    .filter_map(|(id, score)| {
+                        let t = texts.get(&id)?;
+                        Some(serde_json::json!({
+                            "score": (score * 1000.0).round() / 1000.0,
+                            "kind": t.kind,
+                            "cited": t.cited,
+                            "age": age_label(now, t.ts_ms),
+                            "session": short_sess(&id.0),
+                            "seq": id.1,
+                            "text": clip(&t.text, 220),
+                        }))
+                    })
+                    .take(limit)
+                    .collect::<Vec<_>>()
+            });
+            if json {
+                println!("{}", serde_json::to_string_pretty(&hits).unwrap());
+            } else if hits.is_empty() {
+                println!("no hits for {query:?}");
+            } else {
+                for h in &hits {
+                    println!(
+                        "  [{}{} · {}] {}",
+                        h["kind"].as_str().unwrap_or("?"),
+                        if h["kind"] == "obs" && h["cited"] == true { "·cited" } else { "" },
+                        h["age"].as_str().unwrap_or(""),
+                        h["text"].as_str().unwrap_or(""),
+                    );
+                }
             }
         }
 
