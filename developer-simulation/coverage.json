@@ -792,16 +792,56 @@
       "components_used": [],
       "outcome": "no_fit",
       "report": "reports/2026-08-16.md"
+    },
+    {
+      "date": "2026-08-17",
+      "slug": "corruption-resynchronizing-instrument-stream-decoder",
+      "persona": "laboratory gateway developer with nine years of C and C++ and two small Rust command-line tools",
+      "domain": "corruption-resynchronizing binary instrument stream decoding",
+      "constraints": [
+        "one million valid frames across 64 interleaved streams plus 25,000 deterministic damage cases",
+        "opaque payloads, exact marker-length-CRC proof, and immediate known-valid follower recovery",
+        "64 MiB process-memory ceiling, 8,192-byte per-stream retention bound, and no blocking I/O in consumption",
+        "chunk-independent deterministic output with 100,000 arbitrary-byte stress cases and strict throughput floors"
+      ],
+      "components_considered": [
+        "fold",
+        "ese",
+        "anny"
+      ],
+      "components_used": [],
+      "outcome": "no_fit",
+      "report": "reports/2026-08-17.md"
+    },
+    {
+      "date": "2026-08-17",
+      "slug": "mergeable-unique-installation-reach-rollups",
+      "persona": "analytics-infrastructure engineer with eight years of Kotlin and SQL and four months of Rust",
+      "domain": "bounded-memory mergeable unique-installation reach rollups",
+      "constraints": [
+        "12 million immutable records across 5,760 tenant-hour buckets and eight independently aggregated shards",
+        "2,880-observation accuracy matrix plus separately retained held-out evidence",
+        "portable byte-identical shard merge, duplicate idempotence, canonical output, and complete-file integrity",
+        "128 MiB candidate-memory ceiling, four-times exact-baseline reduction, and 1.5-times runtime ceiling"
+      ],
+      "components_considered": [
+        "fold",
+        "ese",
+        "anny"
+      ],
+      "components_used": [],
+      "outcome": "no_fit",
+      "report": "reports/2026-08-17.md"
     }
   ],
   "recurring_findings": [
     {
       "id": "document-storage-and-concurrency-boundaries",
       "category": "documentation gap",
-      "independent_trial_count": 34,
+      "independent_trial_count": 36,
       "confidence": "high",
       "candidate": true,
-      "summary": "The public onboarding should distinguish embedded source-of-truth use from external databases and calendar or cache body-store handoffs, external network authorities and cooperative filesystem protocols, horizontal or partitioned deployment, durable leases and ordered purges, strict disk quotas, raw-flash firmware and fixed controller images, atomic broker-offset ownership, exact recursive graph workloads, and bounded stateless stream or geometry transformations that do not benefit from durable state.",
+      "summary": "The public onboarding should distinguish embedded source-of-truth use from external databases and calendar or cache body-store handoffs, external network authorities and cooperative filesystem protocols, horizontal or partitioned deployment, durable leases and ordered purges, strict disk quotas, raw-flash firmware and fixed controller images, atomic broker-offset ownership, exact recursive graph workloads, bounded stateless stream or geometry transformations, exact synchronous protocol framing, and immutable externally mergeable partial-state batch rollups that do not benefit from durable state.",
       "smallest_improvement": "Add a concise component, storage, transaction, concurrency, operating-system, and hard-limit capability matrix.",
       "sources": [
         "purchase-audit",
@@ -837,7 +877,9 @@
         "incremental-calculation-cache",
         "revision-safe-aircraft-manual-search",
         "causal-canvas-compaction",
-        "transparency-checkpoint-verifier"
+        "transparency-checkpoint-verifier",
+        "corruption-resynchronizing-instrument-stream-decoder",
+        "mergeable-unique-installation-reach-rollups"
       ]
     },
     {
