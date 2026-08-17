@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: superpowers:subagent-driven-development or superpowers:executing-plans.
 
-**Goal:** Execute docs/superpowers/specs/2026-08-16-figmog-standalone-repo.md — figmog at the root of the (already-created, empty) `sanctuarycomputer/figmog` repo, fold via pinned git dep, cuts + shakeout done, CI + draft-release workflow in place, tagged v0.1.0 draft.
+**Goal:** Execute docs/superpowers/specs/2026-08-16-figmog-standalone-repo.md — figmog at the root of the (already-created, empty) `sanctuarycomputer/figmog` repo, fold via pinned git dep, cuts + shakeout done, CI + release workflow in place, tagged v0.0.1 published pre-release.
 
 **Precondition:** the multi-file serve milestone is complete and pushed on `worktree-figmog` (its final state is what migrates). Do not start while any implementer is active on this worktree.
 
@@ -25,7 +25,7 @@
 - [ ] **Step 1 — pin determination: DONE by the controller (2026-08-16).** Upstream fetched (`bogkit-upstream` remote exists in this worktree); `fold` at `bogkit-upstream/main` is source-identical to our tree (only a `readme = "readme.md"` metadata line + readme files differ; `anny` likewise readme-only). **The pin is `rev = "20f2ca50d5d06f51edfe8b8570c0fb48caf9eb81"`.** Task 1 Step 3's full-suite gate remains the executable proof. (Upstream still has no LICENSE anywhere — the §3 release gate stands.)
 - [ ] **Step 2 — orphan branch + layout:** `git switch --orphan figmog-standalone`; populate from `worktree-figmog`'s tree (use `git restore --source worktree-figmog -- examples/figmog docs` then move): crate files from `examples/figmog/*` to root (src/, tests/, README.md → kept for now, Cargo.toml rewritten standalone: `[package] name figmog version 0.0.1 edition 2024 license MIT` + the git dep `fold = { git = "https://github.com/flowercomputers/bogkit", rev = "<the pin>" }`, same crates.io deps/dev-deps, NO workspace section); `docs/history/` gets the old spec + all figmog plan docs verbatim; LICENSE = MIT (year 2026, copyright sanctuary computer); minimal `.gitignore` (target/, .figmog/). Nothing else yet (CI, SPEC.md, README rewrite are later tasks).
 - [ ] **Step 3 — build against the git dep:** `cargo test` at root (network fetch of bogkit occurs here). All 15x tests must pass unchanged — this proves the pin is faithful. Then clippy/fmt gates.
-- [ ] **Step 4 — commit + push:** single commit `import figmog from sanctuarycomputer/clog (branch worktree-figmog, PR #1) as standalone crate` (+ trailer); `git push https://github.com/sanctuarycomputer/figmog.git figmog-standalone:main`.
+- [ ] **Step 4 — seed main, push branch, open PR:** first seed the empty repo: create a tiny init commit (LICENSE + one-line README stub) on a temp orphan branch and `git push https://github.com/sanctuarycomputer/figmog.git <seed>:main`. Then commit the import on `figmog-standalone` (`import figmog from sanctuarycomputer/clog (branch worktree-figmog, PR #1) as standalone crate` + trailer), `git push https://github.com/sanctuarycomputer/figmog.git figmog-standalone:first-pass`, and `gh pr create -R sanctuarycomputer/figmog --base main --head first-pass` (title "figmog first pass", body summarizing the import + planned task commits; PR body ends with the standard generated-with footer).
 
 ### Task 2: the cuts
 
@@ -48,11 +48,12 @@
 ### Task 5: CI + release + tag
 
 - [ ] `.github/workflows/ci.yml`: on push/PR to main — ubuntu + macos runners: `cargo test`, `cargo clippy --no-deps -- -D warnings`, `cargo fmt --check`.
-- [ ] `.github/workflows/release.yml` per spec §5: on tag `v*` — matrix {aarch64-apple-darwin on macos-14, x86_64-apple-darwin on macos-13, x86_64-unknown-linux-gnu on ubuntu-latest}; `cargo build --release`; strip; `tar czf figmog-${TAG}-${TARGET}.tar.gz -C target/<triple>/release figmog`; sha256 into SHA256SUMS; `gh release create "$TAG" --draft --title "$TAG"` + upload artifacts (use `softprops/action-gh-release` OR plain `gh` CLI — prefer plain `gh`, zero third-party actions beyond actions/checkout + dtolnay/rust-toolchain or rustup manual; document the choice).
+- [ ] `.github/workflows/release.yml` per spec §5: on tag `v*` — matrix {aarch64-apple-darwin on macos-14, x86_64-apple-darwin on macos-13, x86_64-unknown-linux-gnu on ubuntu-latest}; `cargo build --release`; strip; `tar czf figmog-${TAG}-${TARGET}.tar.gz -C target/<triple>/release figmog`; sha256 into SHA256SUMS; `gh release create "$TAG" --prerelease --title "$TAG"` + upload artifacts (use `softprops/action-gh-release` OR plain `gh` CLI — prefer plain `gh`, zero third-party actions beyond actions/checkout + dtolnay/rust-toolchain or rustup manual; document the choice).
 - [ ] Push; verify CI runs green on the actual repo (`gh run watch/list -R sanctuarycomputer/figmog`); fix-forward if runner reality differs (allowed: iterative commits, each pushed, until green — list them).
-- [ ] Tag `v0.0.1`, push tag, confirm the release appears with 3 artifacts + checksums (`gh release view v0.1.0 -R sanctuarycomputer/figmog`). Publish as PRE-RELEASE (user-directed for testing); README keeps the fold-license sentence for broader distribution.
+- [ ] Tag `v0.0.1`, push tag, confirm the release appears with 3 artifacts + checksums (`gh release view v0.0.1 -R sanctuarycomputer/figmog`). Publish as PRE-RELEASE (user-directed for testing); README keeps the fold-license sentence for broader distribution.
 - [ ] Final: switch this worktree back to `worktree-figmog`. Commit nothing further there.
 
 ## Self-review checklist
-- Spec §2 layout → T1/T4; §3 dep+pin+gate → T1 (+README sentence T4); §4 cuts+debt → T2/T3; §5 release → T5 (draft-only honored); §6 CLAUDE.md → T4; §7 sequencing → precondition + task order; §8 non-goals respected (no tap, no signing, no filter-repo).
+- Spec §2 layout → T1/T4; §3 dep+pin+gate → T1 (+README sentence T4); §4 cuts+debt → T2/T3; §5 release → T5 (pre-release publish per user direction supersedes the spec's draft-only rule — ledger this as a ruling); §6 CLAUDE.md → T4; §7 sequencing → precondition + task order; §8 non-goals respected (no tap, no signing, no filter-repo).
+- Per-pillar adversarial reviews (user-directed) map onto the task reviews: T1 = engine/import fidelity, T2+T3 = CLI surface & hardening, T4 = structure/docs, T5 = supply chain/CI — plus one whole-PR final review before merge.
 - Risk center: T1's pin-parity check (fold drift would silently change engine behavior — the full-suite gate at T1 Step 3 is the proof).
