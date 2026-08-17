@@ -816,3 +816,70 @@ comparison phase measures API *latency* with K small calls; the
 ~10/min budget number is documented, never probed to exhaustion);
 readline niceties (history/completion — plain stdin lines are enough
 for a demo REPL).
+
+## 14. v4: multi-file serve
+
+Agents address Figma by URL — a server bound to one file at startup
+breaks that habit. v4 makes `figmog serve` a multi-file server; the
+per-file-key store layout (`.figmog/<key>/db`) has anticipated this
+since v1.
+
+### Surface
+
+- `figmog serve [FILE]...` — zero or more files at startup. Zero is
+  valid: the server starts empty and mirrors files as agents reference
+  them. Each startup FILE is pulled if its store is empty.
+- **Every local tool gains an optional `file` argument** (URL or key,
+  parsed with `ident::parse_file_ref`). Resolution: explicit `file` arg →
+  that mirror (auto-opening it if unknown, which spends one Tier-1
+  pull); omitted → the default file (first startup FILE, else the single
+  mirrored file, else an isError naming `figmog_files`/`figmog_open`).
+- New tools: `figmog_open {file}` — mirror a file now (one Tier-1 pull;
+  returns churn + node count), and `figmog_files` — list mirrored files
+  (key, name, version, nodes, last synced, default flag). Local tool
+  count becomes 19.
+- The steering `instructions` text is extended with one sentence: "Pass
+  the Figma file URL as the `file` argument when you have one; figmog
+  mirrors files on first reference."
+
+### Mechanics
+
+- **Sessions:** each mirrored file is a `FileSession` whose store lives
+  captured inside boxed closures (`dispatch(tool, args)`,
+  `pull()`, `watermark()`) — the established answer to the unnameable
+  pipeline type; sessions live in a `Vec` keyed by file key, ordered by
+  open time (first = default). Opening a session = the do_pull-equivalent
+  sequence at a concrete `open_store!` site inside the closure factory.
+- **Watch:** one `Watcher` + backoff per session; the tick visits
+  sessions round-robin (one meta poll per tick, deadline = interval /
+  live-session-count, floor 2s) so total Tier-3 spend stays ≈ one file's
+  worth per interval times the file count — well inside 50–150/min for
+  dozens of files. `--no-watch` unchanged.
+- **Cache / eviction:** unchanged — each session's store carries its own
+  `proxy_cache`, evicted by that file's own version changes.
+- **CLI:** unchanged single-file semantics (`--db`/`.figmog/current`);
+  multi-file is a serve capability. `figmog call`/`tools` against a
+  running multi-file config still address one store.
+- **Proxied tools caveat (documented, not fixed):** the desktop server
+  operates on the file open in the Figma app; the `file` argument does
+  not route proxied tools. README states this plainly.
+
+### Non-goals (v4)
+
+Cross-file queries (joins/search spanning mirrors); mirroring whole
+teams/projects by enumeration; eviction of idle sessions (a session
+opened stays open for the process lifetime); CLI multi-file addressing.
+
+### Testing
+
+- Session-resolution unit tests (explicit file, default, unknown-file
+  isError text, auto-open path with a scripted pull closure).
+- Serve e2e: start with no FILE against two pre-built fixture stores'
+  keys… (stores are per-key temp dirs; the e2e uses `--from-file`-built
+  stores by pre-creating them under a temp `.figmog` root and passing
+  `--figmog-root <dir>` — add that hidden flag for testability, default
+  `.figmog`), then: `figmog_files` lists both, a tool with `file` routes
+  to the right mirror (distinct fixture names prove it), omitted `file`
+  errors when two mirrors exist and no default was given, `figmog_open`
+  with `--from-file`-shaped… (network-free e2e: `figmog_open` is
+  network-only; e2e covers its isError on missing token instead).
