@@ -77,3 +77,31 @@ fn hnsw_nearest_upsert_retract_recover() {
         assert_eq!(ids(&idx.search(&[9.0, 9.0, 9.0, 9.0]))[0], 3);
     });
 }
+
+#[test]
+fn keyed_stream_replacement_updates_hnsw() {
+    let path = fresh_db("keyed_hnsw.db");
+    let mut st = KeyedStream::new(&path, Sink::new("vecs", L2, 42));
+
+    st.wtx(|tx| {
+        tx.upsert(&1, &[0.0, 0.0, 0.0, 0.0]);
+        tx.upsert(&2, &[1.0, 1.0, 1.0, 1.0]);
+    });
+    st.wtx(|tx| {
+        tx.upsert(&1, &[10.0, 10.0, 10.0, 10.0]);
+    });
+
+    st.rtx(|idx| {
+        assert_eq!(idx.len(), 2);
+        assert_eq!(ids(&idx.search(&[0.0, 0.0, 0.0, 0.0]))[0], 2);
+        assert_eq!(ids(&idx.search(&[10.0, 10.0, 10.0, 10.0]))[0], 1);
+    });
+
+    drop(st);
+    let st = KeyedStream::new(&path, Sink::new("vecs", L2, 42));
+    st.rtx(|idx| {
+        assert_eq!(idx.len(), 2);
+        assert_eq!(ids(&idx.search(&[0.0, 0.0, 0.0, 0.0]))[0], 2);
+        assert_eq!(ids(&idx.search(&[10.0, 10.0, 10.0, 10.0]))[0], 1);
+    });
+}
