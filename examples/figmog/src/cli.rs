@@ -63,9 +63,11 @@ enum Cmd {
     /// `--no-upstream`) a cached proxy to Figma's native desktop MCP
     /// server — figmog is the only Figma MCP an agent needs to connect.
     Serve {
-        /// File key or figma.com URL. Optional after the first pull, or
-        /// with `--no-watch` and `--db` for a read-only, offline server.
-        file: Option<String>,
+        /// File keys or figma.com URLs to mirror at startup — zero or
+        /// more (spec §14: the server starts empty and mirrors files as
+        /// agents reference them). The first one is the default file for
+        /// any tool call that omits `file`.
+        files: Vec<String>,
         /// Poll interval in seconds.
         #[arg(long, default_value = "10")]
         interval: u64,
@@ -78,6 +80,12 @@ enum Cmd {
         /// Serve local `figmog_*` tools only — no upstream proxy.
         #[arg(long)]
         no_upstream: bool,
+        /// Root directory for multi-file session stores (`<root>/<key>/db`
+        /// — spec §14). Hidden: testability knob so e2e tests can point
+        /// startup files at pre-built fixture stores under a temp dir
+        /// instead of the real `.figmog`.
+        #[arg(long, default_value = ".figmog", hide = true)]
+        figmog_root: PathBuf,
     },
     /// List every tool figmog would serve: the local registry, plus
     /// upstream tools when reachable.
@@ -252,6 +260,36 @@ fn dispatch(cli: Cli) -> Result<(), String> {
         );
     }
 
+    // `serve` manages its own (possibly many) session stores via
+    // `SessionManager` (`sessions.rs`) rather than the single `Db` every
+    // other command resolves below — handled here, before `resolve_db`,
+    // for the same reason `bench` is (see above): matched by reference so
+    // a non-match leaves `cli` untouched for the rest of this function.
+    // The global `--db` flag is still honored as a single-session escape
+    // hatch (spec §14 non-goal: CLI multi-file addressing is out of
+    // scope, and this keeps every pre-v4 `figmog serve --db <path>`
+    // invocation — including this crate's own e2e tests — working
+    // unchanged, single mirror, no `--figmog-root` layout involved).
+    if let Cmd::Serve {
+        files,
+        interval,
+        no_watch,
+        upstream,
+        no_upstream,
+        figmog_root,
+    } = &cli.cmd
+    {
+        return crate::serve::run_serve(
+            cli.db.clone(),
+            files.clone(),
+            *interval,
+            *no_watch,
+            upstream.clone(),
+            *no_upstream,
+            figmog_root.clone(),
+        );
+    }
+
     let db = resolve_db(&cli)?;
     match cli.cmd {
         Cmd::Pull {
@@ -261,13 +299,6 @@ fn dispatch(cli: Cli) -> Result<(), String> {
         } => cmd_pull(&db, file, from_file, fresh, cli.json),
         Cmd::Watch { file, interval } => cmd_watch(&db, file, interval, cli.json),
         Cmd::ImportVariables { path } => cmd_import_variables(&db, path, cli.json),
-        Cmd::Serve {
-            file,
-            interval,
-            no_watch,
-            upstream,
-            no_upstream,
-        } => crate::serve::run_serve(&db, file, interval, no_watch, upstream, no_upstream),
         Cmd::Tools {
             upstream,
             no_upstream,
@@ -402,11 +433,10 @@ fn resolve_db(cli: &Cli) -> Result<Db, String> {
 
     // pull/watch with an explicit file ref establish the key for this run.
     // `.figmog/current` is only written after a successful sync (see
-    // `do_pull`), so a failed pull never repoints later commands.
-    if let Cmd::Pull { file: Some(f), .. }
-    | Cmd::Watch { file: Some(f), .. }
-    | Cmd::Serve { file: Some(f), .. } = &cli.cmd
-    {
+    // `do_pull`), so a failed pull never repoints later commands. `serve`
+    // never reaches here — it's handled, `Db`-free, before this function
+    // is even called (see `dispatch`).
+    if let Cmd::Pull { file: Some(f), .. } | Cmd::Watch { file: Some(f), .. } = &cli.cmd {
         let key = parse_file_ref(f).ok_or_else(|| format!("not a Figma file key or URL: {f}"))?;
         return Ok(Db {
             path: db_path_for(&key),

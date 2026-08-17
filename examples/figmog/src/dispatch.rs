@@ -179,11 +179,27 @@ pub(crate) fn dispatch_read_tool<R: Readable>(
     }
 }
 
-/// The 17 `figmog_*` MCP tools: 12 core reads + 5 whole-file structural
-/// queries (build design §11's two tables). Every tool but `figmog_sync`
-/// reads the local mirror at zero Figma API cost.
+/// The optional `file` property every local tool's schema carries as of
+/// v4 (spec §14): a Figma file URL or key, routed by `SessionManager`
+/// (`sessions.rs`) to the mirror it names, auto-opening it (one Tier-1
+/// pull) if it's new. Omitted, a tool targets the default mirrored file.
+fn file_arg_property() -> Value {
+    json!({
+        "type": "string",
+        "description": "Figma file URL or key; omit for the default mirrored file."
+    })
+}
+
+/// The 19 `figmog_*` MCP tools (spec §14, v4): the 12 core reads + 5
+/// whole-file structural queries + `figmog_sync` (build design §11's two
+/// tables) — every one of those 17 gains the optional `file` routing
+/// property below — plus the two v4 additions, `figmog_open` and
+/// `figmog_files`, which don't (routing *to* a file, and listing every
+/// file, aren't themselves per-file operations). Every tool but
+/// `figmog_sync`/`figmog_open` reads the local mirror at zero Figma API
+/// cost.
 pub(crate) fn tool_registry() -> Vec<ToolDef> {
-    vec![
+    let mut tools = vec![
         ToolDef {
             name: "figmog_status",
             description: "File name, version, last modified time, and node count — reads the local mirror (no Figma API cost).",
@@ -337,5 +353,34 @@ pub(crate) fn tool_registry() -> Vec<ToolDef> {
                 "required": ["x", "y"]
             }),
         },
-    ]
+    ];
+
+    for t in tools.iter_mut() {
+        if let Some(props) = t
+            .input_schema
+            .get_mut("properties")
+            .and_then(Value::as_object_mut)
+        {
+            props.insert("file".to_string(), file_arg_property());
+        }
+    }
+
+    tools.push(ToolDef {
+        name: "figmog_open",
+        description: "Mirror a Figma file now (spends one Tier-1 pull) — creates the mirror if it's new, or re-syncs it if already mirrored. Returns the sync churn and node count.",
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "file": {"type": "string", "description": "Figma file URL or key to mirror."}
+            },
+            "required": ["file"]
+        }),
+    });
+    tools.push(ToolDef {
+        name: "figmog_files",
+        description: "List every mirrored file: key, name, version, node count, last synced time, and which one is the default — reads local state only (no Figma API cost).",
+        input_schema: json!({"type": "object", "properties": {}}),
+    });
+
+    tools
 }

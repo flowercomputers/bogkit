@@ -22,6 +22,7 @@ mod proxy;
 pub mod query;
 mod repl;
 pub mod serve;
+mod sessions;
 pub mod store;
 pub mod upstream;
 pub mod vars;

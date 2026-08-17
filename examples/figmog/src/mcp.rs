@@ -16,8 +16,10 @@ use serde_json::{Value, json};
 /// This is the exact steering text carried verbatim in the `initialize`
 /// result's `instructions` field — see build design §12 / §11 point 3
 /// (v3, cached-proxy positioning: figmog is the ONLY Figma MCP an agent
-/// connects to, superseding the v2 "second, separate server" text).
-const INSTRUCTIONS: &str = "figmog is your Figma server: a local, instant mirror of one Figma file plus a cached proxy to Figma's native capabilities. Call figmog for everything Figma-related. figmog_* tools answer from the local mirror at zero API cost; native-named tools (get_*, …) go to Figma, cached by file version where possible.";
+/// connects to, superseding the v2 "second, separate server" text) plus,
+/// as of v4 (spec §14), one appended sentence steering agents toward the
+/// `file` argument and figmog's auto-mirror-on-first-reference behavior.
+const INSTRUCTIONS: &str = "figmog is your Figma server: a local, instant mirror of one Figma file plus a cached proxy to Figma's native capabilities. Call figmog for everything Figma-related. figmog_* tools answer from the local mirror at zero API cost; native-named tools (get_*, …) go to Figma, cached by file version where possible. Pass the Figma file URL as the `file` argument when you have one; figmog mirrors files on first reference.";
 
 /// The default MCP protocol version echoed when a client's `initialize`
 /// request omits `protocolVersion`.
@@ -258,7 +260,7 @@ mod tests {
                     "protocolVersion": "2024-11-05",
                     "capabilities": {"tools": {}},
                     "serverInfo": {"name": "figmog", "version": env!("CARGO_PKG_VERSION")},
-                    "instructions": "figmog is your Figma server: a local, instant mirror of one Figma file plus a cached proxy to Figma's native capabilities. Call figmog for everything Figma-related. figmog_* tools answer from the local mirror at zero API cost; native-named tools (get_*, …) go to Figma, cached by file version where possible.",
+                    "instructions": "figmog is your Figma server: a local, instant mirror of one Figma file plus a cached proxy to Figma's native capabilities. Call figmog for everything Figma-related. figmog_* tools answer from the local mirror at zero API cost; native-named tools (get_*, …) go to Figma, cached by file version where possible. Pass the Figma file URL as the `file` argument when you have one; figmog mirrors files on first reference.",
                 },
             })
         );

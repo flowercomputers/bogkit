@@ -180,14 +180,15 @@ fn serve_e2e_initialize_tools_list_and_tool_calls() {
         &json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
     );
 
-    // -- tools/list: exactly 17 figmog_* tools --
+    // -- tools/list: exactly 19 figmog_* tools (spec §14: the 17 v3 tools
+    // plus figmog_open/figmog_files) --
     send(
         &mut stdin,
         &json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
     );
     let resp = recv(&rx);
     let tools = resp["result"]["tools"].as_array().expect("tools array");
-    assert_eq!(tools.len(), 17, "tools: {tools:#?}");
+    assert_eq!(tools.len(), 19, "tools: {tools:#?}");
     let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
     for name in &names {
         assert!(
@@ -475,14 +476,14 @@ fn serve_e2e_proxied_tool_lists_round_trips_and_second_call_is_cache_served() {
         &json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
     );
 
-    // -- tools/list: 17 local + 1 proxied, prefixed description --
+    // -- tools/list: 19 local + 1 proxied, prefixed description --
     send(
         &mut stdin,
         &json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
     );
     let resp = recv(&rx);
     let tools = resp["result"]["tools"].as_array().expect("tools array");
-    assert_eq!(tools.len(), 18, "tools: {tools:#?}");
+    assert_eq!(tools.len(), 20, "tools: {tools:#?}");
     let proxied = tools
         .iter()
         .find(|t| t["name"] == json!("get_code"))
