@@ -11,7 +11,8 @@ use fold::pipeline::Scored;
 use fold::stream::Readable;
 
 use crate::event::EventId;
-use crate::pipeline::{DayStats, SessStats, SubjStats, TextRow, DAY_MS};
+use crate::ladder;
+use crate::pipeline::{DayStats, ObsRow, SessStats, SubjStats, TextRow, DAY_MS};
 use crate::transcript::{date_label, local_offset_ms};
 use crate::ui::{self, age_label, short_path, short_sess};
 
@@ -39,6 +40,9 @@ pub struct Brief {
     pub today: String,
     active: Vec<serde_json::Value>,
     days: Vec<serde_json::Value>,
+    /// the temporal ladder: the rest of the past, geometrically coarser,
+    /// every band carrying the command that descends into it
+    further: Vec<ladder::Band>,
     last_session: Option<serde_json::Value>,
     files: Vec<serde_json::Value>,
     relevant: Vec<serde_json::Value>,
@@ -52,12 +56,14 @@ pub struct Brief {
 pub fn assemble<R: Readable>(
     query: &str,
     now: u64,
+    budget: usize,
     days: &TableReader<'_, R, u64, DayStats>,
     files: &MultimapReader<'_, R, String, String>,
     kw_search: impl Fn(&str, usize) -> Vec<Scored<f64, EventId>>,
     vec_search: impl Fn(&[f32; ese::DIMENSIONS]) -> Vec<Scored<f32, EventId>>,
     text_of: impl Fn(&EventId) -> Option<TextRow>,
     subjects: &TableReader<'_, R, String, SubjStats>,
+    evidence: &MultimapReader<'_, R, String, ObsRow>,
     sessions: &TableReader<'_, R, String, SessStats>,
 ) -> Brief {
     let today_bucket = now / DAY_MS;
@@ -65,6 +71,27 @@ pub fn assemble<R: Readable>(
     // ---- day digest: the 3 most recent non-empty days
     let mut day_rows: Vec<(u64, DayStats)> = days.iter().collect();
     day_rows.sort_by_key(|(d, _)| std::cmp::Reverse(*d));
+
+    // ---- further back: the ladder over everything the digest doesn't show.
+    // Rung 0 is the materialized day table; the bands are a pure read-time
+    // regrouping of it (obs counted from the evidence trail — the judged
+    // lane is small). Frontier = the digest's oldest shown day.
+    let all_days: std::collections::BTreeMap<u64, DayStats> =
+        day_rows.iter().cloned().collect();
+    let mut obs_per_day: std::collections::BTreeMap<u64, i64> = Default::default();
+    for (subject, _) in subjects.iter() {
+        for r in evidence.get(&subject) {
+            let r: ObsRow = r;
+            *obs_per_day.entry(r.ts_ms / DAY_MS).or_default() += 1;
+        }
+    }
+    let frontier = day_rows
+        .iter()
+        .take(3)
+        .last()
+        .map(|(d, _)| *d)
+        .unwrap_or(today_bucket);
+    let further = ladder::bands(&all_days, &obs_per_day, frontier, budget);
     let days_out: Vec<serde_json::Value> = day_rows
         .iter()
         .take(3)
@@ -183,6 +210,7 @@ pub fn assemble<R: Readable>(
         today: date_label((now as i64 + local_offset_ms()) as u64),
         active,
         days: days_out,
+        further,
         last_session,
         files: files_out,
         relevant,

@@ -13,6 +13,13 @@
   {{ d.day }}: {{ d.tools }} tool calls ({{ d.fails }} failed), {{ d.commits }} commits{% if d.files %} · {{ d.files | join(", ") }}{% endif %}
 {%- endfor %}
 {%- endif %}
+{%- if further %}
+
+{{ "further back:" | h1 }}
+{%- for b in further %}
+  {{ ("[" ~ b.label ~ (" · " ~ b.span if b.span else "") ~ "]") | dim }} {{ b.tools }} tools{% if b.fails %}{{ (" (" ~ b.fails ~ " fail)") | dim }}{% endif %} · {{ b.commits }} commits · {{ b.sessions }} sessions{% if b.obs %} · {{ b.obs }} obs{% endif %}{% if b.files %} · {{ b.files | join(", ") }}{% endif %}  {{ ("▸ " ~ b.handle) | dim }}
+{%- endfor %}
+{%- endif %}
 {%- if last_session %}
 
 {{ "last session" | h1 }}{{ (" (" ~ last_session.age_hours ~ "h ago" ~ (", " ~ last_session.branch if last_session.branch else "") ~ "):") | dim }}

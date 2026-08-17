@@ -22,6 +22,7 @@
 pub mod brief;
 pub mod db;
 pub mod event;
+pub mod ladder;
 pub mod pipeline;
 pub mod transcript;
 pub mod ui;
@@ -35,7 +36,7 @@ use pipeline::{ObsRow, SessStats, SubjStats, DAY_MS};
 use ui::{age_label, clip, short_sess};
 
 /// Shared row filters for the verbs that walk indexed text or the ledger.
-#[derive(clap::Args)]
+#[derive(clap::Args, Default)]
 struct Filter {
     /// Only this session (prefix ok)
     #[arg(long)]
@@ -64,8 +65,28 @@ impl Filter {
 }
 
 #[derive(Parser)]
-#[command(name = "peat", about = "agent memory as a fold over bogkit")]
-enum Cli {
+#[command(
+    name = "peat",
+    about = "agent memory as a fold over bogkit",
+    args_conflicts_with_subcommands = true
+)]
+struct Cli {
+    /// A place or a question: a window (w33, 2026-07, 2026-08-14, q3,
+    /// 2026, a..b), a session id prefix (+ optional seq), or search words.
+    /// Bare `peat` prints the brief. The output of every read ends in the
+    /// command that looks one level deeper.
+    query: Vec<String>,
+    #[arg(long, global = true)]
+    json: bool,
+    /// Max bands in the brief's "further back" ladder
+    #[arg(long)]
+    budget: Option<usize>,
+    #[command(subcommand)]
+    cmd: Option<Cmd>,
+}
+
+#[derive(clap::Subcommand)]
+enum Cmd {
     /// Ingest a Claude Code transcript (idempotent; run from the Stop hook)
     Capture {
         transcript: PathBuf,
@@ -97,6 +118,9 @@ enum Cli {
         task: Vec<String>,
         #[arg(long)]
         json: bool,
+        /// Max bands in the "further back" ladder (PEAT_BRIEF_BUDGET; default 8)
+        #[arg(long)]
+        budget: Option<usize>,
     },
     /// Search memory: hybrid keyword + semantic recall, hits only
     Recall {
@@ -124,11 +148,18 @@ enum Cli {
         #[arg(long)]
         json: bool,
     },
-    /// Print one event in full, with any observations citing it
+    /// One session (id prefix), or one event in full when seq is given
     Show {
         /// Session id (prefix ok)
         session: String,
-        seq: u32,
+        seq: Option<u32>,
+    },
+    /// Look at one window of time: digest, children, and what was said
+    Zoom {
+        /// w33, 2026-w33, 2026-07, 2026-08-14, q3, 2026, or a..b
+        window: String,
+        #[arg(long)]
+        json: bool,
     },
     /// Time travel: the brief as it would have read at the end of DATE.
     /// Replays the ledger prefix through the same deterministic pipeline.
@@ -151,29 +182,80 @@ fn now_ms() -> u64 {
 /// One snapshot -> assembled brief. A macro because the reader tuple's
 /// type contains closures and cannot be named.
 macro_rules! make_brief {
-    ($st:expr, $query:expr, $now:expr) => {
-        $st.rtx(|(days, files, (kw, vec, texts), (subjects, _), sessions, _ledger)| {
+    ($st:expr, $query:expr, $now:expr, $budget:expr) => {
+        $st.rtx(|(days, files, (kw, vec, texts), (subjects, evidence), sessions, _ledger)| {
             brief::assemble(
                 $query,
                 $now,
+                $budget,
                 &days,
                 &files,
                 |q, n| kw.search(q, n),
                 |v| vec.search(v),
                 |id| texts.get(id),
                 &subjects,
+                &evidence,
                 &sessions,
             )
         })
     };
 }
 
+/// The brief's band budget: flag beats env beats default.
+fn band_budget(flag: Option<usize>) -> usize {
+    flag.or_else(|| std::env::var("PEAT_BRIEF_BUDGET").ok().and_then(|v| v.parse().ok()))
+        .unwrap_or(8)
+}
+
 fn main() {
     let cli = Cli::parse();
     let mut st = db::open(db::db_path(), || peat_pipeline!());
 
-    match cli {
-        Cli::Capture {
+    // ---- shape dispatch: bare `peat` orients; `peat <thing>` looks
+    // closer, inferring window / session / search from the argument's
+    // shape. The header of every non-obvious read names its
+    // interpretation, and explicit subcommands remain the unambiguous
+    // spellings of the same reads.
+    let cmd = match cli.cmd {
+        Some(c) => c,
+        None if cli.query.is_empty() => Cmd::Brief {
+            task: vec![],
+            json: cli.json,
+            budget: cli.budget,
+        },
+        None => {
+            let q = &cli.query;
+            let now_bucket = now_ms() / DAY_MS;
+            let is_sess = |s: &str| {
+                s.len() >= 6 && s.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
+            };
+            if q.len() == 1 && ladder::parse_window(&q[0], now_bucket).is_some() {
+                Cmd::Zoom { window: q[0].clone(), json: cli.json }
+            } else if is_sess(&q[0])
+                && (q.len() == 1 || (q.len() == 2 && q[1].parse::<u32>().is_ok()))
+            {
+                Cmd::Show {
+                    session: q[0].clone(),
+                    seq: q.get(1).and_then(|s| s.parse().ok()),
+                }
+            } else {
+                let words = q.join(" ");
+                if !cli.json {
+                    println!("{}", ui::h1(&format!("== search: {words:?} ==")));
+                }
+                Cmd::Recall {
+                    query: q.clone(),
+                    limit: 12,
+                    filter: Default::default(),
+                    subject: None,
+                    json: cli.json,
+                }
+            }
+        }
+    };
+
+    match cmd {
+        Cmd::Capture {
             transcript,
             session,
             final_msg,
@@ -207,7 +289,7 @@ fn main() {
             ));
         }
 
-        Cli::Obs {
+        Cmd::Obs {
             subject,
             text,
             from,
@@ -276,12 +358,12 @@ beside the shared db); pass --session",
             ui::note(&format!("recorded → {subject} (support {count})"));
         }
 
-        Cli::Brief { task, json } => {
-            let brief = make_brief!(st, &task.join(" "), now_ms());
+        Cmd::Brief { task, json, budget } => {
+            let brief = make_brief!(st, &task.join(" "), now_ms(), band_budget(budget));
             brief::emit(&brief, json);
         }
 
-        Cli::Recall {
+        Cmd::Recall {
             query,
             limit,
             filter,
@@ -360,7 +442,7 @@ beside the shared db); pass --session",
             }
         }
 
-        Cli::Events { filter, json } => {
+        Cmd::Events { filter, json } => {
             let now = now_ms();
             let mut rows: Vec<(EventId, Envelope)> = st.rtx(|(_, _, _, _, _, ledger)| {
                 ledger
@@ -402,7 +484,7 @@ beside the shared db); pass --session",
             ui::page(&out);
         }
 
-        Cli::Subjects { json } => {
+        Cmd::Subjects { json } => {
             let now = now_ms();
             let mut subj: Vec<(String, SubjStats)> =
                 st.rtx(|(_, _, _, (subjects, _), _, _)| subjects.iter().collect());
@@ -437,8 +519,64 @@ beside the shared db); pass --session",
             }
         }
 
-        Cli::Show { session, seq } => {
+        Cmd::Show { session, seq } => {
             let now = now_ms();
+            let Some(seq) = seq else {
+                // no seq: one session's overview — summary row, its
+                // observations, and the handle to its raw events
+                let found = st.rtx(|(_, _, _, (subjects, evidence), sessions, _ledger)| {
+                    let hit: Option<(String, SessStats)> = sessions
+                        .iter()
+                        .find(|(sess, _): &(String, SessStats)| sess.starts_with(session.as_str()));
+                    let mut obs: Vec<(String, ObsRow)> = Vec::new();
+                    if let Some((sess, _)) = &hit {
+                        for (name, _) in subjects.iter().collect::<Vec<(String, SubjStats)>>() {
+                            for r in evidence.get(&name) {
+                                if r.session == *sess {
+                                    obs.push((name.clone(), r));
+                                }
+                            }
+                        }
+                    }
+                    obs.sort_by_key(|(_, r)| r.ts_ms);
+                    (hit, obs)
+                });
+                let (Some((sess, s)), obs) = found else {
+                    ui::error(&format!("no session matching {session}*"));
+                    std::process::exit(1);
+                };
+                let place = s.cwd.rsplit('/').next().unwrap_or(&s.cwd);
+                println!(
+                    "{} {}",
+                    ui::h1(&format!("== session {} ==", short_sess(&sess))),
+                    ui::dim(&format!(
+                        "{place}{} · {} – {} · {} commits",
+                        if s.branch.is_empty() { String::new() } else { format!(" · {}", s.branch) },
+                        age_label(now, s.start_ms),
+                        age_label(now, s.end_ms),
+                        s.commits
+                    ))
+                );
+                if !s.final_msg.is_empty() {
+                    println!("\n{}\n  {}", ui::h1("closing message:"), clip(&s.final_msg, 400));
+                }
+                if !obs.is_empty() {
+                    println!("\n{}", ui::h1("observations:"));
+                    for (subj, r) in &obs {
+                        println!(
+                            "  {} {}",
+                            ui::dim(&format!(
+                                "[{subj} · {}{}]",
+                                age_label(now, r.ts_ms),
+                                if r.derived_from.is_empty() { "" } else { " · cited" }
+                            )),
+                            r.text
+                        );
+                    }
+                }
+                println!("\n{}", ui::dim(&format!("▸ peat events --session {}", short_sess(&sess))));
+                return;
+            };
             let (hit, citing) = st.rtx(|(_, _, _, (subjects, evidence), sessions, ledger)| {
                 // resolve the session prefix against the small sessions
                 // table, then point-read the ledger — never scan it
@@ -490,7 +628,149 @@ beside the shared db); pass --session",
             }
         }
 
-        Cli::Asof { date, task, json } => {
+        Cmd::Zoom { window, json } => {
+            let now = now_ms();
+            let now_bucket = now / DAY_MS;
+            let Some((start, end, label)) = ladder::parse_window(&window, now_bucket) else {
+                ui::error(&format!(
+                    "not a window: {window:?} (want w33, 2026-w33, 2026-07, 2026-08-14, q3, 2026, or a..b)"
+                ));
+                std::process::exit(1);
+            };
+            let lo_ms = start * DAY_MS;
+            let hi_ms = (end + 1) * DAY_MS;
+            let (head, kids, sess_rows, finals, obs) =
+                st.rtx(|(days, _, _, (subjects, evidence), sessions, ledger)| {
+                    let day_rows: std::collections::BTreeMap<u64, pipeline::DayStats> =
+                        days.iter().collect();
+                    let mut obs_per_day: std::collections::BTreeMap<u64, i64> = Default::default();
+                    let mut obs_rows: Vec<(String, ObsRow)> = Vec::new();
+                    for (name, _) in subjects.iter().collect::<Vec<(String, SubjStats)>>() {
+                        for r in evidence.get(&name) {
+                            *obs_per_day.entry(r.ts_ms / DAY_MS).or_default() += 1;
+                            if (lo_ms..hi_ms).contains(&r.ts_ms) {
+                                obs_rows.push((name.clone(), r));
+                            }
+                        }
+                    }
+                    obs_rows.sort_by_key(|(_, r)| r.ts_ms);
+                    let head = ladder::digest(
+                        &day_rows, &obs_per_day, start, end,
+                        label.clone(), String::new(), String::new(),
+                    );
+                    let kids: Vec<ladder::Band> = ladder::children(start, end)
+                        .into_iter()
+                        .map(|(s, e, l, h)| ladder::digest(&day_rows, &obs_per_day, s, e, l, String::new(), h))
+                        .filter(|b| b.tools + b.commits + b.obs > 0)
+                        .collect();
+                    // sessions overlapping the window, newest first
+                    let mut sess_rows: Vec<(String, SessStats)> = sessions
+                        .iter()
+                        .filter(|(_, s): &(String, SessStats)| s.start_ms < hi_ms && s.end_ms >= lo_ms)
+                        .collect();
+                    sess_rows.sort_by_key(|(_, s)| std::cmp::Reverse(s.end_ms));
+                    // lane B from the ledger mirror: what was said, verbatim
+                    let mut finals: Vec<(EventId, u64, String)> = Vec::new();
+                    for (id, e) in ledger.iter().collect::<Vec<(EventId, Envelope)>>() {
+                        if !(lo_ms..hi_ms).contains(&e.ts_ms) {
+                            continue;
+                        }
+                        match &e.kind {
+                            Event::FinalMsg { text } | Event::CompactSummary { text } => {
+                                finals.push((id, e.ts_ms, text.clone()));
+                            }
+                            _ => {}
+                        }
+                    }
+                    finals.sort_by_key(|(_, ts, _)| std::cmp::Reverse(*ts));
+                    finals.truncate(4);
+                    (head, kids, sess_rows, finals, obs_rows)
+                });
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "window": label, "start_day": start, "end_day": end,
+                        "digest": head, "children": kids,
+                        "sessions": sess_rows.iter().map(|(id, s)| serde_json::json!({
+                            "session": short_sess(id), "cwd": s.cwd, "branch": s.branch,
+                            "commits": s.commits, "start_ms": s.start_ms, "end_ms": s.end_ms,
+                        })).collect::<Vec<_>>(),
+                        "said": finals.iter().map(|(id, ts, t)| serde_json::json!({
+                            "session": short_sess(&id.0), "seq": id.1, "ts_ms": ts, "text": t,
+                        })).collect::<Vec<_>>(),
+                        "observations": obs.iter().map(|(subj, r)| serde_json::json!({
+                            "subject": subj, "session": short_sess(&r.session), "seq": r.seq,
+                            "cited": !r.derived_from.is_empty(), "text": r.text,
+                        })).collect::<Vec<_>>(),
+                    }))
+                    .unwrap()
+                );
+                return;
+            }
+            let fails = if head.fails > 0 { format!(" ({} fail)", head.fails) } else { String::new() };
+            println!(
+                "{} {}",
+                ui::h1(&format!("== {label} ==")),
+                ui::dim(&format!(
+                    "{} tools{fails} · {} commits · {} sessions{}",
+                    head.tools, head.commits, sess_rows.len(),
+                    if head.obs > 0 { format!(" · {} obs", head.obs) } else { String::new() }
+                ))
+            );
+            if !kids.is_empty() {
+                println!("\n{}", ui::h1("within:"));
+                for b in &kids {
+                    let f = if b.fails > 0 { format!(" ({} fail)", b.fails) } else { String::new() };
+                    let files = if b.files.is_empty() { String::new() } else { format!(" · {}", b.files.join(", ")) };
+                    println!(
+                        "  {} {} tools{f} · {} commits{}{files}  {}",
+                        ui::dim(&format!("[{}]", b.label)),
+                        b.tools, b.commits,
+                        if b.obs > 0 { format!(" · {} obs", b.obs) } else { String::new() },
+                        ui::dim(&format!("▸ {}", b.handle)),
+                    );
+                }
+            }
+            if start == end && !sess_rows.is_empty() {
+                println!("\n{}", ui::h1("sessions:"));
+                for (id, s) in &sess_rows {
+                    let place = s.cwd.rsplit('/').next().unwrap_or(&s.cwd);
+                    println!(
+                        "  {} {place} · {} commits  {}",
+                        ui::dim(&format!("[{}]", short_sess(id))),
+                        s.commits,
+                        ui::dim(&format!("▸ peat {}", short_sess(id))),
+                    );
+                }
+            }
+            if !finals.is_empty() {
+                println!("\n{}", ui::h1("closing messages:"));
+                for (id, ts, t) in &finals {
+                    println!(
+                        "  {} {}",
+                        ui::dim(&format!("[{} · {}]", short_sess(&id.0), age_label(now, *ts))),
+                        clip(t, 180)
+                    );
+                }
+            }
+            if !obs.is_empty() {
+                println!("\n{}", ui::h1("observations:"));
+                for (subj, r) in obs.iter().rev().take(8) {
+                    println!(
+                        "  {} {}",
+                        ui::dim(&format!(
+                            "[{subj} · {}{}]",
+                            age_label(now, r.ts_ms),
+                            if r.derived_from.is_empty() { "" } else { " · cited" }
+                        )),
+                        clip(&r.text, 160)
+                    );
+                }
+            }
+        }
+
+        Cmd::Asof { date, task, json } => {
             // end of DATE in the caller's local day, not UTC — the fold
             // never sees timezones; this is the render/capture boundary
             let Some(cutoff) = transcript::local_day_ms(&date, "23:59:59.999") else {
@@ -519,7 +799,7 @@ beside the shared db); pass --session",
                 }
             });
             phase.done();
-            let mut brief = make_brief!(past, &task.join(" "), cutoff);
+            let mut brief = make_brief!(past, &task.join(" "), cutoff, band_budget(None));
             brief.today = format!("{date} · as of that day · {} events", events.len());
             if events.is_empty() {
                 ui::note(&format!(

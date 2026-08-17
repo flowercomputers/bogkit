@@ -17,8 +17,11 @@ current understanding (agent-asserted, newest wins):
   upsert; patched in fork 640ff6f with red-proven regression
 ```
 
-Built for Claude Code's hook system, but the ledger schema and pipeline are
-host-agnostic: anything that can emit events at session boundaries can use it.
+Integration is one settings block and one installed binary; a wake reads in
+~0.13 s over a 44k-event ledger, and the brief stays a bounded read however
+long the history grows. `capture` understands Claude Code transcripts and
+Codex rollouts (format auto-detected, unknown formats rejected). Subagent
+sessions do not fire the peat hooks — only top-level sessions deposit.
 
 ## Design
 
@@ -109,6 +112,22 @@ $ cargo test  -p peat        # 8 tests; one #[ignore]d twin is SUPPOSED to fail 
 
 ## Usage
 
+The learnable surface is two verbs; everything else is reachable from their
+output, because **every line of every read ends in the exact command that
+looks one level deeper**:
+
+```console
+$ peat                      # orient: the brief
+$ peat <thing>              # look closer — shape decides:
+$ peat 2026-w33             #   a window (w33, 2026-07, 2026-08-14, q3, 2026, a..b)
+$ peat 36f96b8d             #   a session (hex id prefix; + seq for one event)
+$ peat fold hnsw fix        #   anything else: search (header names the reading)
+$ peat obs <subj> "<claim>" # deposit one observation
+```
+
+The explicit subcommands below are the unambiguous spellings of the same
+reads, and remain in `--help`.
+
 ### `peat capture <transcript.jsonl>` — ingest a session
 
 ```console
@@ -142,11 +161,31 @@ annotation — `asof` briefs for that day will carry it.
 
 ### `peat brief [task words…]` — the session-start prompt
 
-Renders five sections in trust order: active sessions in the last hour, the
-per-day digest, the last session's closing message, recently touched files,
-fused search hits (with `task words`), and current understanding. With no
-task words the search section is skipped. `--json` emits the full structured
-`BriefJson` instead.
+Renders in trust order: active sessions in the last hour, the per-day
+digest, **the temporal ladder** ("further back"), the last session's closing
+message, recently touched files, fused search hits (with `task words`), and
+current understanding. `--json` emits the full structure.
+
+The ladder is bounded reading over unbounded history: the rest of the past
+as calendar bands that widen geometrically with distance (2 weeks, 2 months,
+2 quarters, years, then one deep-past band), each an extractive digest
+ending in its own descent handle. It is a pure read-time regrouping of the
+materialized day table — nothing stored, nothing to go stale, `asof` gets it
+for free — and `--budget N` (or `PEAT_BRIEF_BUDGET`, default 8) re-slices
+without recomputing anything.
+
+```text
+further back:
+  [w33 · aug 10–14] 3.7k tools (42 fail) · 123 commits · 6 sessions  ▸ peat 2026-w33
+  [jul]             14k tools · 623 commits · 12 sessions            ▸ peat 2026-07
+  [earlier · may 29 – aug 2] 22.9k tools · 878 commits               ▸ peat 2026-05-29..2026-08-02
+```
+
+### `peat zoom <window>` — descend
+
+One window's digest, its children one rung finer (year → months → weeks →
+days → sessions), and the accountable texts inside it: closing messages,
+compaction summaries, observations. `peat <window>` is the short form.
 
 ### `peat recall <query…>` — search, hits only
 

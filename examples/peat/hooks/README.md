@@ -101,3 +101,32 @@ At commit points and task completions, deposit a one-line observation:
 Cite transcript seqs with --from when the belief derives from specific events;
 an uncited obs is visibly a bare assertion.
 ```
+
+## The moment-coverage matrix
+
+Every moment a session can produce or lose knowledge, and the hook that
+covers it:
+
+| moment | hook | mechanical | judged |
+|---|---|---|---|
+| session begins | `SessionStart` | brief injected as context; session id written | — |
+| a commit lands | `PostToolUse` (Bash: `git commit`/`jj describe`/`just land`) | — | nudge: deposit an obs |
+| first stop of the session | `Stop` | capture (`--final-msg` authoritative) | **block once**: deposit 1–3 obs while context is hot |
+| every later stop | `Stop` | capture | silent (marker file `.peat/prompted-<session>`) |
+| context about to compact | `PreCompact` | salvage capture | — |
+| session resumes after compact | `SessionStart` (`source: compact`) | brief | nudge: deposit from the compact summary |
+| `/clear` or other non-Stop ending | `SessionEnd` | salvage capture | — (the session is gone) |
+
+Two behaviors worth knowing:
+
+- **The block hides the reply.** Claude Code renders a `decision:block` by
+  hiding the response the agent just wrote ("1 message hidden"). The reason
+  text compensates: it tells the agent to *restate that reply in full* after
+  depositing, not merely acknowledge the hook. This is a rendering
+  limitation we work around in prose.
+- **Codex parity.** Codex (≥0.147) supports the same hook set and stdin
+  contract, including `decision:block` — snippets port with a
+  transcript-path fallback over `~/.codex/sessions/rollout-*.jsonl`. One
+  gap: Codex's `SessionStart` `source` has no `compact` value, so the
+  post-compact nudge is dormant there; `PreCompact` salvage still covers
+  the mechanical half.
