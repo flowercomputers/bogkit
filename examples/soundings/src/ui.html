@@ -55,7 +55,14 @@
   .sm .mi .x2 { color: var(--faint); padding: 0 4px; }
   .sm .mi .x2:hover { color: #8c3b2e; }
   /* the sounding line: the essay's whole distribution, always on */
-  #sline { margin: 2px 0 18px; }
+  #sline { margin: 2px 0 20px; }
+  #sline .shead { display: flex; gap: 14px; font-family: ui-monospace, Menlo, monospace; font-size: 10.5px; color: var(--faint); margin-bottom: 4px; }
+  #sline .sname { text-transform: uppercase; letter-spacing: .14em; }
+  #sline .scap { font-family: Georgia, serif; font-style: italic; font-size: 12.5px; color: var(--faint); margin-top: 5px; }
+  #sline .scap b { font-style: normal; font-weight: 400; color: var(--ink); }
+  #sline .scap .tk { display: inline-block; width: 2px; height: 11px; background: var(--ink); vertical-align: -2px; margin: 0 3px; }
+  #sline .scap .tkc { display: inline-block; width: 3px; height: 11px; background: #A2231F; vertical-align: -2px; margin: 0 3px; }
+  #sline .scap .tkg { display: inline-block; width: 1px; height: 8px; background: var(--faint); vertical-align: -1px; margin: 0 3px; }
   #sline .rail { position: relative; height: 9px; border-radius: 3px;
     background: linear-gradient(90deg, rgba(63,96,121,.4), rgba(214,206,190,.35), rgba(161,112,28,.4)); }
   #sline .rail i { position: absolute; top: -3px; width: 2px; height: 15px; background: var(--ink); opacity: .75; }
@@ -64,6 +71,12 @@
   #sline .crail i { position: absolute; top: 0; width: 1px; height: 5px; background: var(--faint); opacity: .35; }
   .page.galing #sline { display: none; }
   #constel { position: relative; margin: 4px 0 14px; }
+  #constel .chead { display: flex; gap: 14px; align-items: baseline; font-family: ui-monospace, Menlo, monospace; font-size: 10.5px; color: var(--faint); margin-bottom: 4px; flex-wrap: wrap; }
+  #constel .cname { text-transform: uppercase; letter-spacing: .14em; color: var(--ink); }
+  #ckey .g { display: inline-block; vertical-align: -1px; margin-right: 4px; border-radius: 50%; }
+  #ckey .gi { width: 8px; height: 8px; background: var(--ink); }
+  #ckey .gg { width: 6px; height: 6px; background: #c9bfae; }
+  #ckey .gc { width: 8px; height: 8px; background: var(--paper); border: 2px solid #A2231F; }
   #ccanvas { width: 100%; height: 280px; display: block; background: #fbf7ee; border: 1px solid #d8cfbd; border-radius: 5px; cursor: crosshair; }
   #ctip { position: absolute; z-index: 25; background: var(--card); border: 1px solid var(--line); border-radius: 4px;
     padding: 7px 10px; font-size: 12px; line-height: 1.45; max-width: 250px; pointer-events: none;
@@ -116,8 +129,7 @@
   .lanehead .ramp { display: inline-block; width: 72px; height: 6px; border-radius: 3px; vertical-align: -1px; margin: 0 6px 0 2px; position: relative;
     background: linear-gradient(90deg, rgba(63,96,121,.55), rgba(214,206,190,.45), rgba(161,112,28,.55)); }
   .lanehead .ramp i { position: absolute; top: -2.5px; width: 10px; height: 10px; border-radius: 50%; background: var(--ink); border: 2px solid var(--paper); margin-left: -5px; }
-  .lane { transition: transform .45s cubic-bezier(.22,1,.36,1); }
-  @media (prefers-reduced-motion: reduce) { .lane { transition: none; } }
+
   #voice .hit { background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: 11px 13px; margin-bottom: 9px; }
   #voice .hit .t { font-size: 15px; line-height: 1.55; }
   #voice .hit .ttl { font-family: Georgia, serif; font-size: 12px; color: var(--ink); margin-top: 7px; }
@@ -327,14 +339,17 @@
       <button id="galechip" title="replay scripted edits at 60/s for 10s against a naive full-rescan arm">▶ gale</button>
     </div>
     <div id="constel" hidden>
+      <div class="chead"><span class="cname">the constellation</span><span class="chow">every sentence is a point · left = concrete, right = abstract · empty space = where nobody has written</span></div>
       <canvas id="ccanvas"></canvas>
       <div id="ctip" hidden></div>
       <div id="ckey" class="lenskey"></div>
     </div>
     <div class="lenskey" id="lenskey"></div>
-    <div id="sline" hidden title="every sentence of this essay as a tick on the concrete——abstract line · grey beneath: the active library's distribution">
+    <div id="sline" hidden>
+      <div class="shead"><span class="sname">the sounding line</span><span class="send">⟵ concrete</span><span class="send" style="margin-left:auto">abstract ⟶</span></div>
       <div class="rail" id="srail"></div>
       <div class="crail" id="scrail"></div>
+      <div class="scap" id="scap"></div>
     </div>
     <div id="doc" contenteditable="plaintext-only" spellcheck="false"></div>
     <div class="tile" id="foldtile"></div>
@@ -481,6 +496,7 @@ function renderSline() {
     if (caretRow && r.id === caretRow.id) i.className = "caret";
     return i;
   }));
+  $("scap").innerHTML = `each<span class="tk"></span>is one of your ${state.rows.length} sentences on the concrete——abstract line · <span class="tkc"></span>your caret · <span class="tkg"></span>beneath: how <b>${esc(libNoun())}</b> distributes on the same line`;
   const key = lib.id;
   if (slineCloudDrawn !== key) {
     fetchCloud().then(() => {
@@ -752,7 +768,6 @@ function penFollow() {
   $("voicehead").innerHTML = row
     ? `Nearest voices — at your caret<span class="stat"><span class="ramp"><i style="left:${(row.t * 100).toFixed(0)}%"></i></span>t ${row.t.toFixed(2)} · ${row.words} words${row.pct != null ? ` · ${ordinal(row.pct)} pct of ${esc(libNoun())}` : ""}</span>`
     : `Nearest voices — following your pen<span class="stat"></span>`;
-  laneFollow(row);
   renderSline();
   renderPullRow();
   fetchVoice(cs.text, row ? row.id : null);
@@ -831,24 +846,6 @@ async function askRestyle(opts) {
     box.innerHTML = "";
   };
   box.querySelector(".dismiss").onclick = () => (box.innerHTML = "");
-}
-
-// the margin listens to where the pen is: the lane glides down to sit
-// beside the caret's sentence (Wattenberger's move; sticky fallback <1020px)
-function laneFollow(row) {
-  const lane = document.querySelector(".lane");
-  if (!lane || window.innerWidth < 1020) return;
-  let y = 0;
-  if (row) {
-    const top = chipTop($("doc"), row);
-    if (top != null) {
-      const docTop = $("doc").getBoundingClientRect().top + window.scrollY;
-      const laneTop = lane.parentElement.getBoundingClientRect().top + window.scrollY;
-      y = Math.max(0, docTop + top - laneTop - 8);
-      y = Math.min(y, Math.max(0, document.body.scrollHeight - laneTop - lane.offsetHeight - 40));
-    }
-  }
-  lane.style.transform = `translateY(${y}px)`;
 }
 
 // ---------- instruments: the machinery is passive until surfaced ----------
@@ -1329,7 +1326,7 @@ function drawConstel() {
   g.textAlign = "right"; g.fillText("⟶ abstract", W - 14, H - 6); g.textAlign = "left";
   const yl = anch ? anch.name : "length (words)";
   g.save(); g.translate(10, H / 2); g.rotate(-Math.PI / 2); g.textAlign = "center"; g.fillText(yl, 0, 0); g.restore();
-  $("ckey").textContent = `${state.rows.length} of yours (ink, in reading order) over ${grey.length.toLocaleString()} from ${libNoun()} (grey) · every point is a maintained score — the plot is a free read`;
+  $("ckey").innerHTML = `<span class="g gi"></span><b>yours</b> — ${state.rows.length} sentences, the dashed path is reading order · <span class="g gg"></span>${grey.length.toLocaleString()} from ${esc(libNoun())} · <span class="g gc"></span>your caret · click any of yours to jump there`;
 }
 $("ccanvas").addEventListener("mousemove", (e) => {
   const rect = $("ccanvas").getBoundingClientRect();
