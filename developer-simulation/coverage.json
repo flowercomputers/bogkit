@@ -832,16 +832,56 @@
       "components_used": [],
       "outcome": "no_fit",
       "report": "reports/2026-08-17.md"
+    },
+    {
+      "date": "2026-08-18",
+      "slug": "laboratory-unit-conversion-gate",
+      "persona": "healthcare-interface developer with eight years of Java and SQL and four months of Rust",
+      "domain": "exact laboratory-unit conversion admission",
+      "constraints": [
+        "authoritative PostgreSQL and Java conversion behavior with exact rational affine transforms and round-half-to-even",
+        "one million observations, 12,000 mappings, 20,000 generated arithmetic cases, and five full input shuffles",
+        "complete reference validation, bounded lines, stable privacy-safe reasons, and atomic canonical report publication",
+        "two CPU cores, 256 MiB memory, 30-second full-run target, and same-host Java comparison"
+      ],
+      "components_considered": [
+        "fold",
+        "ese",
+        "anny"
+      ],
+      "components_used": [],
+      "outcome": "no_fit",
+      "report": "reports/2026-08-18.md"
+    },
+    {
+      "date": "2026-08-18",
+      "slug": "freight-capacity-batch-clearing",
+      "persona": "freight-marketplace backend developer with six years of Ruby and PostgreSQL and five months of Rust",
+      "domain": "deterministic freight-capacity marketplace batch clearing",
+      "constraints": [
+        "PostgreSQL remains authoritative while advisory price-time clearing must ignore input order",
+        "650,000 orders across 5,000 markets with checked conservation, gross value, and a 645,000-fill cap",
+        "ten full shuffles, exact slow-reference comparison, bounded line reading, and atomic canonical proposal publication",
+        "two CPU cores, 512 MiB memory, 20-second full-run target, and same-host Ruby median comparison"
+      ],
+      "components_considered": [
+        "fold",
+        "ese",
+        "anny"
+      ],
+      "components_used": [],
+      "outcome": "no_fit",
+      "report": "reports/2026-08-18.md"
     }
   ],
   "recurring_findings": [
     {
       "id": "document-storage-and-concurrency-boundaries",
       "category": "documentation gap",
-      "independent_trial_count": 36,
+      "independent_trial_count": 38,
       "confidence": "high",
       "candidate": true,
-      "summary": "The public onboarding should distinguish embedded source-of-truth use from external databases and calendar or cache body-store handoffs, external network authorities and cooperative filesystem protocols, horizontal or partitioned deployment, durable leases and ordered purges, strict disk quotas, raw-flash firmware and fixed controller images, atomic broker-offset ownership, exact recursive graph workloads, bounded stateless stream or geometry transformations, exact synchronous protocol framing, and immutable externally mergeable partial-state batch rollups that do not benefit from durable state.",
+      "summary": "The public onboarding should distinguish embedded source-of-truth use from external databases and calendar or cache body-store handoffs, external network authorities and cooperative filesystem protocols, horizontal or partitioned deployment, durable leases and ordered purges, strict disk quotas, raw-flash firmware and fixed controller images, atomic broker-offset ownership, exact recursive graph workloads, bounded stateless stream or geometry transformations, exact synchronous protocol framing, immutable externally mergeable partial-state batch rollups, exact numeric admission transforms, and deterministic one-shot market clearing that do not benefit from durable state.",
       "smallest_improvement": "Add a concise component, storage, transaction, concurrency, operating-system, and hard-limit capability matrix.",
       "sources": [
         "purchase-audit",
@@ -879,7 +919,9 @@
         "causal-canvas-compaction",
         "transparency-checkpoint-verifier",
         "corruption-resynchronizing-instrument-stream-decoder",
-        "mergeable-unique-installation-reach-rollups"
+        "mergeable-unique-installation-reach-rollups",
+        "laboratory-unit-conversion-gate",
+        "freight-capacity-batch-clearing"
       ]
     },
     {
