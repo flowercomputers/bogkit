@@ -2,18 +2,29 @@
 
 This repo contains some of the tooling we've been working on for building Bog style databases. We've collected these tools and examples in one cargo workspace, so you can start building immediately. 
 
-The best way to create your project is to run this terminal command in the root of this repo:
+The best way to create your project is the `bogkit` CLI, from the root of this repo:
 
 ```console
-$ ./scripts/new-project.sh [project-name]
-``` 
+$ cargo run -p bogkit -- new [project-name]
+```
 
-This creates a new binary crate in `examples/[project-name]`, wires it into the workspace, and adds local path dependencies on `fold`, `anny`, and `ese` (though you may not necessarily use all of these).
+This creates a new binary crate in `examples/[project-name]` with local path dependencies on the workspace crates. Two flavors:
+
+- `--kind server` (the default) — a fold pipeline served over HTTP by `bog-serve`: writes, reads, search, and a live OpenAPI doc, all generated from the pipeline itself.
+- `--kind embedded` — a plain Rust binary using fold directly (what `scripts/new-project.sh` used to produce; the script still works).
 
 Run your project with:
 
 ```console
-$ cargo run -p [project-name]
+$ cargo run -p bogkit -- dev -p [project-name]
+```
+
+`dev` wraps `cargo run` with the bogkit conventions: a stable data dir in `~/.bogkit/data/[project-name]` (pass `--fresh` to wipe it) and `$PORT` (default 7877). For server projects, explore the API with:
+
+```console
+$ cargo run -p bogkit -- api          # pretty-prints the running server's /openapi.json
+$ curl localhost:7877/views/total
+$ curl -N localhost:7877/watch        # server-sent events, one per commit
 ```
 
 ## Documentation
@@ -45,6 +56,12 @@ ESE, our first take on a compiler oriented approach to static embedding. It’s 
 ### Approximate Nearest Neighbors... yeah (ANNy)
 This is a very fast crate for creating HNSWs.
 
+### bog-serve
+Serve any fold pipeline over HTTP with the API generated from the pipeline itself: the input type describes the write routes (via schemars), the named terminal sinks describe the read routes, and the OpenAPI doc is assembled from the same values the router dispatches with — so it can't drift. Atomic batches, hybrid search, SSE watch streams, and custom routes included. See `serve/` and the crate rustdocs (`cargo doc --open -p bog-serve`).
+
+### bogkit CLI
+Scaffolding and a dev runner for BogKit projects (`cli/`): `bogkit new`, `bogkit dev`, `bogkit api`.
+
 ### Examples
 In this directory you'll find a few examples that show bog style databases in various use cases.
 
@@ -52,6 +69,7 @@ In this directory you'll find a few examples that show bog style databases in va
 - `timeseries` — weather readings bucketed into hourly and daily aggregates, updated incrementally. `cargo run -p timeseries`
 - `chat` — a chat backend where fold is the source of truth and every update is broadcast to clients over a websocket. `cargo run -p chat`, then open http://localhost:3000
 - `search` — text search three ways over one document stream: BM25 keyword search, HNSW semantic search over ese embeddings, and hybrid rank fusion. A good base for agent memory or document search projects. `cargo run -p search`
+- `search-server` — the search example served over HTTP by bog-serve: the same pipeline plus generated CRUD/search routes, a custom `/search/hybrid` fusion endpoint, and a live OpenAPI doc. `cargo run -p search-server`, then `curl localhost:7877/openapi.json`
 
 ## More about Bog
 Bog is a database runtime that makes every attempt to do as much work as possible as early as possible, to make reads incredibly fast. This means compiling queries into functions that eagerly update their output as mutations occur.

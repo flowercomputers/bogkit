@@ -75,6 +75,7 @@ use serde::de::DeserializeOwned;
 pub struct App<D: Clone, P: Push<D>> {
     stream: Stream<D, P>,
     custom: Vec<(String, CustomHandler<D, P>)>,
+    db_path: std::path::PathBuf,
 }
 
 impl<D, P> App<D, P>
@@ -88,8 +89,9 @@ where
     /// prior state.
     pub fn stream(path: impl AsRef<std::path::Path>, pipeline: P) -> Self {
         App {
-            stream: Stream::new(path, pipeline),
+            stream: Stream::new(&path, pipeline),
             custom: Vec::new(),
+            db_path: path.as_ref().to_path_buf(),
         }
     }
 
@@ -111,8 +113,12 @@ where
 
     /// Every generated route as an [`axum::Router`], no listener attached.
     /// This is the seam tests drive requests through.
+    ///
+    /// # Panics
+    /// If the data dir was written by a different pipeline (schema
+    /// fingerprint mismatch) — see the `/schema` route.
     pub fn into_router(self) -> axum::Router {
-        http::router(self.stream, self.custom)
+        http::router(self.stream, self.custom, &self.db_path)
     }
 
     /// Serve on `0.0.0.0:$PORT` (default 7877), blocking forever.
@@ -127,6 +133,7 @@ where
 pub struct KeyedApp<K: Clone, V: Clone, P: Push<Keyed<K, V>>> {
     stream: KeyedStream<K, V, P>,
     custom: Vec<(String, CustomHandler<Keyed<K, V>, P>)>,
+    db_path: std::path::PathBuf,
 }
 
 impl<K, V, P> KeyedApp<K, V, P>
@@ -140,8 +147,9 @@ where
     /// receives [`Keyed`]`<K, V>` deltas — in a server.
     pub fn stream(path: impl AsRef<std::path::Path>, pipeline: P) -> Self {
         KeyedApp {
-            stream: KeyedStream::new(path, pipeline),
+            stream: KeyedStream::new(&path, pipeline),
             custom: Vec::new(),
+            db_path: path.as_ref().to_path_buf(),
         }
     }
 
@@ -159,8 +167,12 @@ where
     }
 
     /// Every generated route as an [`axum::Router`], no listener attached.
+    ///
+    /// # Panics
+    /// If the data dir was written by a different pipeline (schema
+    /// fingerprint mismatch) — see the `/schema` route.
     pub fn into_router(self) -> axum::Router {
-        http::router_keyed(self.stream, self.custom)
+        http::router_keyed(self.stream, self.custom, &self.db_path)
     }
 
     /// Serve on `0.0.0.0:$PORT` (default 7877), blocking forever.

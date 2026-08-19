@@ -321,7 +321,15 @@ impl<K, V> InvertedIndex<K, V> {
 pub struct InvertedIndexReader<'tx, R: Readable, K, V> {
     tx: &'tx R,
     ks: fjall::SingleWriterTxKeyspace,
+    name: String,
     _p: PhantomData<(K, V)>,
+}
+
+impl<'tx, R: Readable, K, V> InvertedIndexReader<'tx, R, K, V> {
+    /// The sink name this reader serves, as given to [`InvertedIndex::new`].
+    pub fn name(&self) -> &str {
+        &self.name
+    }
 }
 
 impl<'tx, R: Readable, K: DeserializeOwned, V: Serialize> InvertedIndexReader<'tx, R, K, V> {
@@ -377,6 +385,7 @@ where
         InvertedIndexReader {
             tx,
             ks: self.ks.clone().unwrap(),
+            name: self.name.clone(),
             _p: PhantomData,
         }
     }
@@ -411,7 +420,15 @@ impl<K, V> Multimap<K, V> {
 pub struct MultimapReader<'tx, R: Readable, K, V> {
     tx: &'tx R,
     ks: fjall::SingleWriterTxKeyspace,
+    name: String,
     _p: PhantomData<(K, V)>,
+}
+
+impl<'tx, R: Readable, K, V> MultimapReader<'tx, R, K, V> {
+    /// The sink name this reader serves, as given to [`Multimap::new`].
+    pub fn name(&self) -> &str {
+        &self.name
+    }
 }
 
 impl<'tx, R: Readable, K: Serialize, V: DeserializeOwned> MultimapReader<'tx, R, K, V> {
@@ -468,6 +485,7 @@ where
         MultimapReader {
             tx,
             ks: self.ks.clone().unwrap(),
+            name: self.name.clone(),
             _p: PhantomData,
         }
     }

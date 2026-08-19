@@ -55,6 +55,8 @@ fn page_params() -> Value {
     json!([
         { "name": "limit", "in": "query", "schema": { "type": "integer" } },
         { "name": "offset", "in": "query", "schema": { "type": "integer" } },
+        { "name": "desc", "in": "query", "schema": { "type": "boolean" },
+          "description": "list highest-first (ordered views only)" },
     ])
 }
 
@@ -166,22 +168,38 @@ pub(crate) fn openapi_doc(
     }
 
     for spec in specs {
-        // count views return one item; bag and table views return a page
-        let (data, summary) = match spec.kind {
-            "count" => (spec.item_schema.clone(), "read this view".to_string()),
-            _ => (
-                json!({ "type": "array", "items": spec.item_schema }),
-                format!("list this {} view (paginated)", spec.kind),
-            ),
-        };
-        let mut get = json!({
-            "summary": summary,
-            "responses": json_response("one consistent snapshot", envelope(data)),
-        });
-        if spec.kind != "count" {
-            get["parameters"] = page_params();
+        // single-object views return one item; list-shaped views a page.
+        // Point-lookup-only views (multimap, inverted index) and searched
+        // views (bm25, hnsw) have no listing GET, so don't document one.
+        let single = matches!(spec.kind, "count" | "stats" | "histogram");
+        let point_only = matches!(spec.kind, "multimap" | "inverted_index");
+        if !point_only && spec.search.is_none() {
+            let (data, summary) = if single {
+                (spec.item_schema.clone(), "read this view".to_string())
+            } else {
+                (
+                    json!({ "type": "array", "items": spec.item_schema }),
+                    format!("list this {} view (paginated)", spec.kind),
+                )
+            };
+            let mut get = json!({
+                "summary": summary,
+                "responses": json_response("one consistent snapshot", envelope(data)),
+            });
+            if !single || spec.kind == "histogram" {
+                get["parameters"] = page_params();
+            }
+            paths.insert(format!("/views/{}", spec.name), json!({ "get": get }));
+
+            paths.insert(
+                format!("/views/{}/watch", spec.name),
+                json!({ "get": {
+                    "summary": "server-sent events: this view's fresh payload after every commit \
+                                (?limit/?desc shape the read)",
+                    "responses": { "200": { "description": "text/event-stream" } },
+                } }),
+            );
         }
-        paths.insert(format!("/views/{}", spec.name), json!({ "get": get }));
 
         if spec.keyed {
             paths.insert(

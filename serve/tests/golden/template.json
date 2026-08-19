@@ -1,0 +1,319 @@
+{
+  "info": {
+    "description": "auto-generated HTTP API over a fold pipeline",
+    "title": "bog-serve",
+    "version": "0.0.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/batch": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "items": {
+                  "properties": {
+                    "data": {
+                      "$schema": "https://json-schema.org/draft/2020-12/schema",
+                      "properties": {
+                        "text": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "text"
+                      ],
+                      "title": "Entry",
+                      "type": "object"
+                    },
+                    "op": {
+                      "enum": [
+                        "insert",
+                        "remove"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "op",
+                    "data"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "seq": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "seq"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "committed atomically"
+          }
+        },
+        "summary": "apply a mix of inserts and removes in one atomic transaction"
+      }
+    },
+    "/healthz": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "ok"
+          }
+        },
+        "summary": "liveness probe"
+      }
+    },
+    "/insert": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "text"
+                ],
+                "title": "Entry",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "seq": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "seq"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "committed atomically"
+          }
+        },
+        "summary": "insert one record into the pipeline"
+      }
+    },
+    "/remove": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "text"
+                ],
+                "title": "Entry",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "seq": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "seq"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "committed atomically"
+          }
+        },
+        "summary": "retract one record: every view rolls back as if it was never inserted"
+      }
+    },
+    "/views/entries": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "list highest-first (ordered views only)",
+            "in": "query",
+            "name": "desc",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "items": {
+                        "properties": {
+                          "count": {
+                            "type": "integer"
+                          },
+                          "value": {
+                            "$schema": "https://json-schema.org/draft/2020-12/schema",
+                            "properties": {
+                              "text": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "text"
+                            ],
+                            "title": "Entry",
+                            "type": "object"
+                          }
+                        },
+                        "required": [
+                          "value",
+                          "count"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "seq": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "seq",
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "one consistent snapshot"
+          }
+        },
+        "summary": "list this bag view (paginated)"
+      }
+    },
+    "/views/entries/watch": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "text/event-stream"
+          }
+        },
+        "summary": "server-sent events: this view's fresh payload after every commit (?limit/?desc shape the read)"
+      }
+    },
+    "/views/total": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "properties": {
+                        "value": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "value"
+                      ],
+                      "type": "object"
+                    },
+                    "seq": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "seq",
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "one consistent snapshot"
+          }
+        },
+        "summary": "read this view"
+      }
+    },
+    "/views/total/watch": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "text/event-stream"
+          }
+        },
+        "summary": "server-sent events: this view's fresh payload after every commit (?limit/?desc shape the read)"
+      }
+    },
+    "/watch": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "text/event-stream"
+          }
+        },
+        "summary": "server-sent events: one {\"seq\": n} event per commit"
+      }
+    }
+  }
+}

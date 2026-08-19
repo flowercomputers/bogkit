@@ -103,6 +103,7 @@ impl<D: Clone, F: Fn(&D) -> f64> Push<D> for Stats<D, F> {
         StatsReader {
             tx,
             ks: self.ks.clone().unwrap(),
+            name: self.name.clone(),
         }
     }
 }
@@ -111,9 +112,15 @@ impl<D: Clone, F: Fn(&D) -> f64> Push<D> for Stats<D, F> {
 pub struct StatsReader<'tx, R: Readable> {
     tx: &'tx R,
     ks: fjall::SingleWriterTxKeyspace,
+    name: String,
 }
 
 impl<'tx, R: Readable> StatsReader<'tx, R> {
+    /// The sink name this reader serves, as given to [`Stats::new`].
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
     fn get(&self) -> (i64, f64, f64) {
         self.tx
             .get(&self.ks, [0])

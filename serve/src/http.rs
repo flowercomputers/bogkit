@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::convert::Infallible;
 use std::sync::{Arc, RwLock};
 
+use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -109,6 +110,7 @@ where
 pub(crate) fn router<D, P>(
     stream: Stream<D, P>,
     custom: Vec<(String, CustomHandler<D, P>)>,
+    db_path: &std::path::Path,
 ) -> Router
 where
     D: Clone + Send + Sync + DeserializeOwned + JsonSchema + 'static,
@@ -123,6 +125,9 @@ where
     let input_schema = schema_of::<D>();
     let custom_paths: Vec<String> = custom.iter().map(|(p, _)| p.clone()).collect();
 
+    let schema = crate::openapi::schema_doc(&input_schema, &specs, WriteStyle::Unkeyed);
+    check_fingerprint(db_path, &schema);
+
     let shared = Arc::new(Shared {
         docs: Docs {
             openapi: crate::openapi::openapi_doc(
@@ -131,7 +136,7 @@ where
                 WriteStyle::Unkeyed,
                 &custom_paths,
             ),
-            schema: crate::openapi::schema_doc(&input_schema, &specs, WriteStyle::Unkeyed),
+            schema,
         },
         notify: watch::channel(0).0,
         inner: RwLock::new(Inner { stream, seq: 0 }),
@@ -182,20 +187,34 @@ where
     seq
 }
 
-async fn insert<D, P>(State(shared): State<Arc<Shared<D, P>>>, Json(data): Json<D>) -> Response
+async fn insert<D, P>(
+    State(shared): State<Arc<Shared<D, P>>>,
+    body: Result<Json<D>, JsonRejection>,
+) -> Response
 where
     D: Clone + Send + Sync + DeserializeOwned + 'static,
     P: Push<D> + Send + Sync + 'static,
 {
+    let data = match require_json(body) {
+        Ok(d) => d,
+        Err(resp) => return resp,
+    };
     let seq = write(&shared, |tx| tx.insert(&data));
     Json(json!({ "seq": seq })).into_response()
 }
 
-async fn remove<D, P>(State(shared): State<Arc<Shared<D, P>>>, Json(data): Json<D>) -> Response
+async fn remove<D, P>(
+    State(shared): State<Arc<Shared<D, P>>>,
+    body: Result<Json<D>, JsonRejection>,
+) -> Response
 where
     D: Clone + Send + Sync + DeserializeOwned + 'static,
     P: Push<D> + Send + Sync + 'static,
 {
+    let data = match require_json(body) {
+        Ok(d) => d,
+        Err(resp) => return resp,
+    };
     let seq = write(&shared, |tx| tx.remove(&data));
     Json(json!({ "seq": seq })).into_response()
 }
@@ -211,7 +230,7 @@ enum Op<D> {
 
 async fn batch<D, P>(
     State(shared): State<Arc<Shared<D, P>>>,
-    Json(ops): Json<Vec<Op<D>>>,
+    body: Result<Json<Vec<Op<D>>>, JsonRejection>,
 ) -> Response
 where
     D: Clone + Send + Sync + DeserializeOwned + 'static,
@@ -219,6 +238,10 @@ where
 {
     // the whole body deserialized before the transaction opens: a malformed
     // batch is rejected in full, a well-formed one commits in full
+    let ops = match require_json(body) {
+        Ok(ops) => ops,
+        Err(resp) => return resp,
+    };
     let applied = ops.len();
     let seq = write(&shared, |tx| {
         for op in &ops {
@@ -268,6 +291,7 @@ where
 pub(crate) fn router_keyed<K, V, P>(
     stream: KeyedStream<K, V, P>,
     custom: Vec<(String, CustomHandler<Keyed<K, V>, P>)>,
+    db_path: &std::path::Path,
 ) -> Router
 where
     K: Clone + Send + Sync + Serialize + DeserializeOwned + JsonSchema + 'static,
@@ -287,10 +311,13 @@ where
         key_schema: &key_schema,
     };
 
+    let schema = crate::openapi::schema_doc(&input_schema, &specs, style);
+    check_fingerprint(db_path, &schema);
+
     let shared = Arc::new(SharedKeyed {
         docs: Docs {
             openapi: crate::openapi::openapi_doc(&input_schema, &specs, style, &custom_paths),
-            schema: crate::openapi::schema_doc(&input_schema, &specs, style),
+            schema,
         },
         notify: watch::channel(0).0,
         inner: RwLock::new(InnerKeyed { stream, seq: 0 }),
@@ -348,13 +375,17 @@ where
 async fn put_doc<K, V, P>(
     State(shared): State<Arc<SharedKeyed<K, V, P>>>,
     Path(raw): Path<String>,
-    Json(data): Json<V>,
+    body: Result<Json<V>, JsonRejection>,
 ) -> Response
 where
     K: Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
     V: Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
     P: Push<Keyed<K, V>> + Send + Sync + 'static,
 {
+    let data = match require_json(body) {
+        Ok(d) => d,
+        Err(resp) => return resp,
+    };
     let Some(key) = parse_key::<K>(&raw) else {
         return error(StatusCode::BAD_REQUEST, key_parse_msg(&raw));
     };
@@ -412,13 +443,17 @@ enum KeyedOp<K, V> {
 
 async fn batch_keyed<K, V, P>(
     State(shared): State<Arc<SharedKeyed<K, V, P>>>,
-    Json(ops): Json<Vec<KeyedOp<K, V>>>,
+    body: Result<Json<Vec<KeyedOp<K, V>>>, JsonRejection>,
 ) -> Response
 where
     K: Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
     V: Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
     P: Push<Keyed<K, V>> + Send + Sync + 'static,
 {
+    let ops = match require_json(body) {
+        Ok(ops) => ops,
+        Err(resp) => return resp,
+    };
     let applied = ops.len();
     let (seq, ()) = write_keyed(&shared, |tx| {
         for op in &ops {
@@ -445,11 +480,12 @@ fn read_routes<S: ViewSource>() -> Router<Arc<S>> {
     Router::new()
         .route("/healthz", get(async || "ok"))
         .route("/views/{name}", get(view_list::<S>))
-        // static "search" outranks the {key} capture in axum's router
+        // static "search"/"watch" outrank the {key} capture in axum's router
         .route(
             "/views/{name}/search",
             get(search_get::<S>).post(search_post::<S>),
         )
+        .route("/views/{name}/watch", get(watch_view::<S>))
         .route("/views/{name}/{key}", get(view_key::<S>))
         .route("/openapi.json", get(serve_openapi::<S>))
         .route("/schema", get(serve_schema::<S>))
@@ -460,18 +496,29 @@ fn read_routes<S: ViewSource>() -> Router<Arc<S>> {
 struct Page {
     limit: Option<usize>,
     offset: Option<usize>,
+    desc: Option<bool>,
+}
+
+impl Page {
+    fn query(&self) -> ViewQuery {
+        ViewQuery::list(
+            self.limit.unwrap_or(DEFAULT_LIMIT),
+            self.offset.unwrap_or(0),
+            self.desc.unwrap_or(false),
+        )
+    }
 }
 
 async fn view_list<S: ViewSource>(
     State(shared): State<Arc<S>>,
     Path(name): Path<String>,
-    Query(page): Query<Page>,
+    page: Result<Query<Page>, QueryRejection>,
 ) -> Response {
-    let q = ViewQuery::list(
-        page.limit.unwrap_or(DEFAULT_LIMIT),
-        page.offset.unwrap_or(0),
-    );
-    respond(shared.view(&name, &q))
+    let page = match require_query(page) {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    respond(shared.view(&name, &page.query()))
 }
 
 async fn view_key<S: ViewSource>(
@@ -490,8 +537,12 @@ struct SearchParams {
 async fn search_get<S: ViewSource>(
     State(shared): State<Arc<S>>,
     Path(name): Path<String>,
-    Query(p): Query<SearchParams>,
+    params: Result<Query<SearchParams>, QueryRejection>,
 ) -> Response {
+    let p = match require_query(params) {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
     let q = ViewQuery::search(p.q, None, p.k.unwrap_or(DEFAULT_K));
     respond(shared.view(&name, &q))
 }
@@ -505,10 +556,54 @@ struct SearchBody {
 async fn search_post<S: ViewSource>(
     State(shared): State<Arc<S>>,
     Path(name): Path<String>,
-    Json(body): Json<SearchBody>,
+    body: Result<Json<SearchBody>, JsonRejection>,
 ) -> Response {
+    let body = match require_json(body) {
+        Ok(b) => b,
+        Err(resp) => return resp,
+    };
     let q = ViewQuery::search(None, Some(body.vector), body.k.unwrap_or(DEFAULT_K));
     respond(shared.view(&name, &q))
+}
+
+/// Watch one view: an SSE stream that re-reads the view after every commit
+/// and pushes the fresh `{seq, data}` payload. `?limit`/`?desc` shape the
+/// read, so `/views/leaderboard/watch?desc=true&limit=10` is a live top-10.
+async fn watch_view<S: ViewSource>(
+    State(shared): State<Arc<S>>,
+    Path(name): Path<String>,
+    page: Result<Query<Page>, QueryRejection>,
+) -> Response {
+    let page = match require_query(page) {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    let q = page.query();
+    // probe once so a bad view name is an immediate 404, not a silent stream
+    match shared.view(&name, &q).1 {
+        ViewRead::NotFound => return error(StatusCode::NOT_FOUND, "not found"),
+        ViewRead::BadRequest(msg) => return error(StatusCode::BAD_REQUEST, msg),
+        ViewRead::Data(_) => {}
+    }
+
+    let events = tokio_stream::wrappers::WatchStream::new(shared.subscribe()).map(move |_| {
+        // re-read rather than reuse the probe: each commit notification
+        // triggers a fresh consistent snapshot of this view
+        let (seq, out) = shared.view(&name, &q);
+        let data = match out {
+            ViewRead::Data(data) => data,
+            // can't happen after a successful probe; keep the stream alive
+            _ => Value::Null,
+        };
+        Ok::<_, Infallible>(
+            Event::default()
+                .id(seq.to_string())
+                .data(json!({ "seq": seq, "data": data }).to_string()),
+        )
+    });
+    Sse::new(events)
+        .keep_alive(KeepAlive::default())
+        .into_response()
 }
 
 async fn serve_openapi<S: ViewSource>(State(shared): State<Arc<S>>) -> Response {
@@ -541,6 +636,29 @@ fn respond((seq, outcome): (u64, ViewRead)) -> Response {
     }
 }
 
+/// Unwrap a JSON body or produce the standard error shape. The rejection's
+/// text carries serde's message, which names the offending field.
+fn require_json<T>(body: Result<Json<T>, JsonRejection>) -> Result<T, Response> {
+    match body {
+        Ok(Json(v)) => Ok(v),
+        Err(rej) => Err(error(
+            StatusCode::BAD_REQUEST,
+            format!("invalid body: {}", rej.body_text()),
+        )),
+    }
+}
+
+/// Unwrap query parameters or produce the standard error shape.
+fn require_query<T>(query: Result<Query<T>, QueryRejection>) -> Result<T, Response> {
+    match query {
+        Ok(Query(v)) => Ok(v),
+        Err(rej) => Err(error(
+            StatusCode::BAD_REQUEST,
+            format!("invalid query: {}", rej.body_text()),
+        )),
+    }
+}
+
 fn respond_custom(seq: u64, out: CustomResult) -> Response {
     match out {
         Ok(data) => Json(json!({ "seq": seq, "data": data })).into_response(),
@@ -553,4 +671,40 @@ fn respond_custom(seq: u64, out: CustomResult) -> Response {
 
 fn error(status: StatusCode, msg: impl Into<String>) -> Response {
     (status, Json(json!({ "error": msg.into() }))).into_response()
+}
+
+/// Guard a data dir against pipeline drift. The schema fingerprint is
+/// persisted in a sidecar file (`<data dir>.schema`) on first open; a
+/// mismatch on a later open means the pipeline's input type or sink
+/// structure changed, and reads through the new pipeline could silently
+/// misinterpret persisted state — so refuse to start, loudly.
+fn check_fingerprint(db_path: &std::path::Path, schema: &Value) {
+    let fingerprint = schema["fingerprint"].as_str().unwrap();
+    let mut marker = db_path.as_os_str().to_owned();
+    marker.push(".schema");
+
+    match std::fs::read_to_string(&marker) {
+        Ok(stored) if stored.trim() == fingerprint => {}
+        Ok(stored) => panic!(
+            "pipeline changed since this data dir was written\n\
+             \n\
+             data dir:            {}\n\
+             stored fingerprint:  {}\n\
+             current fingerprint: {}\n\
+             \n\
+             The input type or sink structure no longer matches the persisted\n\
+             state. Either restore the previous pipeline, or start fresh\n\
+             (`bogkit dev --fresh`, or delete the data dir and its .schema file).",
+            db_path.display(),
+            stored.trim(),
+            fingerprint,
+        ),
+        // first open (or unreadable marker): record the fingerprint;
+        // best-effort — a read-only fs shouldn't stop the server
+        Err(_) => {
+            if let Err(e) = std::fs::write(&marker, fingerprint) {
+                eprintln!("bog-serve: could not persist schema fingerprint: {e}");
+            }
+        }
+    }
 }

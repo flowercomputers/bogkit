@@ -377,6 +377,8 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "clap",
+ "serde_json",
+ "ureq",
 ]
 
 [[package]]

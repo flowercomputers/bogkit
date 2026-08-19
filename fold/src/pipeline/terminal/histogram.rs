@@ -131,6 +131,7 @@ where
         HistogramReader {
             tx,
             ks: self.ks.clone().unwrap(),
+            name: self.name.clone(),
             _p: PhantomData,
         }
     }
@@ -140,7 +141,15 @@ where
 pub struct HistogramReader<'tx, R: Readable, T> {
     tx: &'tx R,
     ks: fjall::SingleWriterTxKeyspace,
+    name: String,
     _p: PhantomData<T>,
+}
+
+impl<'tx, R: Readable, T> HistogramReader<'tx, R, T> {
+    /// The sink name this reader serves, as given to [`Histogram::new`].
+    pub fn name(&self) -> &str {
+        &self.name
+    }
 }
 
 impl<'tx, R: Readable, T: Score> HistogramReader<'tx, R, T> {

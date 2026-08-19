@@ -4,6 +4,7 @@
 //! scripts/new-project.sh, and `bogkit dev` wraps `cargo run` with the
 //! data-dir conventions the server flavor will rely on in phase 1.
 
+mod api;
 mod dev;
 mod new;
 mod workspace;
@@ -39,6 +40,13 @@ enum Command {
         #[arg(long)]
         fresh: bool,
     },
+
+    /// Fetch and pretty-print the running server's OpenAPI document
+    Api {
+        /// Port the server listens on (default: $PORT, then 7877)
+        #[arg(short, long)]
+        port: Option<u16>,
+    },
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -54,5 +62,6 @@ fn main() -> anyhow::Result<()> {
     match cli.command {
         Command::New { name, kind } => new::run(&name, kind),
         Command::Dev { project, fresh } => dev::run(project.as_deref(), fresh),
+        Command::Api { port } => api::run(port),
     }
 }

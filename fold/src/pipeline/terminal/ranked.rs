@@ -191,6 +191,7 @@ impl<S: Score, V: Clone + Serialize + DeserializeOwned> Push<Scored<S, V>> for R
         RankedReader {
             tx,
             ks: self.ks.clone().unwrap(),
+            name: self.name.clone(),
             _p: PhantomData,
         }
     }
@@ -200,7 +201,15 @@ impl<S: Score, V: Clone + Serialize + DeserializeOwned> Push<Scored<S, V>> for R
 pub struct RankedReader<'tx, R: Readable, S, V> {
     tx: &'tx R,
     ks: fjall::SingleWriterTxKeyspace,
+    name: String,
     _p: PhantomData<(S, V)>,
+}
+
+impl<'tx, R: Readable, S, V> RankedReader<'tx, R, S, V> {
+    /// The sink name this reader serves, as given to [`Ranked::new`].
+    pub fn name(&self) -> &str {
+        &self.name
+    }
 }
 
 impl<'tx, R: Readable, S: Score, V: Clone + DeserializeOwned> RankedReader<'tx, R, S, V> {

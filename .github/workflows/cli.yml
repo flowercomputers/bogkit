@@ -25,6 +25,9 @@ jobs:
       - name: bog-serve tests
         run: cargo test -p bog-serve
 
+      - name: Golden OpenAPI docs validate against the spec
+        run: pipx run openapi-spec-validator serve/tests/golden/template.json serve/tests/golden/search.json
+
       - name: Scaffold an embedded project
         run: cargo run -p bogkit -- new ci-embedded --kind embedded
 
