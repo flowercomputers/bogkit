@@ -1,0 +1,12 @@
+[package]
+name = "search-server"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+anny = { path = "../../anny" }
+bog-serve = { path = "../../serve" }
+ese = { path = "../../ese", features = ["dim-512", "quant-8"] }
+fold = { path = "../../fold" }
+serde_json = "1"

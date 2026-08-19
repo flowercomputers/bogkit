@@ -1,0 +1,556 @@
+//! Generic axum handlers over any served pipeline.
+//!
+//! Reads are identical for plain and keyed streams, so they're generic over
+//! [`ViewSource`] — the small trait both `Shared` (wrapping a fold
+//! `Stream`) and `SharedKeyed` (wrapping a `KeyedStream`) implement. Writes
+//! differ by stream flavor (raw insert/remove vs upsert/remove-by-key) and
+//! stay per-kind. Nothing here knows what the user's pipeline looks like:
+//! writes go through fold's `wtx`, reads dispatch through [`Views`].
+
+use std::collections::HashMap;
+use std::convert::Infallible;
+use std::sync::{Arc, RwLock};
+
+use axum::extract::{Path, Query, State};
+use axum::http::StatusCode;
+use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::{IntoResponse, Response};
+use axum::routing::{get, post, put};
+use axum::{Json, Router};
+use fold::fjall::Snapshot;
+use fold::pipeline::{Keyed, Push};
+use fold::stream::{KeyedStream, Stream};
+use schemars::JsonSchema;
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use tokio::sync::watch;
+use tokio_stream::StreamExt;
+
+use crate::openapi::WriteStyle;
+use crate::views::{ViewQuery, ViewRead, Views, parse_key, schema_of};
+
+const DEFAULT_LIMIT: usize = 100;
+const DEFAULT_K: usize = 10;
+
+/// A custom read route's request: the query-string parameters.
+pub struct CustomReq {
+    pub params: HashMap<String, String>,
+}
+
+/// What a custom route handler returns: JSON data, or an HTTP status code
+/// with a message.
+pub type CustomResult = Result<Value, (u16, String)>;
+
+/// A custom handler, boxed so `App` can hold a heterogeneous list of them:
+/// given the pipeline's readers (any snapshot lifetime) and the request,
+/// produce a result.
+pub(crate) type CustomHandler<D, P> = Arc<
+    dyn for<'tx> Fn(<P as Push<D>>::Reader<'tx, Snapshot>, &CustomReq) -> CustomResult
+        + Send
+        + Sync,
+>;
+
+/// The documents computed once at startup and served verbatim.
+struct Docs {
+    openapi: Value,
+    schema: Value,
+}
+
+/// Read access shared by every view route, implemented per stream flavor.
+trait ViewSource: Send + Sync + 'static {
+    /// One consistent observation: the commit seq and the view's answer
+    /// come from the same snapshot.
+    fn view(&self, view: &str, q: &ViewQuery) -> (u64, ViewRead);
+    fn docs(&self) -> &Docs;
+    fn subscribe(&self) -> watch::Receiver<u64>;
+}
+
+// ---- unkeyed: Stream<D, P> --------------------------------------------------
+
+struct Shared<D: Clone, P: Push<D>> {
+    /// RwLock matches fold's access model exactly: `rtx` takes `&self`
+    /// (any number of parallel readers, each on its own pinned snapshot),
+    /// `wtx` takes `&mut self` (one writer at a time).
+    inner: RwLock<Inner<D, P>>,
+    docs: Docs,
+    /// Broadcasts the latest commit seq to `/watch` subscribers.
+    notify: watch::Sender<u64>,
+}
+
+struct Inner<D: Clone, P: Push<D>> {
+    stream: Stream<D, P>,
+    /// Bumped once per committed transaction. In-memory for now: it orders
+    /// reads against writes within one server run (read-your-writes), and
+    /// becomes persistent when the delta log lands.
+    seq: u64,
+}
+
+impl<D, P> ViewSource for Shared<D, P>
+where
+    D: Clone + Send + Sync + 'static,
+    P: Push<D> + Send + Sync + 'static,
+    for<'tx> P::Reader<'tx, Snapshot>: Views,
+{
+    fn view(&self, view: &str, q: &ViewQuery) -> (u64, ViewRead) {
+        let inner = self.inner.read().unwrap();
+        (inner.seq, inner.stream.rtx(|r| r.read(view, q)))
+    }
+
+    fn docs(&self) -> &Docs {
+        &self.docs
+    }
+
+    fn subscribe(&self) -> watch::Receiver<u64> {
+        self.notify.subscribe()
+    }
+}
+
+pub(crate) fn router<D, P>(
+    stream: Stream<D, P>,
+    custom: Vec<(String, CustomHandler<D, P>)>,
+) -> Router
+where
+    D: Clone + Send + Sync + DeserializeOwned + JsonSchema + 'static,
+    P: Push<D> + Send + Sync + 'static,
+    for<'tx> P::Reader<'tx, Snapshot>: Views,
+{
+    let specs = stream.rtx(|r| {
+        let mut specs = Vec::new();
+        r.specs(&mut specs);
+        specs
+    });
+    let input_schema = schema_of::<D>();
+    let custom_paths: Vec<String> = custom.iter().map(|(p, _)| p.clone()).collect();
+
+    let shared = Arc::new(Shared {
+        docs: Docs {
+            openapi: crate::openapi::openapi_doc(
+                &input_schema,
+                &specs,
+                WriteStyle::Unkeyed,
+                &custom_paths,
+            ),
+            schema: crate::openapi::schema_doc(&input_schema, &specs, WriteStyle::Unkeyed),
+        },
+        notify: watch::channel(0).0,
+        inner: RwLock::new(Inner { stream, seq: 0 }),
+    });
+
+    let mut app = read_routes::<Shared<D, P>>()
+        .route("/insert", post(insert::<D, P>))
+        .route("/remove", post(remove::<D, P>))
+        .route("/batch", post(batch::<D, P>))
+        .with_state(shared.clone());
+
+    for (path, handler) in custom {
+        let shared = shared.clone();
+        app = app.route(
+            &path,
+            get(move |Query(params): Query<HashMap<String, String>>| {
+                let shared = shared.clone();
+                let handler = handler.clone();
+                async move {
+                    let inner = shared.inner.read().unwrap();
+                    let seq = inner.seq;
+                    let out = inner.stream.rtx(|r| handler(r, &CustomReq { params }));
+                    drop(inner);
+                    respond_custom(seq, out)
+                }
+            }),
+        );
+    }
+    app
+}
+
+/// Run one write transaction and return the new commit seq, notifying
+/// `/watch` subscribers. Everything pushed inside `f` commits atomically.
+fn write<D, P>(shared: &Shared<D, P>, f: impl FnOnce(&mut fold::stream::Tx<'_, '_, D, P>)) -> u64
+where
+    D: Clone,
+    P: Push<D>,
+{
+    let mut inner = shared.inner.write().unwrap();
+    inner.stream.wtx(f);
+    inner.seq += 1;
+    let seq = inner.seq;
+    drop(inner); // wake subscribers only after the exclusive guard is gone
+    // send_replace, not send: send() refuses to store when no /watch
+    // client is connected yet, and late subscribers must still see the
+    // latest committed seq
+    shared.notify.send_replace(seq);
+    seq
+}
+
+async fn insert<D, P>(State(shared): State<Arc<Shared<D, P>>>, Json(data): Json<D>) -> Response
+where
+    D: Clone + Send + Sync + DeserializeOwned + 'static,
+    P: Push<D> + Send + Sync + 'static,
+{
+    let seq = write(&shared, |tx| tx.insert(&data));
+    Json(json!({ "seq": seq })).into_response()
+}
+
+async fn remove<D, P>(State(shared): State<Arc<Shared<D, P>>>, Json(data): Json<D>) -> Response
+where
+    D: Clone + Send + Sync + DeserializeOwned + 'static,
+    P: Push<D> + Send + Sync + 'static,
+{
+    let seq = write(&shared, |tx| tx.remove(&data));
+    Json(json!({ "seq": seq })).into_response()
+}
+
+/// One operation in an unkeyed POST /batch body:
+/// `{ "op": "insert", "data": ... }` or `{ "op": "remove", "data": ... }`.
+#[derive(Deserialize)]
+#[serde(tag = "op", rename_all = "lowercase")]
+enum Op<D> {
+    Insert { data: D },
+    Remove { data: D },
+}
+
+async fn batch<D, P>(
+    State(shared): State<Arc<Shared<D, P>>>,
+    Json(ops): Json<Vec<Op<D>>>,
+) -> Response
+where
+    D: Clone + Send + Sync + DeserializeOwned + 'static,
+    P: Push<D> + Send + Sync + 'static,
+{
+    // the whole body deserialized before the transaction opens: a malformed
+    // batch is rejected in full, a well-formed one commits in full
+    let applied = ops.len();
+    let seq = write(&shared, |tx| {
+        for op in &ops {
+            match op {
+                Op::Insert { data } => tx.insert(data),
+                Op::Remove { data } => tx.remove(data),
+            }
+        }
+    });
+    Json(json!({ "seq": seq, "applied": applied })).into_response()
+}
+
+// ---- keyed: KeyedStream<K, V, P> --------------------------------------------
+
+struct SharedKeyed<K: Clone, V: Clone, P: Push<Keyed<K, V>>> {
+    inner: RwLock<InnerKeyed<K, V, P>>,
+    docs: Docs,
+    notify: watch::Sender<u64>,
+}
+
+struct InnerKeyed<K: Clone, V: Clone, P: Push<Keyed<K, V>>> {
+    stream: KeyedStream<K, V, P>,
+    seq: u64,
+}
+
+impl<K, V, P> ViewSource for SharedKeyed<K, V, P>
+where
+    K: Clone + Send + Sync + Serialize + 'static,
+    V: Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
+    P: Push<Keyed<K, V>> + Send + Sync + 'static,
+    for<'tx> P::Reader<'tx, Snapshot>: Views,
+{
+    fn view(&self, view: &str, q: &ViewQuery) -> (u64, ViewRead) {
+        let inner = self.inner.read().unwrap();
+        (inner.seq, inner.stream.rtx(|r| r.read(view, q)))
+    }
+
+    fn docs(&self) -> &Docs {
+        &self.docs
+    }
+
+    fn subscribe(&self) -> watch::Receiver<u64> {
+        self.notify.subscribe()
+    }
+}
+
+pub(crate) fn router_keyed<K, V, P>(
+    stream: KeyedStream<K, V, P>,
+    custom: Vec<(String, CustomHandler<Keyed<K, V>, P>)>,
+) -> Router
+where
+    K: Clone + Send + Sync + Serialize + DeserializeOwned + JsonSchema + 'static,
+    V: Clone + Send + Sync + Serialize + DeserializeOwned + JsonSchema + 'static,
+    P: Push<Keyed<K, V>> + Send + Sync + 'static,
+    for<'tx> P::Reader<'tx, Snapshot>: Views,
+{
+    let specs = stream.rtx(|r| {
+        let mut specs = Vec::new();
+        r.specs(&mut specs);
+        specs
+    });
+    let input_schema = schema_of::<V>();
+    let key_schema = schema_of::<K>();
+    let custom_paths: Vec<String> = custom.iter().map(|(p, _)| p.clone()).collect();
+    let style = WriteStyle::Keyed {
+        key_schema: &key_schema,
+    };
+
+    let shared = Arc::new(SharedKeyed {
+        docs: Docs {
+            openapi: crate::openapi::openapi_doc(&input_schema, &specs, style, &custom_paths),
+            schema: crate::openapi::schema_doc(&input_schema, &specs, style),
+        },
+        notify: watch::channel(0).0,
+        inner: RwLock::new(InnerKeyed { stream, seq: 0 }),
+    });
+
+    let mut app = read_routes::<SharedKeyed<K, V, P>>()
+        .route(
+            "/docs/{key}",
+            put(put_doc::<K, V, P>)
+                .delete(delete_doc::<K, V, P>)
+                .get(get_doc::<K, V, P>),
+        )
+        .route("/batch", post(batch_keyed::<K, V, P>))
+        .with_state(shared.clone());
+
+    for (path, handler) in custom {
+        let shared = shared.clone();
+        app = app.route(
+            &path,
+            get(move |Query(params): Query<HashMap<String, String>>| {
+                let shared = shared.clone();
+                let handler = handler.clone();
+                async move {
+                    let inner = shared.inner.read().unwrap();
+                    let seq = inner.seq;
+                    let out = inner.stream.rtx(|r| handler(r, &CustomReq { params }));
+                    drop(inner);
+                    respond_custom(seq, out)
+                }
+            }),
+        );
+    }
+    app
+}
+
+/// Run one keyed write transaction; returns the new seq and `f`'s result.
+fn write_keyed<K, V, P, R>(
+    shared: &SharedKeyed<K, V, P>,
+    f: impl FnOnce(&mut fold::stream::KeyedTx<'_, '_, '_, K, V, P>) -> R,
+) -> (u64, R)
+where
+    K: Clone + Serialize,
+    V: Clone + Serialize + DeserializeOwned,
+    P: Push<Keyed<K, V>>,
+{
+    let mut inner = shared.inner.write().unwrap();
+    let out = inner.stream.wtx(f);
+    inner.seq += 1;
+    let seq = inner.seq;
+    drop(inner);
+    shared.notify.send_replace(seq); // see write(): send() drops the value receiverless
+    (seq, out)
+}
+
+async fn put_doc<K, V, P>(
+    State(shared): State<Arc<SharedKeyed<K, V, P>>>,
+    Path(raw): Path<String>,
+    Json(data): Json<V>,
+) -> Response
+where
+    K: Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
+    V: Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
+    P: Push<Keyed<K, V>> + Send + Sync + 'static,
+{
+    let Some(key) = parse_key::<K>(&raw) else {
+        return error(StatusCode::BAD_REQUEST, key_parse_msg(&raw));
+    };
+    let (seq, old) = write_keyed(&shared, |tx| tx.upsert(&key, &data));
+    Json(json!({ "seq": seq, "replaced": old.is_some() })).into_response()
+}
+
+async fn delete_doc<K, V, P>(
+    State(shared): State<Arc<SharedKeyed<K, V, P>>>,
+    Path(raw): Path<String>,
+) -> Response
+where
+    K: Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
+    V: Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
+    P: Push<Keyed<K, V>> + Send + Sync + 'static,
+{
+    let Some(key) = parse_key::<K>(&raw) else {
+        return error(StatusCode::BAD_REQUEST, key_parse_msg(&raw));
+    };
+    let (seq, old) = write_keyed(&shared, |tx| tx.remove(&key));
+    Json(json!({ "seq": seq, "removed": old.is_some() })).into_response()
+}
+
+async fn get_doc<K, V, P>(
+    State(shared): State<Arc<SharedKeyed<K, V, P>>>,
+    Path(raw): Path<String>,
+) -> Response
+where
+    K: Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
+    V: Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
+    P: Push<Keyed<K, V>> + Send + Sync + 'static,
+{
+    let Some(key) = parse_key::<K>(&raw) else {
+        return error(StatusCode::BAD_REQUEST, key_parse_msg(&raw));
+    };
+    let inner = shared.inner.read().unwrap();
+    let seq = inner.seq;
+    let record = inner.stream.get(&key);
+    drop(inner);
+    match record {
+        Some(data) => Json(json!({ "seq": seq, "data": data })).into_response(),
+        None => error(StatusCode::NOT_FOUND, "not found"),
+    }
+}
+
+/// One operation in a keyed POST /batch body:
+/// `{ "op": "upsert", "key": ..., "data": ... }` or
+/// `{ "op": "remove", "key": ... }`.
+#[derive(Deserialize)]
+#[serde(tag = "op", rename_all = "lowercase")]
+enum KeyedOp<K, V> {
+    Upsert { key: K, data: V },
+    Remove { key: K },
+}
+
+async fn batch_keyed<K, V, P>(
+    State(shared): State<Arc<SharedKeyed<K, V, P>>>,
+    Json(ops): Json<Vec<KeyedOp<K, V>>>,
+) -> Response
+where
+    K: Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
+    V: Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
+    P: Push<Keyed<K, V>> + Send + Sync + 'static,
+{
+    let applied = ops.len();
+    let (seq, ()) = write_keyed(&shared, |tx| {
+        for op in &ops {
+            match op {
+                KeyedOp::Upsert { key, data } => {
+                    tx.upsert(key, data);
+                }
+                KeyedOp::Remove { key } => {
+                    tx.remove(key);
+                }
+            }
+        }
+    });
+    Json(json!({ "seq": seq, "applied": applied })).into_response()
+}
+
+fn key_parse_msg(raw: &str) -> String {
+    format!("cannot parse {raw:?} as this stream's key type")
+}
+
+// ---- reads (generic over both flavors) --------------------------------------
+
+fn read_routes<S: ViewSource>() -> Router<Arc<S>> {
+    Router::new()
+        .route("/healthz", get(async || "ok"))
+        .route("/views/{name}", get(view_list::<S>))
+        // static "search" outranks the {key} capture in axum's router
+        .route(
+            "/views/{name}/search",
+            get(search_get::<S>).post(search_post::<S>),
+        )
+        .route("/views/{name}/{key}", get(view_key::<S>))
+        .route("/openapi.json", get(serve_openapi::<S>))
+        .route("/schema", get(serve_schema::<S>))
+        .route("/watch", get(watch_sse::<S>))
+}
+
+#[derive(Deserialize)]
+struct Page {
+    limit: Option<usize>,
+    offset: Option<usize>,
+}
+
+async fn view_list<S: ViewSource>(
+    State(shared): State<Arc<S>>,
+    Path(name): Path<String>,
+    Query(page): Query<Page>,
+) -> Response {
+    let q = ViewQuery::list(
+        page.limit.unwrap_or(DEFAULT_LIMIT),
+        page.offset.unwrap_or(0),
+    );
+    respond(shared.view(&name, &q))
+}
+
+async fn view_key<S: ViewSource>(
+    State(shared): State<Arc<S>>,
+    Path((name, key)): Path<(String, String)>,
+) -> Response {
+    respond(shared.view(&name, &ViewQuery::point(key)))
+}
+
+#[derive(Deserialize)]
+struct SearchParams {
+    q: Option<String>,
+    k: Option<usize>,
+}
+
+async fn search_get<S: ViewSource>(
+    State(shared): State<Arc<S>>,
+    Path(name): Path<String>,
+    Query(p): Query<SearchParams>,
+) -> Response {
+    let q = ViewQuery::search(p.q, None, p.k.unwrap_or(DEFAULT_K));
+    respond(shared.view(&name, &q))
+}
+
+#[derive(Deserialize)]
+struct SearchBody {
+    vector: Value,
+    k: Option<usize>,
+}
+
+async fn search_post<S: ViewSource>(
+    State(shared): State<Arc<S>>,
+    Path(name): Path<String>,
+    Json(body): Json<SearchBody>,
+) -> Response {
+    let q = ViewQuery::search(None, Some(body.vector), body.k.unwrap_or(DEFAULT_K));
+    respond(shared.view(&name, &q))
+}
+
+async fn serve_openapi<S: ViewSource>(State(shared): State<Arc<S>>) -> Response {
+    Json(shared.docs().openapi.clone()).into_response()
+}
+
+async fn serve_schema<S: ViewSource>(State(shared): State<Arc<S>>) -> Response {
+    Json(shared.docs().schema.clone()).into_response()
+}
+
+/// SSE commit feed: one `{"seq": n}` event per committed transaction (the
+/// current seq arrives immediately on connect). Slow consumers see the
+/// latest seq, not every intermediate one — it's a level, not a log.
+async fn watch_sse<S: ViewSource>(State(shared): State<Arc<S>>) -> impl IntoResponse {
+    let events = tokio_stream::wrappers::WatchStream::new(shared.subscribe()).map(|seq| {
+        Ok::<_, Infallible>(
+            Event::default()
+                .id(seq.to_string())
+                .data(json!({ "seq": seq }).to_string()),
+        )
+    });
+    Sse::new(events).keep_alive(KeepAlive::default())
+}
+
+fn respond((seq, outcome): (u64, ViewRead)) -> Response {
+    match outcome {
+        ViewRead::Data(data) => Json(json!({ "seq": seq, "data": data })).into_response(),
+        ViewRead::NotFound => error(StatusCode::NOT_FOUND, "not found"),
+        ViewRead::BadRequest(msg) => error(StatusCode::BAD_REQUEST, msg),
+    }
+}
+
+fn respond_custom(seq: u64, out: CustomResult) -> Response {
+    match out {
+        Ok(data) => Json(json!({ "seq": seq, "data": data })).into_response(),
+        Err((code, msg)) => error(
+            StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+            msg,
+        ),
+    }
+}
+
+fn error(status: StatusCode, msg: impl Into<String>) -> Response {
+    (status, Json(json!({ "error": msg.into() }))).into_response()
+}

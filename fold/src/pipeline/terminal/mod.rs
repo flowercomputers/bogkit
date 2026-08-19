@@ -107,9 +107,15 @@ impl Count {
 pub struct CountReader<'tx, R: Readable> {
     tx: &'tx R,
     ks: fjall::SingleWriterTxKeyspace,
+    name: String,
 }
 
 impl<R: Readable> CountReader<'_, R> {
+    /// The sink name this reader serves, as given to [`Count::new`].
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
     /// The current count (0 if nothing was ever inserted).
     pub fn get(&self) -> i64 {
         self.tx
@@ -154,6 +160,7 @@ impl<D: Clone> Push<D> for Count {
         CountReader {
             tx,
             ks: self.ks.clone().unwrap(),
+            name: self.name.clone(),
         }
     }
 }
@@ -190,7 +197,15 @@ impl<D> Bag<D> {
 pub struct BagReader<'tx, R: Readable, D> {
     tx: &'tx R,
     ks: fjall::SingleWriterTxKeyspace,
+    name: String,
     _p: PhantomData<D>,
+}
+
+impl<'tx, R: Readable, D> BagReader<'tx, R, D> {
+    /// The sink name this reader serves, as given to [`Bag::new`].
+    pub fn name(&self) -> &str {
+        &self.name
+    }
 }
 
 impl<'tx, R: Readable, D: DeserializeOwned> BagReader<'tx, R, D> {
@@ -262,6 +277,7 @@ impl<D: Clone + Serialize + DeserializeOwned> Push<D> for Bag<D> {
         BagReader {
             tx,
             ks: self.ks.clone().unwrap(),
+            name: self.name.clone(),
             _p: PhantomData,
         }
     }

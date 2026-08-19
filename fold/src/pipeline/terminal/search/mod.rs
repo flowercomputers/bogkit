@@ -235,6 +235,7 @@ where
         Bm25Reader {
             tx,
             ks: self.ks.clone().unwrap(),
+            name: self.name.clone(),
             tok: self.tok.clone(),
             k1: self.k1,
             b: self.b,
@@ -247,10 +248,18 @@ where
 pub struct Bm25Reader<'tx, R: Readable, K, T> {
     tx: &'tx R,
     ks: fjall::SingleWriterTxKeyspace,
+    name: String,
     tok: T,
     k1: f64,
     b: f64,
     _p: PhantomData<K>,
+}
+
+impl<'tx, R: Readable, K, T> Bm25Reader<'tx, R, K, T> {
+    /// The sink name this reader serves, as given to [`Bm25::new`].
+    pub fn name(&self) -> &str {
+        &self.name
+    }
 }
 
 impl<'tx, R: Readable, K: DeserializeOwned, T: Fn(&str, &mut Vec<u8>)> Bm25Reader<'tx, R, K, T> {
