@@ -2,7 +2,8 @@ name: bog-auto-judge
 
 on:
   pull_request_target:
-    types: [opened, synchronize, reopened]
+    # disabled while we aren't in hackathon mode
+    # types: [opened, synchronize, reopened]
 
 # Only one judge run per PR at a time; new pushes cancel stale runs
 concurrency:
