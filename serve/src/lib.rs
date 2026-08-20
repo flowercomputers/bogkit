@@ -10,10 +10,11 @@
 //! values the router dispatches with.
 //!
 //! ```no_run
-//! use bog_serve::App;
+//! use bog_serve::{App, NoParams};
 //! use fold::pipeline::terminal;
 //! use schemars::JsonSchema;
 //! use serde::{Deserialize, Serialize};
+//! use serde_json::json;
 //!
 //! #[derive(Clone, Serialize, Deserialize, JsonSchema)]
 //! struct Entry {
@@ -27,6 +28,19 @@
 //!         terminal::Bag::<Entry>::new("entries"),
 //!     ),
 //! )
+//! // custom routes are typed; their schemas land in /openapi.json.
+//! // GET handlers read one consistent snapshot:
+//! .get("/summary", |(count, _entries), _: NoParams| {
+//!     Ok(json!({ "total": count.get() }))
+//! })
+//! // POST handlers run inside one write transaction; Err rolls it back:
+//! .post("/insert_nonempty", |tx, e: Entry| {
+//!     if e.text.is_empty() {
+//!         return Err((422, "empty entries rejected".into()));
+//!     }
+//!     tx.insert(&e);
+//!     Ok(json!("ok"))
+//! })
 //! .run()
 //! ```
 //!
@@ -38,15 +52,20 @@
 //! - keyed ([`KeyedApp`]): `PUT|GET|DELETE /docs/{key}`, `POST /batch`
 //!   (`[{"op": "upsert"|"remove", "key": ..., "data": ...}]`)
 //! - `GET /views/{name}` — read the sink with that name (`?limit`/`?offset`
-//!   paginate list-shaped views)
+//!   paginate list-shaped views; `?desc=true` lists ordered views
+//!   highest-first)
 //! - `GET /views/{name}/{key}` — point lookup on keyed views
 //! - `GET|POST /views/{name}/search` — ranked search on searchable views
 //!   (`?q=&k=` text, or `{"vector": [...], "k": n}` by raw vector)
 //! - `GET /watch` — SSE, one `{"seq": n}` event per commit
+//! - `GET /views/{name}/watch` — SSE, the view's fresh payload after every
+//!   commit (`?limit`/`?desc` shape the read — e.g. a live top-10)
 //! - `GET /openapi.json`, `GET /schema`, `GET /healthz`
 //!
 //! Every write response carries the commit `seq`; every read response
-//! carries the `seq` its snapshot reflects.
+//! carries the `seq` its snapshot reflects. The seq is in-memory: it
+//! orders reads against writes within one server run and restarts at 0
+//! with the process.
 //!
 //! Custom routes compose with the generated ones, fully typed:
 //! [`App::get`]/[`KeyedApp::get`] handlers receive the pipeline's readers
@@ -194,6 +213,10 @@ where
     }
 
     /// Serve on `0.0.0.0:$PORT` (default 7877), blocking forever.
+    ///
+    /// # Panics
+    /// On a schema fingerprint mismatch, as [`App::into_router`], and if
+    /// the port cannot be bound.
     pub fn run(self) {
         serve_blocking(self.into_router())
     }
@@ -295,6 +318,10 @@ where
     }
 
     /// Serve on `0.0.0.0:$PORT` (default 7877), blocking forever.
+    ///
+    /// # Panics
+    /// On a schema fingerprint mismatch, as [`KeyedApp::into_router`], and
+    /// if the port cannot be bound.
     pub fn run(self) {
         serve_blocking(self.into_router())
     }
