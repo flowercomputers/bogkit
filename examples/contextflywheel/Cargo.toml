@@ -1,0 +1,22 @@
+[package]
+name = "contextflywheel"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+anyhow = "1"
+anny = { path = "../../anny" }
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive", "env"] }
+fold = { path = "../../fold" }
+fs2 = "0.4"
+ese = { path = "../../ese", features = ["dim-512", "quant-8"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tiny_http = "0.12"
+ureq = { version = "3", features = ["json"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+
+[dev-dependencies]
+tempfile = "3"

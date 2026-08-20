@@ -1,0 +1,11 @@
+{
+  "description": "Record agent events and inject current ContextFlywheel state",
+  "hooks": {
+    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "$CLAUDE_PLUGIN_ROOT/hooks/run-hook.sh UserPromptSubmit", "timeout": 30}]}],
+    "PreToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "$CLAUDE_PLUGIN_ROOT/hooks/run-hook.sh PreToolUse", "timeout": 30}]}],
+    "PostToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "$CLAUDE_PLUGIN_ROOT/hooks/run-hook.sh PostToolUse", "timeout": 30}]}],
+    "PostToolUseFailure": [{"matcher": "*", "hooks": [{"type": "command", "command": "$CLAUDE_PLUGIN_ROOT/hooks/run-hook.sh PostToolUseFailure", "timeout": 30}]}],
+    "PreCompact": [{"hooks": [{"type": "command", "command": "$CLAUDE_PLUGIN_ROOT/hooks/run-hook.sh PreCompact", "timeout": 30}]}],
+    "Stop": [{"hooks": [{"type": "command", "command": "$CLAUDE_PLUGIN_ROOT/hooks/run-hook.sh Stop", "timeout": 30}]}]
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "name": "contextflywheel",
+  "description": "Injects versioned, evidence-backed mission memory into Claude Code turns",
+  "version": "0.1.0",
+  "author": {
+    "name": "Yahya Alhinai"
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "project": {
+    "name": "bogkit",
+    "productType": null,
+    "stack": []
+  },
+  "sources": {
+    "tokens": [],
+    "components": [],
+    "assets": [],
+    "instructions": []
+  },
+  "design": {
+    "colorMode": "light",
+    "colors": {
+      "canvas": "#ffffff",
+      "ink": "#202124",
+      "muted": "#77797d",
+      "line": "#e8e1d7",
+      "soft": "#fcfbf8",
+      "current": "#2f766f",
+      "currentSoft": "#f6f2eb"
+    },
+    "typography": {
+      "sans": "Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif",
+      "mono": "ui-monospace, SFMono-Regular, Consolas, monospace"
+    },
+    "spacing": {"base": 8},
+    "radius": {"control": 10, "surface": 14},
+    "shadows": {"policy": "hairline borders first; shadows only for overlays"},
+    "motion": {},
+    "density": "comfortable"
+  },
+  "components": {
+    "installed": [],
+    "preferredPrimitives": [],
+    "patterns": []
+  },
+  "constraints": {
+    "must": ["Use a sessions rail, current-understanding board, numbered record, and step inspector on desktop", "Use real ledger records and live updates", "Preserve keyboard focus and reduced-motion behavior"],
+    "avoid": ["Invented timeline steps", "Decorative gradients", "Apple-green dashboard styling", "Graph-first navigation"]
+  },
+    "decisions": ["Match alhinai.dev: Inter, warm paper surfaces, teal accent, hairline borders, Title Case section headings", "Use a 20/45/35 desktop workspace with sessions left, reasoning and timeline center, and a deliberately wider evidence inspector right", "Keep the timeline visible while inspecting a selected event", "Open exact compiled context as a modal", "Structure every mission as identity, current belief, belief revision, outcome, comparison, and timeline", "Distinguish a corrected belief from a merely strengthened belief", "Treat the timeline as a quiet list without node rails", "Group each tool call with its result as one activity row", "Attach supporting evidence to the belief it changed instead of duplicating it in the summary", "Label estimated token counts and unused retrieval stages explicitly", "Use restrained teal only for live, current, and successful states"],
+  "evidence": [],
+  "generatedAt": "2026-08-17T00:13:54.591Z"
+}
