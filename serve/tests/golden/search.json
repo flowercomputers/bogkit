@@ -213,10 +213,30 @@
       "get": {
         "responses": {
           "200": {
-            "description": "app-defined data in the seq envelope"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$schema": "https://json-schema.org/draft/2020-12/schema",
+                      "title": "AnyValue"
+                    },
+                    "seq": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "seq",
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "handler result in the seq envelope"
           }
         },
-        "summary": "custom route (app-defined; shape not generated)"
+        "summary": "custom route"
       }
     },
     "/views/bm25/search": {

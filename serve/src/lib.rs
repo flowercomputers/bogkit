@@ -48,16 +48,20 @@
 //! Every write response carries the commit `seq`; every read response
 //! carries the `seq` its snapshot reflects.
 //!
-//! Custom read routes compose with the generated ones via
-//! [`App::get`]/[`KeyedApp::get`]: the handler receives the pipeline's
-//! readers (same tuple shape as `rtx`) and the query parameters.
+//! Custom routes compose with the generated ones, fully typed:
+//! [`App::get`]/[`KeyedApp::get`] handlers receive the pipeline's readers
+//! (same tuple shape as `rtx`) plus the query string deserialized into a
+//! caller-chosen struct, and [`App::post`]/[`KeyedApp::post`] handlers
+//! receive the write transaction plus a typed body — returning `Err` rolls
+//! the whole transaction back. Both response and request schemas are
+//! captured at registration, so custom routes appear fully typed in
+//! `/openapi.json`.
 
 mod http;
 mod openapi;
 mod search;
 mod views;
 
-pub use http::{CustomReq, CustomResult};
 pub use search::{TextQuery, TextQueryReader, VectorSearch};
 pub use views::{ViewQuery, ViewRead, ViewSpec, Views};
 
@@ -65,16 +69,27 @@ use std::sync::Arc;
 
 use fold::fjall::Snapshot;
 use fold::pipeline::{Keyed, Push};
-use fold::stream::{KeyedStream, Stream};
-use http::CustomHandler;
+use fold::stream::{KeyedStream, KeyedTx, Stream, Tx};
+use http::{CustomAction, CustomRoute, KeyedWriteHandler, ReadHandler, StreamWriteHandler};
+use openapi::CustomDoc;
 use schemars::JsonSchema;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use serde_json::Value;
+
+/// Typed "no query parameters" for custom GET routes that take none:
+/// `.get("/path", |readers, _: NoParams| ...)`.
+#[derive(serde::Deserialize, JsonSchema)]
+pub struct NoParams {}
+
+fn to_value<T: Serialize>(t: T) -> Value {
+    serde_json::to_value(t).expect("custom route Ok type serializes to JSON")
+}
 
 /// A fold [`Stream`] wrapped in a generated HTTP server.
 pub struct App<D: Clone, P: Push<D>> {
     stream: Stream<D, P>,
-    custom: Vec<(String, CustomHandler<D, P>)>,
+    custom: Vec<CustomRoute<D, P, StreamWriteHandler<D, P>>>,
     db_path: std::path::PathBuf,
 }
 
@@ -95,19 +110,76 @@ where
         }
     }
 
-    /// Add a custom GET route alongside the generated ones. The handler
-    /// receives the pipeline's readers — the same tuple `rtx` closures see,
-    /// on one consistent snapshot — plus the request's query parameters,
-    /// and its result is wrapped in the standard `{seq, data}` envelope.
-    pub fn get(
-        mut self,
-        path: impl Into<String>,
-        handler: impl for<'tx> Fn(P::Reader<'tx, Snapshot>, &CustomReq) -> CustomResult
-        + Send
-        + Sync
-        + 'static,
-    ) -> Self {
-        self.custom.push((path.into(), Arc::new(handler)));
+    /// Add a typed custom GET route alongside the generated ones.
+    ///
+    /// The handler receives the pipeline's readers — the same tuple `rtx`
+    /// closures see, on one consistent snapshot — plus the query string
+    /// deserialized into `Q` (use [`NoParams`] when there are none). Its
+    /// `Ok` value lands in the standard `{seq, data}` envelope. Both
+    /// schemas are captured here, while the types are still known, so the
+    /// route appears fully typed in `/openapi.json` and the doc cannot
+    /// drift from what the handler actually returns.
+    pub fn get<Q, T, F>(mut self, path: impl Into<String>, handler: F) -> Self
+    where
+        Q: DeserializeOwned + JsonSchema,
+        T: Serialize + JsonSchema,
+        F: for<'tx> Fn(P::Reader<'tx, Snapshot>, Q) -> Result<T, (u16, String)>
+            + Send
+            + Sync
+            + 'static,
+    {
+        let doc = CustomDoc {
+            path: path.into(),
+            method: "get",
+            params: Some(views::schema_of::<Q>()),
+            body: None,
+            response: views::schema_of::<T>(),
+        };
+        let erased: ReadHandler<D, P> = Arc::new(move |readers, raw_query| {
+            let q: Q = serde_urlencoded::from_str(raw_query)
+                .map_err(|e| (400, format!("invalid query: {e}")))?;
+            handler(readers, q).map(to_value)
+        });
+        self.custom.push(CustomRoute {
+            doc,
+            action: CustomAction::Read(erased),
+        });
+        self
+    }
+
+    /// Add a typed custom POST route: a write transaction with app logic.
+    ///
+    /// The handler receives fold's write transaction and the body
+    /// deserialized into `B`. Returning `Ok` commits everything pushed and
+    /// bumps the seq; returning `Err(status, message)` **rolls the whole
+    /// transaction back** — even deltas pushed before the error — making
+    /// this the building block for atomic check-and-set over HTTP
+    /// (read mid-transaction via [`Tx::rtx`], bail to abort).
+    pub fn post<B, T, F>(mut self, path: impl Into<String>, handler: F) -> Self
+    where
+        B: DeserializeOwned + JsonSchema,
+        T: Serialize + JsonSchema,
+        F: for<'g, 'tx> Fn(&mut Tx<'g, 'tx, D, P>, B) -> Result<T, (u16, String)>
+            + Send
+            + Sync
+            + 'static,
+    {
+        let doc = CustomDoc {
+            path: path.into(),
+            method: "post",
+            params: None,
+            body: Some(views::schema_of::<B>()),
+            response: views::schema_of::<T>(),
+        };
+        let erased: StreamWriteHandler<D, P> = Arc::new(move |stream, raw| {
+            let body: B = serde_json::from_slice(raw)
+                .map_err(|e| (400, format!("invalid body: {e}")))?;
+            stream.try_wtx(|tx| handler(tx, body)).map(to_value)
+        });
+        self.custom.push(CustomRoute {
+            doc,
+            action: CustomAction::Write(erased),
+        });
         self
     }
 
@@ -132,7 +204,7 @@ where
 /// retracts the old one from every view automatically.
 pub struct KeyedApp<K: Clone, V: Clone, P: Push<Keyed<K, V>>> {
     stream: KeyedStream<K, V, P>,
-    custom: Vec<(String, CustomHandler<Keyed<K, V>, P>)>,
+    custom: Vec<CustomRoute<Keyed<K, V>, P, KeyedWriteHandler<K, V, P>>>,
     db_path: std::path::PathBuf,
 }
 
@@ -153,16 +225,63 @@ where
         }
     }
 
-    /// Add a custom GET route; see [`App::get`].
-    pub fn get(
-        mut self,
-        path: impl Into<String>,
-        handler: impl for<'tx> Fn(P::Reader<'tx, Snapshot>, &CustomReq) -> CustomResult
-        + Send
-        + Sync
-        + 'static,
-    ) -> Self {
-        self.custom.push((path.into(), Arc::new(handler)));
+    /// Add a typed custom GET route; see [`App::get`].
+    pub fn get<Q, T, F>(mut self, path: impl Into<String>, handler: F) -> Self
+    where
+        Q: DeserializeOwned + JsonSchema,
+        T: Serialize + JsonSchema,
+        F: for<'tx> Fn(P::Reader<'tx, Snapshot>, Q) -> Result<T, (u16, String)>
+            + Send
+            + Sync
+            + 'static,
+    {
+        let doc = CustomDoc {
+            path: path.into(),
+            method: "get",
+            params: Some(views::schema_of::<Q>()),
+            body: None,
+            response: views::schema_of::<T>(),
+        };
+        let erased: ReadHandler<Keyed<K, V>, P> = Arc::new(move |readers, raw_query| {
+            let q: Q = serde_urlencoded::from_str(raw_query)
+                .map_err(|e| (400, format!("invalid query: {e}")))?;
+            handler(readers, q).map(to_value)
+        });
+        self.custom.push(CustomRoute {
+            doc,
+            action: CustomAction::Read(erased),
+        });
+        self
+    }
+
+    /// Add a typed custom POST route over the keyed write transaction;
+    /// see [`App::post`]. `Err` rolls the whole transaction back, so
+    /// upsert-unless-present and other check-and-set flows are atomic.
+    pub fn post<B, T, F>(mut self, path: impl Into<String>, handler: F) -> Self
+    where
+        B: DeserializeOwned + JsonSchema,
+        T: Serialize + JsonSchema,
+        F: for<'a, 'g, 'tx> Fn(&mut KeyedTx<'a, 'g, 'tx, K, V, P>, B) -> Result<T, (u16, String)>
+            + Send
+            + Sync
+            + 'static,
+    {
+        let doc = CustomDoc {
+            path: path.into(),
+            method: "post",
+            params: None,
+            body: Some(views::schema_of::<B>()),
+            response: views::schema_of::<T>(),
+        };
+        let erased: KeyedWriteHandler<K, V, P> = Arc::new(move |stream, raw| {
+            let body: B = serde_json::from_slice(raw)
+                .map_err(|e| (400, format!("invalid body: {e}")))?;
+            stream.try_wtx(|tx| handler(tx, body)).map(to_value)
+        });
+        self.custom.push(CustomRoute {
+            doc,
+            action: CustomAction::Write(erased),
+        });
         self
     }
 

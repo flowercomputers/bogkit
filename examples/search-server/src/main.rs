@@ -15,6 +15,10 @@
 //!   curl 'localhost:7877/views/vecs/search?q=database+performance'
 //!   curl 'localhost:7877/search/hybrid?q=database+performance'
 //!
+//!   # write-if-absent, atomically (409 if the id is taken)
+//!   curl -X POST localhost:7877/remember_once -H 'content-type: application/json' \
+//!        -d '{"id": 7, "text": "the standup moved to 9:30"}'
+//!
 //!   # everything else
 //!   curl localhost:7877/openapi.json
 //!   curl -N localhost:7877/watch
@@ -28,6 +32,8 @@
 use anny::metric::Cosine;
 use bog_serve::{KeyedApp, TextQuery};
 use fold::pipeline::{Keyed, Map, terminal};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
 
@@ -58,37 +64,68 @@ fn main() {
     )
     // reciprocal rank fusion of both indexes — logic that lives outside any
     // sink, which is exactly what custom routes are for. The readers are
-    // the same tuple an rtx closure gets, on one consistent snapshot.
-    .get("/search/hybrid", |(bm25, vecs, docs), req| {
-        let q = req.params.get("q").ok_or((400, "q required".to_string()))?;
-        let k: usize = match req.params.get("k") {
-            Some(raw) => raw.parse().map_err(|_| (400, "k must be an integer".to_string()))?,
-            None => 3,
-        };
-
+    // the same tuple an rtx closure gets, on one consistent snapshot; the
+    // params and response types put real schemas in /openapi.json.
+    .get("/search/hybrid", |(bm25, vecs, docs), p: HybridParams| {
         // rank-based fusion sidesteps the incomparable score scales
         // (BM25 relevance vs cosine distance)
         let mut fused: HashMap<u64, f64> = HashMap::new();
-        for (rank, hit) in bm25.search(q, 10).iter().enumerate() {
+        for (rank, hit) in bm25.search(&p.q, 10).iter().enumerate() {
             *fused.entry(hit.val).or_default() += 1.0 / (RRF_K + rank as f64 + 1.0);
         }
-        for (rank, hit) in vecs.inner().search(&vecs.encode(q)).iter().enumerate() {
+        for (rank, hit) in vecs.inner().search(&vecs.encode(&p.q)).iter().enumerate() {
             *fused.entry(hit.val).or_default() += 1.0 / (RRF_K + rank as f64 + 1.0);
         }
         let mut fused: Vec<(u64, f64)> = fused.into_iter().collect();
         fused.sort_by(|a, b| b.1.total_cmp(&a.1));
-        fused.truncate(k);
+        fused.truncate(p.k);
 
-        Ok(json!(
-            fused
-                .into_iter()
-                .map(|(id, score)| json!({
-                    "id": id,
-                    "score": score,
-                    "text": docs.get(&id),
-                }))
-                .collect::<Vec<_>>()
-        ))
+        Ok(fused
+            .into_iter()
+            .map(|(id, score)| HybridHit {
+                id,
+                score,
+                text: docs.get(&id),
+            })
+            .collect::<Vec<_>>())
+    })
+    // a custom write: remember a fact only if its id is free. Err rolls the
+    // whole transaction back, so racing agents can't clobber each other —
+    // atomic check-and-set over HTTP.
+    .post("/remember_once", |tx, m: Memory| {
+        if tx.contains(&m.id) {
+            return Err((409, format!("memory {} already exists", m.id)));
+        }
+        tx.upsert(&m.id, &m.text);
+        Ok(json!({ "remembered": m.id }))
     })
     .run()
+}
+
+/// Query for `/search/hybrid`. Field types become the documented (and
+/// enforced) query parameters: `?q=...&k=5`.
+#[derive(Deserialize, JsonSchema)]
+struct HybridParams {
+    q: String,
+    #[serde(default = "default_k")]
+    k: usize,
+}
+
+fn default_k() -> usize {
+    3
+}
+
+/// One fused hit; the schema of `/search/hybrid`'s response items.
+#[derive(Serialize, JsonSchema)]
+struct HybridHit {
+    id: u64,
+    score: f64,
+    text: Option<String>,
+}
+
+/// Body for `POST /remember_once`.
+#[derive(Deserialize, JsonSchema)]
+struct Memory {
+    id: u64,
+    text: String,
 }

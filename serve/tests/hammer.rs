@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use axum::body::Body;
 use axum::http::{Request, header};
-use bog_serve::App;
+use bog_serve::{App, NoParams};
 use fold::pipeline::terminal;
 use http_body_util::BodyExt;
 use schemars::JsonSchema;
@@ -38,7 +38,7 @@ async fn writers_readers_and_watchers_agree() {
     // the torn-snapshot detector: two sinks read in ONE rtx must agree.
     // If a reader could ever interleave with a half-applied write, the
     // count and the bag would diverge here.
-    .get("/invariant", |(count, items), _req| {
+    .get("/invariant", |(count, items), _: NoParams| {
         let count = count.get();
         let bag_total: i64 = items.iter().map(|(_, mult)| mult).sum();
         if count == bag_total {

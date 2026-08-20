@@ -44,6 +44,15 @@ fn all_sinks_router() -> axum::Router {
             ),
         ),
     )
+    // custom POST for the rollback test: inserts, then rejects hot
+    // readings — the Err must un-insert
+    .post("/insert_checked", |tx, r: Reading| {
+        tx.insert(&r);
+        if r.temp > 100 {
+            return Err((422, format!("{} is implausibly hot", r.temp)));
+        }
+        Ok(json!({ "accepted": r.station }))
+    })
     .into_router()
 }
 
@@ -182,6 +191,29 @@ async fn errors_are_json_with_field_detail() {
     let (status, body) = send(&router, "GET", "/views/by_temp?limit=abc", None).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(body["error"].as_str().unwrap().contains("invalid query"));
+}
+
+#[tokio::test]
+async fn custom_post_rolls_back_on_err() {
+    let router = all_sinks_router();
+    seed(&router).await; // 4 readings, seq 1
+
+    // rejected after the insert was already pushed: everything rolls back
+    let (status, body) =
+        send(&router, "POST", "/insert_checked", Some(reading("volcano", 999))).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(body["error"].as_str().unwrap().contains("implausibly hot"));
+    let (_, body) = send(&router, "GET", "/views/total", None).await;
+    assert_eq!(body["data"]["value"], 4, "rolled-back insert must not count");
+    assert_eq!(body["seq"], 1, "no commit, no seq");
+
+    // accepted: commits like any generated write
+    let (status, body) =
+        send(&router, "POST", "/insert_checked", Some(reading("delta", 21))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["seq"], 2);
+    let (_, body) = send(&router, "GET", "/views/total", None).await;
+    assert_eq!(body["data"]["value"], 5);
 }
 
 #[tokio::test]

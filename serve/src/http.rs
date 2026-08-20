@@ -7,12 +7,12 @@
 //! stay per-kind. Nothing here knows what the user's pipeline looks like:
 //! writes go through fold's `wtx`, reads dispatch through [`Views`].
 
-use std::collections::HashMap;
 use std::convert::Infallible;
 use std::sync::{Arc, RwLock};
 
+use axum::body::Bytes;
 use axum::extract::rejection::{JsonRejection, QueryRejection};
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, Query, RawQuery, State};
 use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
@@ -34,23 +34,41 @@ use crate::views::{ViewQuery, ViewRead, Views, parse_key, schema_of};
 const DEFAULT_LIMIT: usize = 100;
 const DEFAULT_K: usize = 10;
 
-/// A custom read route's request: the query-string parameters.
-pub struct CustomReq {
-    pub params: HashMap<String, String>,
-}
+// ---- custom routes ----------------------------------------------------------
+//
+// Handlers are registered typed (`Q`/`B` in, `T` out) and stored erased so
+// `App` can hold a heterogeneous list. The typed layer lives in lib.rs; it
+// captures the JSON schemas into a `CustomDoc` *before* boxing erases the
+// types, then wraps the handler so the stored closure speaks raw query
+// strings / body bytes and `Value` results.
 
-/// What a custom route handler returns: JSON data, or an HTTP status code
-/// with a message.
-pub type CustomResult = Result<Value, (u16, String)>;
-
-/// A custom handler, boxed so `App` can hold a heterogeneous list of them:
-/// given the pipeline's readers (any snapshot lifetime) and the request,
-/// produce a result.
-pub(crate) type CustomHandler<D, P> = Arc<
-    dyn for<'tx> Fn(<P as Push<D>>::Reader<'tx, Snapshot>, &CustomReq) -> CustomResult
+/// An erased custom GET handler: pipeline readers + the raw query string.
+pub(crate) type ReadHandler<D, P> = Arc<
+    dyn for<'tx> Fn(<P as Push<D>>::Reader<'tx, Snapshot>, &str) -> Result<Value, (u16, String)>
         + Send
         + Sync,
 >;
+
+/// An erased custom POST handler over a plain stream: exclusive stream
+/// access + the raw body. Runs inside `try_wtx`, so `Err` rolls back.
+pub(crate) type StreamWriteHandler<D, P> =
+    Arc<dyn Fn(&mut Stream<D, P>, &[u8]) -> Result<Value, (u16, String)> + Send + Sync>;
+
+/// As [`StreamWriteHandler`], over a keyed stream.
+pub(crate) type KeyedWriteHandler<K, V, P> =
+    Arc<dyn Fn(&mut KeyedStream<K, V, P>, &[u8]) -> Result<Value, (u16, String)> + Send + Sync>;
+
+/// One registered custom route: its OpenAPI contribution plus the erased
+/// handler. `W` is the write-handler type, which differs by stream flavor.
+pub(crate) struct CustomRoute<D: Clone, P: Push<D>, W> {
+    pub doc: crate::openapi::CustomDoc,
+    pub action: CustomAction<D, P, W>,
+}
+
+pub(crate) enum CustomAction<D: Clone, P: Push<D>, W> {
+    Read(ReadHandler<D, P>),
+    Write(W),
+}
 
 /// The documents computed once at startup and served verbatim.
 struct Docs {
@@ -109,7 +127,7 @@ where
 
 pub(crate) fn router<D, P>(
     stream: Stream<D, P>,
-    custom: Vec<(String, CustomHandler<D, P>)>,
+    custom: Vec<CustomRoute<D, P, StreamWriteHandler<D, P>>>,
     db_path: &std::path::Path,
 ) -> Router
 where
@@ -123,7 +141,7 @@ where
         specs
     });
     let input_schema = schema_of::<D>();
-    let custom_paths: Vec<String> = custom.iter().map(|(p, _)| p.clone()).collect();
+    let custom_docs: Vec<_> = custom.iter().map(|c| c.doc.clone()).collect();
 
     let schema = crate::openapi::schema_doc(&input_schema, &specs, WriteStyle::Unkeyed);
     check_fingerprint(db_path, &schema);
@@ -134,7 +152,7 @@ where
                 &input_schema,
                 &specs,
                 WriteStyle::Unkeyed,
-                &custom_paths,
+                &custom_docs,
             ),
             schema,
         },
@@ -148,22 +166,60 @@ where
         .route("/batch", post(batch::<D, P>))
         .with_state(shared.clone());
 
-    for (path, handler) in custom {
-        let shared = shared.clone();
-        app = app.route(
-            &path,
-            get(move |Query(params): Query<HashMap<String, String>>| {
+    for route in custom {
+        let path = route.doc.path.clone();
+        match route.action {
+            CustomAction::Read(handler) => {
                 let shared = shared.clone();
-                let handler = handler.clone();
-                async move {
-                    let inner = shared.inner.read().unwrap();
-                    let seq = inner.seq;
-                    let out = inner.stream.rtx(|r| handler(r, &CustomReq { params }));
-                    drop(inner);
-                    respond_custom(seq, out)
-                }
-            }),
-        );
+                app = app.route(
+                    &path,
+                    get(move |RawQuery(query): RawQuery| {
+                        let shared = shared.clone();
+                        let handler = handler.clone();
+                        async move {
+                            let inner = shared.inner.read().unwrap();
+                            let seq = inner.seq;
+                            let out =
+                                inner.stream.rtx(|r| handler(r, query.as_deref().unwrap_or("")));
+                            drop(inner);
+                            respond_custom(seq, out)
+                        }
+                    }),
+                );
+            }
+            CustomAction::Write(handler) => {
+                let shared = shared.clone();
+                app = app.route(
+                    &path,
+                    post(move |body: Bytes| {
+                        let shared = shared.clone();
+                        let handler = handler.clone();
+                        async move {
+                            let mut inner = shared.inner.write().unwrap();
+                            match handler(&mut inner.stream, &body) {
+                                Ok(data) => {
+                                    inner.seq += 1;
+                                    let seq = inner.seq;
+                                    drop(inner);
+                                    shared.notify.send_replace(seq);
+                                    Json(json!({ "seq": seq, "data": data })).into_response()
+                                }
+                                // parse failure or handler Err: the whole
+                                // transaction rolled back — no seq, no notify
+                                Err((code, msg)) => {
+                                    drop(inner);
+                                    error(
+                                        StatusCode::from_u16(code)
+                                            .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+                                        msg,
+                                    )
+                                }
+                            }
+                        }
+                    }),
+                );
+            }
+        }
     }
     app
 }
@@ -290,7 +346,7 @@ where
 
 pub(crate) fn router_keyed<K, V, P>(
     stream: KeyedStream<K, V, P>,
-    custom: Vec<(String, CustomHandler<Keyed<K, V>, P>)>,
+    custom: Vec<CustomRoute<Keyed<K, V>, P, KeyedWriteHandler<K, V, P>>>,
     db_path: &std::path::Path,
 ) -> Router
 where
@@ -306,7 +362,7 @@ where
     });
     let input_schema = schema_of::<V>();
     let key_schema = schema_of::<K>();
-    let custom_paths: Vec<String> = custom.iter().map(|(p, _)| p.clone()).collect();
+    let custom_docs: Vec<_> = custom.iter().map(|c| c.doc.clone()).collect();
     let style = WriteStyle::Keyed {
         key_schema: &key_schema,
     };
@@ -316,7 +372,7 @@ where
 
     let shared = Arc::new(SharedKeyed {
         docs: Docs {
-            openapi: crate::openapi::openapi_doc(&input_schema, &specs, style, &custom_paths),
+            openapi: crate::openapi::openapi_doc(&input_schema, &specs, style, &custom_docs),
             schema,
         },
         notify: watch::channel(0).0,
@@ -333,22 +389,58 @@ where
         .route("/batch", post(batch_keyed::<K, V, P>))
         .with_state(shared.clone());
 
-    for (path, handler) in custom {
-        let shared = shared.clone();
-        app = app.route(
-            &path,
-            get(move |Query(params): Query<HashMap<String, String>>| {
+    for route in custom {
+        let path = route.doc.path.clone();
+        match route.action {
+            CustomAction::Read(handler) => {
                 let shared = shared.clone();
-                let handler = handler.clone();
-                async move {
-                    let inner = shared.inner.read().unwrap();
-                    let seq = inner.seq;
-                    let out = inner.stream.rtx(|r| handler(r, &CustomReq { params }));
-                    drop(inner);
-                    respond_custom(seq, out)
-                }
-            }),
-        );
+                app = app.route(
+                    &path,
+                    get(move |RawQuery(query): RawQuery| {
+                        let shared = shared.clone();
+                        let handler = handler.clone();
+                        async move {
+                            let inner = shared.inner.read().unwrap();
+                            let seq = inner.seq;
+                            let out =
+                                inner.stream.rtx(|r| handler(r, query.as_deref().unwrap_or("")));
+                            drop(inner);
+                            respond_custom(seq, out)
+                        }
+                    }),
+                );
+            }
+            CustomAction::Write(handler) => {
+                let shared = shared.clone();
+                app = app.route(
+                    &path,
+                    post(move |body: Bytes| {
+                        let shared = shared.clone();
+                        let handler = handler.clone();
+                        async move {
+                            let mut inner = shared.inner.write().unwrap();
+                            match handler(&mut inner.stream, &body) {
+                                Ok(data) => {
+                                    inner.seq += 1;
+                                    let seq = inner.seq;
+                                    drop(inner);
+                                    shared.notify.send_replace(seq);
+                                    Json(json!({ "seq": seq, "data": data })).into_response()
+                                }
+                                Err((code, msg)) => {
+                                    drop(inner);
+                                    error(
+                                        StatusCode::from_u16(code)
+                                            .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+                                        msg,
+                                    )
+                                }
+                            }
+                        }
+                    }),
+                );
+            }
+        }
     }
     app
 }
@@ -659,7 +751,7 @@ fn require_query<T>(query: Result<Query<T>, QueryRejection>) -> Result<T, Respon
     }
 }
 
-fn respond_custom(seq: u64, out: CustomResult) -> Response {
+fn respond_custom(seq: u64, out: Result<Value, (u16, String)>) -> Response {
     match out {
         Ok(data) => Json(json!({ "seq": seq, "data": data })).into_response(),
         Err((code, msg)) => error(

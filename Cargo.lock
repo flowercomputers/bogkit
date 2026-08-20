@@ -365,6 +365,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "serde_urlencoded",
  "tempfile",
  "tokio",
  "tokio-stream",
@@ -2726,6 +2727,8 @@ dependencies = [
  "bog-serve",
  "ese",
  "fold",
+ "schemars",
+ "serde",
  "serde_json",
 ]
 

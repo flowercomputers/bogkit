@@ -40,9 +40,13 @@ appear in the API — so the whole HTTP layer is generated.
 - live: `GET /watch` (SSE, one `{"seq"}` event per commit) and
   `GET /views/{name}/watch?desc&limit` (fresh view payload per commit — e.g.
   a live top-10)
-- custom routes: `.get(path, |readers, req| ...)` — handler gets the same
-  reader tuple as `rtx`, one consistent snapshot, results in the standard
-  `{seq, data}` envelope
+- custom routes, fully typed: `.get(path, |readers, params: Q| -> Result<T, _>)`
+  reads on one consistent snapshot (same reader tuple as `rtx`);
+  `.post(path, |tx, body: B| -> Result<T, _>)` runs inside a fold write
+  transaction where `Err` **rolls the whole transaction back** — atomic
+  check-and-set over HTTP. `Q`/`B`/`T` schemas are captured at registration
+  (before type erasure), so custom routes appear fully typed in
+  `/openapi.json` and doc/behavior cannot drift
 - docs: `/openapi.json` (validates against the OpenAPI 3.1 spec) and
   `/schema` (pipeline fingerprint) assembled from the same values the router
   dispatches with
@@ -83,6 +87,5 @@ appear in the API — so the whole HTTP layer is generated.
 ## Known gaps (deferred, tracked in the plan doc)
 
 - commit seq resets on restart (persistent seq arrives with the delta log)
-- custom routes are read-only GETs and appear as stubs in the OpenAPI doc
 - `KeyedRanked` has no `Views` impl yet
 - crates.io dual-mode scaffolding blocked on fold publishing

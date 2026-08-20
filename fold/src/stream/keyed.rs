@@ -97,6 +97,25 @@ where
         })
     }
 
+    /// Run a fallible write transaction: commits only if `f` returns `Ok`,
+    /// rolls back completely on `Err`; see [`Stream::try_wtx`].
+    pub fn try_wtx<R, E>(
+        &mut self,
+        f: impl FnOnce(&mut KeyedTx<'_, '_, '_, K, D, P>) -> Result<R, E>,
+    ) -> Result<R, E> {
+        let table = self.table.clone();
+        let key_buf = &mut self.key_buf;
+        let val_buf = &mut self.val_buf;
+        self.inner.try_wtx(move |tx| {
+            f(&mut KeyedTx {
+                tx,
+                table,
+                key_buf,
+                val_buf,
+            })
+        })
+    }
+
     /// Run a read transaction over one consistent snapshot across all
     /// sinks; see [`Stream::rtx`].
     pub fn rtx<R>(&self, f: impl for<'tx> FnOnce(P::Reader<'tx, fjall::Snapshot>) -> R) -> R {

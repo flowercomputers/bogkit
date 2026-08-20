@@ -70,6 +70,45 @@ impl<D: Clone, P: Push<D>> Stream<D, P> {
         r
     }
 
+    /// Run a fallible write transaction: commits only if `f` returns `Ok`.
+    ///
+    /// On `Err` the whole transaction rolls back — the store is untouched
+    /// (even for deltas pushed before the error) and pipeline nodes reset
+    /// their pending state — and the error is returned. This is the
+    /// building block for check-and-set workflows: read mid-transaction
+    /// via [`Tx::rtx`], bail with `Err` to abort, return `Ok` to commit.
+    ///
+    /// Panics roll back exactly as in [`wtx`](Stream::wtx).
+    pub fn try_wtx<R, E>(
+        &mut self,
+        f: impl FnOnce(&mut Tx<'_, '_, D, P>) -> Result<R, E>,
+    ) -> Result<R, E> {
+        let mut wtx = WriteTx::new(self.store.write_tx());
+
+        let r = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            f(&mut Tx {
+                pipeline: &mut self.pipeline,
+                tx: &mut wtx,
+                _p: PhantomData,
+            })
+        })) {
+            Ok(Ok(r)) => r,
+            Ok(Err(e)) => {
+                // fjall tx rolls back on drop
+                self.pipeline.abort();
+                return Err(e);
+            }
+            Err(p) => {
+                self.pipeline.abort();
+                std::panic::resume_unwind(p);
+            }
+        };
+
+        self.pipeline.commit(&mut wtx);
+        wtx.commit();
+        Ok(r)
+    }
+
     /// Run a read transaction over one consistent snapshot across all sinks.
     ///
     /// The closure receives the pipeline's reader, which mirrors its sink

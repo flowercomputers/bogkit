@@ -8,9 +8,28 @@ use axum::http::{Request, StatusCode, header};
 use bog_serve::{KeyedApp, TextQuery};
 use fold::pipeline::{Keyed, Map, terminal};
 use http_body_util::BodyExt;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio_stream::StreamExt;
 use tower::ServiceExt;
+
+#[derive(Deserialize, JsonSchema)]
+struct TopDocParams {
+    q: String,
+}
+
+#[derive(Serialize, JsonSchema)]
+struct TopDoc {
+    id: u64,
+    text: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct Claim {
+    key: u64,
+    text: String,
+}
 
 /// Deterministic toy embedder standing in for ese: 4 dims, char-bucket
 /// counts, L2-normalized so cosine distances behave.
@@ -41,17 +60,22 @@ fn test_router() -> axum::Router {
             terminal::Table::new("docs"),
         ),
     )
-    .get("/top_doc", |(bm25, _vecs, docs), req| {
-        // a custom route: best bm25 hit for ?q=, joined to its text
-        let q = req
-            .params
-            .get("q")
-            .ok_or((400, "q required".to_string()))?;
-        let hit = bm25.search(q, 1).into_iter().next();
-        Ok(match hit {
-            Some(hit) => json!({ "id": hit.val, "text": docs.get(&hit.val) }),
-            None => Value::Null,
-        })
+    // typed custom GET: query struct in, response struct out — both
+    // schemas land in /openapi.json
+    .get("/top_doc", |(bm25, _vecs, docs), p: TopDocParams| {
+        Ok(bm25.search(&p.q, 1).into_iter().next().map(|hit| TopDoc {
+            id: hit.val,
+            text: docs.get(&hit.val),
+        }))
+    })
+    // typed custom POST: atomic check-and-set — Err rolls the whole
+    // transaction back, so a taken key is never overwritten
+    .post("/claim", |tx, c: Claim| {
+        if tx.contains(&c.key) {
+            return Err((409, format!("key {} taken", c.key)));
+        }
+        tx.upsert(&c.key, &c.text);
+        Ok(json!({ "claimed": c.key }))
     })
     .into_router()
 }
@@ -244,8 +268,41 @@ async fn custom_route_reads_the_same_snapshot() {
     assert_eq!(body["data"]["id"], 2);
     assert_eq!(body["data"]["text"], "deployed the api to kubernetes");
 
-    let (status, _) = send(&router, "GET", "/top_doc", None).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "handler errors map to status");
+    // missing required param: rejected by the typed extractor, field named
+    let (status, body) = send(&router, "GET", "/top_doc", None).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(body["error"].as_str().unwrap().contains("q"));
+}
+
+#[tokio::test]
+async fn custom_post_is_atomic_check_and_set() {
+    let router = test_router();
+    seed(&router).await; // seq 3
+
+    let claim = json!({ "key": 9, "text": "the deploy runs at midnight" });
+    let (status, body) = send(&router, "POST", "/claim", Some(claim)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["data"]["claimed"], 9);
+    assert_eq!(body["seq"], 4, "successful claim commits");
+
+    // second claim: refused, and the whole transaction rolled back
+    let steal = json!({ "key": 9, "text": "overwritten!" });
+    let (status, body) = send(&router, "POST", "/claim", Some(steal)).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert!(body["error"].as_str().unwrap().contains("taken"));
+
+    let (_, body) = send(&router, "GET", "/docs/9", None).await;
+    assert_eq!(body["data"], "the deploy runs at midnight", "original survives");
+    assert_eq!(body["seq"], 4, "rejected claim must not commit a seq");
+
+    // the rolled-back text was never indexed anywhere
+    let (_, body) = send(&router, "GET", "/views/bm25/search?q=overwritten", None).await;
+    assert!(body["data"].as_array().unwrap().is_empty());
+
+    // malformed body: rejected before any transaction, field named
+    let (status, body) = send(&router, "POST", "/claim", Some(json!({ "key": 10 }))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(body["error"].as_str().unwrap().contains("text"));
 }
 
 #[tokio::test]
@@ -290,6 +347,7 @@ async fn keyed_openapi_and_schema() {
         "/views/vecs/search",
         "/views/docs/{key}",
         "/top_doc",
+        "/claim",
         "/watch",
     ] {
         assert!(paths.contains_key(p), "missing path {p}");
@@ -299,6 +357,18 @@ async fn keyed_openapi_and_schema() {
     assert!(paths["/views/vecs/search"].get("post").is_some());
     // bm25 is text-only
     assert!(paths["/views/bm25/search"].get("post").is_none());
+
+    // custom routes are fully typed in the doc: the GET documents its
+    // query params, the POST its body and response schemas
+    let top_doc = &paths["/top_doc"]["get"];
+    assert_eq!(top_doc["parameters"][0]["name"], "q");
+    assert_eq!(top_doc["parameters"][0]["required"], true);
+    let claim_body = &paths["/claim"]["post"]["requestBody"]["content"]["application/json"]["schema"];
+    assert!(claim_body["properties"]["key"].is_object());
+    assert!(claim_body["properties"]["text"].is_object());
+    let claim_resp = &paths["/claim"]["post"]["responses"]["200"]["content"]["application/json"]
+        ["schema"];
+    assert_eq!(claim_resp["properties"]["seq"]["type"], "integer");
 
     let (_, schema) = send(&router, "GET", "/schema", None).await;
     assert_eq!(schema["write"]["keyed"]["type"], "integer", "u64 key schema");

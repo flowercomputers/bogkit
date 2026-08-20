@@ -114,10 +114,16 @@ pub trait Views {
     fn read(&self, view: &str, q: &ViewQuery) -> ViewRead;
 }
 
-/// JSON schema for `T`. The generator inlines subschemas under `$defs`, so
-/// the result is self-contained and can be embedded anywhere in a document.
+/// JSON schema for `T`, with all subschemas inlined.
+///
+/// Inlining matters: these schemas are embedded deep inside the OpenAPI
+/// document, where a schemars-default `{"$ref": "#/$defs/..."}` would
+/// point at the *document* root and dangle. The tradeoff is that
+/// recursive types cannot be inlined — API DTOs shouldn't be recursive.
 pub(crate) fn schema_of<T: JsonSchema>() -> Value {
-    let schema = schemars::SchemaGenerator::default().into_root_schema_for::<T>();
+    let mut settings = schemars::generate::SchemaSettings::default();
+    settings.inline_subschemas = true;
+    let schema = settings.into_generator().into_root_schema_for::<T>();
     serde_json::to_value(schema).unwrap()
 }
 

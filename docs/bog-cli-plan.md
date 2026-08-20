@@ -1,10 +1,12 @@
 # BogKit CLI + local dev server — development plan
 
-> **Status (Aug 2026):** phases 0–3 are built and tested. Deferred from
-> phase 3: the crates.io dual-mode switch (blocked on fold publishing),
-> `KeyedRanked` view coverage, write-capable custom routes, persistent
-> commit seqs (waiting on the delta log), and `Last-Event-ID` resume
-> (unnecessary under /watch's level semantics — documented instead).
+> **Status (Aug 2026):** phases 0–3 are built and tested, plus typed custom
+> routes (`.get`/`.post` with schemas captured at registration; POST runs
+> in fold's `try_wtx`, so `Err` rolls the transaction back). Deferred:
+> the crates.io dual-mode switch (blocked on fold publishing),
+> `KeyedRanked` view coverage, persistent commit seqs (waiting on the
+> delta log), and `Last-Event-ID` resume (unnecessary under /watch's
+> level semantics — documented instead).
 
 Goal: a `bogkit` CLI that scaffolds and runs BogKit projects locally, in two
 flavors that both stay first-class. (The name `bog` is reserved for a future

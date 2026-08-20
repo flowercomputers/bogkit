@@ -13,6 +13,48 @@ pub(crate) enum WriteStyle<'a> {
     Keyed { key_schema: &'a Value },
 }
 
+/// What a custom route contributes to the OpenAPI doc — captured at
+/// registration time, while the handler's types are still known, then
+/// carried alongside the type-erased handler.
+#[derive(Clone)]
+pub(crate) struct CustomDoc {
+    pub path: String,
+    /// `"get"` | `"post"`.
+    pub method: &'static str,
+    /// JSON schema of the query-parameter struct (GET routes).
+    pub params: Option<Value>,
+    /// JSON schema of the request body (POST routes).
+    pub body: Option<Value>,
+    /// JSON schema of the handler's Ok type.
+    pub response: Value,
+}
+
+/// Flatten a flat object schema's properties into OpenAPI query-parameter
+/// entries. Schemas without listed properties (e.g. a HashMap catch-all)
+/// yield an empty list.
+fn query_params(schema: &Value) -> Vec<Value> {
+    let required: Vec<&str> = schema["required"]
+        .as_array()
+        .map(|a| a.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    schema["properties"]
+        .as_object()
+        .map(|props| {
+            props
+                .iter()
+                .map(|(name, s)| {
+                    json!({
+                        "name": name,
+                        "in": "query",
+                        "required": required.contains(&name.as_str()),
+                        "schema": s,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Reads respond `{ "seq": <commit seq>, "data": <view-specific> }`.
 fn envelope(data: Value) -> Value {
     json!({
@@ -64,7 +106,7 @@ pub(crate) fn openapi_doc(
     input: &Value,
     specs: &[ViewSpec],
     style: WriteStyle<'_>,
-    custom_paths: &[String],
+    custom: &[CustomDoc],
 ) -> Value {
     let mut paths = serde_json::Map::new();
 
@@ -257,14 +299,32 @@ pub(crate) fn openapi_doc(
         }
     }
 
-    for path in custom_paths {
-        paths.insert(
-            path.clone(),
-            json!({ "get": {
-                "summary": "custom route (app-defined; shape not generated)",
-                "responses": { "200": { "description": "app-defined data in the seq envelope" } },
-            } }),
+    for doc in custom {
+        let mut op = serde_json::Map::new();
+        op.insert("summary".into(), json!("custom route"));
+        if let Some(params) = &doc.params {
+            let params = query_params(params);
+            if !params.is_empty() {
+                op.insert("parameters".into(), json!(params));
+            }
+        }
+        if let Some(body) = &doc.body {
+            op.insert(
+                "requestBody".into(),
+                json!({
+                    "required": true,
+                    "content": { "application/json": { "schema": body } },
+                }),
+            );
+        }
+        op.insert(
+            "responses".into(),
+            json_response(
+                "handler result in the seq envelope",
+                envelope(doc.response.clone()),
+            ),
         );
+        paths.insert(doc.path.clone(), json!({ doc.method: Value::Object(op) }));
     }
 
     paths.insert(

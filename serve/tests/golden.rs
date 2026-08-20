@@ -7,7 +7,7 @@ use std::path::Path;
 use anny::metric::Cosine;
 use axum::body::Body;
 use axum::http::Request;
-use bog_serve::{App, KeyedApp, TextQuery};
+use bog_serve::{App, KeyedApp, NoParams, TextQuery};
 use fold::pipeline::{Keyed, Map, terminal};
 use http_body_util::BodyExt;
 use schemars::JsonSchema;
@@ -57,7 +57,7 @@ fn search_router() -> axum::Router {
             terminal::Table::new("docs"),
         ),
     )
-    .get("/search/hybrid", |_readers, _req| Ok(Value::Null))
+    .get("/search/hybrid", |_readers, _: NoParams| Ok(Value::Null))
     .into_router()
 }
 
