@@ -12,6 +12,9 @@ mod hnsw;
 mod keyed_stream;
 
 #[cfg(test)]
+mod open;
+
+#[cfg(test)]
 mod retain;
 
 #[cfg(test)]
@@ -22,6 +25,9 @@ mod scored;
 
 #[cfg(test)]
 mod terminals;
+
+#[cfg(test)]
+mod try_wtx;
 
 /// A path in the system temp dir, cleared of any previous test run's state.
 pub(crate) fn fresh_db(name: &str) -> std::path::PathBuf {

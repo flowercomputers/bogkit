@@ -23,19 +23,56 @@ impl<D: Clone, P: Push<D>> Stream<D, P> {
     /// resolving each named node's keyspace.
     ///
     /// # Panics
-    /// Panics if the store cannot be opened or if two nodes claim the same
-    /// name.
-    pub fn new(path: impl AsRef<Path>, mut pipeline: P) -> Self {
-        let store = fjall::SingleWriterTxDatabase::builder(path).open().unwrap();
+    /// Panics if the store cannot be opened (see [`try_new`](Stream::try_new)
+    /// for a recoverable form) or if two nodes claim the same name.
+    pub fn new(path: impl AsRef<Path>, pipeline: P) -> Self {
+        Self::try_new(path, pipeline).unwrap()
+    }
+
+    /// Fallible [`new`](Stream::new): open (or create) the store at `path`
+    /// and initialize the pipeline.
+    ///
+    /// The store is exclusively locked per process. When another process
+    /// already holds it this returns [`fjall::Error::Locked`] — the signal
+    /// for spawn-or-connect setups to fall back to whatever server the lock
+    /// holder runs (fjall retries the lock internally for a few hundred
+    /// milliseconds first).
+    ///
+    /// # Panics
+    /// Panics if two nodes claim the same name.
+    pub fn try_new(path: impl AsRef<Path>, mut pipeline: P) -> Result<Self, fjall::Error> {
+        let store = fjall::SingleWriterTxDatabase::builder(path).open()?;
 
         let mut init = PipelineInitCtx::new(&store);
         pipeline.init(&mut init);
 
-        Stream {
+        Ok(Stream {
             pipeline,
             store,
             _p: PhantomData,
+        })
+    }
+
+    /// Destroy every keyspace in the store and re-initialize the pipeline
+    /// over the now-empty state, as if the stream had been opened on a
+    /// fresh directory.
+    ///
+    /// This is for recovering a data dir whose persisted state no longer
+    /// matches the pipeline (e.g. the sink structure changed between runs):
+    /// all data is lost, but the store stays open and the process keeps its
+    /// lock. Sinks recover their in-memory state from the empty store, so
+    /// readers created afterwards see a blank slate.
+    pub fn reset(&mut self) {
+        for name in self.store.list_keyspace_names() {
+            let ks = self
+                .store
+                .inner()
+                .keyspace(&name, fjall::KeyspaceCreateOptions::default)
+                .unwrap();
+            self.store.inner().delete_keyspace(ks).unwrap();
         }
+        let mut init = PipelineInitCtx::new(&self.store);
+        self.pipeline.init(&mut init);
     }
 
     /// Run a write transaction: every delta pushed through the [`Tx`] handle
@@ -68,6 +105,45 @@ impl<D: Clone, P: Push<D>> Stream<D, P> {
         self.pipeline.commit(&mut wtx);
         wtx.commit();
         r
+    }
+
+    /// Run a fallible write transaction: commits only if `f` returns `Ok`.
+    ///
+    /// On `Err` the whole transaction rolls back — the store is untouched
+    /// (even for deltas pushed before the error) and pipeline nodes reset
+    /// their pending state — and the error is returned. This is the
+    /// building block for check-and-set workflows: read mid-transaction
+    /// via [`Tx::rtx`], bail with `Err` to abort, return `Ok` to commit.
+    ///
+    /// Panics roll back exactly as in [`wtx`](Stream::wtx).
+    pub fn try_wtx<R, E>(
+        &mut self,
+        f: impl FnOnce(&mut Tx<'_, '_, D, P>) -> Result<R, E>,
+    ) -> Result<R, E> {
+        let mut wtx = WriteTx::new(self.store.write_tx());
+
+        let r = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            f(&mut Tx {
+                pipeline: &mut self.pipeline,
+                tx: &mut wtx,
+                _p: PhantomData,
+            })
+        })) {
+            Ok(Ok(r)) => r,
+            Ok(Err(e)) => {
+                // fjall tx rolls back on drop
+                self.pipeline.abort();
+                return Err(e);
+            }
+            Err(p) => {
+                self.pipeline.abort();
+                std::panic::resume_unwind(p);
+            }
+        };
+
+        self.pipeline.commit(&mut wtx);
+        wtx.commit();
+        Ok(r)
     }
 
     /// Run a read transaction over one consistent snapshot across all sinks.

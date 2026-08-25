@@ -1,0 +1,38 @@
+name: cli
+
+on:
+  pull_request:
+    paths: ["cli/**", "serve/**", "fold/**", "Cargo.toml", ".github/workflows/cli.yml"]
+  push:
+    branches: [main]
+    paths: ["cli/**", "serve/**", "fold/**", "Cargo.toml", ".github/workflows/cli.yml"]
+
+concurrency:
+  group: cli-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scaffold:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build the CLI
+        run: cargo build -p bogkit
+
+      - name: bog-serve tests
+        run: cargo test -p bog-serve
+
+      - name: Golden OpenAPI docs validate against the spec
+        run: pipx run openapi-spec-validator serve/tests/golden/template.json serve/tests/golden/search.json
+
+      - name: Scaffold an embedded project
+        run: cargo run -p bogkit -- new ci-embedded --kind embedded
+
+      - name: Scaffold a server project
+        run: cargo run -p bogkit -- new ci-server --kind server
+
+      - name: Scaffolded projects compile
+        run: cargo check -p ci-embedded -p ci-server

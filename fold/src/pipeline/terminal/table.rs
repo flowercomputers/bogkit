@@ -99,6 +99,7 @@ where
         TableReader {
             tx,
             ks: self.ks.clone().unwrap(),
+            name: self.name.clone(),
             _p: PhantomData,
         }
     }
@@ -108,7 +109,15 @@ where
 pub struct TableReader<'tx, R: Readable, K, V> {
     tx: &'tx R,
     ks: fjall::SingleWriterTxKeyspace,
+    name: String,
     _p: PhantomData<(K, V)>,
+}
+
+impl<'tx, R: Readable, K, V> TableReader<'tx, R, K, V> {
+    /// The sink name this reader serves, as given to [`Table::new`].
+    pub fn name(&self) -> &str {
+        &self.name
+    }
 }
 
 impl<'tx, R: Readable, K: Serialize, V: DeserializeOwned> TableReader<'tx, R, K, V> {

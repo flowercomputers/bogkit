@@ -1,0 +1,598 @@
+{
+  "info": {
+    "description": "auto-generated HTTP API over a fold pipeline",
+    "title": "bog-serve",
+    "version": "0.0.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/batch": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "items": {
+                  "properties": {
+                    "data": {
+                      "$schema": "https://json-schema.org/draft/2020-12/schema",
+                      "title": "string",
+                      "type": "string"
+                    },
+                    "key": {
+                      "$schema": "https://json-schema.org/draft/2020-12/schema",
+                      "format": "uint64",
+                      "minimum": 0,
+                      "title": "uint64",
+                      "type": "integer"
+                    },
+                    "op": {
+                      "enum": [
+                        "upsert",
+                        "remove"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "op",
+                    "key"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "seq": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "seq"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "committed atomically"
+          }
+        },
+        "summary": "apply a mix of upserts and removes in one atomic transaction"
+      }
+    },
+    "/docs/{key}": {
+      "delete": {
+        "parameters": [
+          {
+            "description": "the key, as JSON or a bare string",
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "removed": {
+                      "type": "boolean"
+                    },
+                    "seq": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "seq",
+                    "removed"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "committed"
+          }
+        },
+        "summary": "remove by key, retracting the record from every view"
+      },
+      "get": {
+        "parameters": [
+          {
+            "description": "the key, as JSON or a bare string",
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$schema": "https://json-schema.org/draft/2020-12/schema",
+                      "title": "string",
+                      "type": "string"
+                    },
+                    "seq": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "seq",
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "found"
+          }
+        },
+        "summary": "the current record under this key"
+      },
+      "put": {
+        "parameters": [
+          {
+            "description": "the key, as JSON or a bare string",
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "title": "string",
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "replaced": {
+                      "type": "boolean"
+                    },
+                    "seq": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "seq",
+                    "replaced"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "committed"
+          }
+        },
+        "summary": "insert or replace the record under this key; the old record is retracted from every view"
+      }
+    },
+    "/healthz": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "ok"
+          }
+        },
+        "summary": "liveness probe"
+      }
+    },
+    "/search/hybrid": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$schema": "https://json-schema.org/draft/2020-12/schema",
+                      "title": "AnyValue"
+                    },
+                    "seq": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "seq",
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "handler result in the seq envelope"
+          }
+        },
+        "summary": "custom route"
+      }
+    },
+    "/views/bm25/search": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "k",
+            "schema": {
+              "default": 10,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "items": {
+                        "properties": {
+                          "key": {
+                            "$schema": "https://json-schema.org/draft/2020-12/schema",
+                            "format": "uint64",
+                            "minimum": 0,
+                            "title": "uint64",
+                            "type": "integer"
+                          },
+                          "score": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "score",
+                          "key"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "seq": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "seq",
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "hits, best first"
+          }
+        },
+        "summary": "text search, ranked"
+      }
+    },
+    "/views/docs": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "list highest-first (ordered views only)",
+            "in": "query",
+            "name": "desc",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "items": {
+                        "properties": {
+                          "key": {
+                            "$schema": "https://json-schema.org/draft/2020-12/schema",
+                            "format": "uint64",
+                            "minimum": 0,
+                            "title": "uint64",
+                            "type": "integer"
+                          },
+                          "value": {
+                            "$schema": "https://json-schema.org/draft/2020-12/schema",
+                            "title": "string",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "key",
+                          "value"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "seq": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "seq",
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "one consistent snapshot"
+          }
+        },
+        "summary": "list this table view (paginated)"
+      }
+    },
+    "/views/docs/watch": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "text/event-stream"
+          }
+        },
+        "summary": "server-sent events: this view's fresh payload after every commit (?limit/?desc shape the read)"
+      }
+    },
+    "/views/docs/{key}": {
+      "get": {
+        "parameters": [
+          {
+            "description": "the key, as JSON or a bare string",
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "properties": {
+                        "key": {
+                          "$schema": "https://json-schema.org/draft/2020-12/schema",
+                          "format": "uint64",
+                          "minimum": 0,
+                          "title": "uint64",
+                          "type": "integer"
+                        },
+                        "value": {
+                          "$schema": "https://json-schema.org/draft/2020-12/schema",
+                          "title": "string",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "key",
+                        "value"
+                      ],
+                      "type": "object"
+                    },
+                    "seq": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "seq",
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "the current value under this key"
+          }
+        },
+        "summary": "point-read one key"
+      }
+    },
+    "/views/vecs/search": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "k",
+            "schema": {
+              "default": 10,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "items": {
+                        "properties": {
+                          "key": {
+                            "$schema": "https://json-schema.org/draft/2020-12/schema",
+                            "format": "uint64",
+                            "minimum": 0,
+                            "title": "uint64",
+                            "type": "integer"
+                          },
+                          "score": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "score",
+                          "key"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "seq": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "seq",
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "hits, best first"
+          }
+        },
+        "summary": "text search, ranked"
+      },
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "k": {
+                    "default": 10,
+                    "type": "integer"
+                  },
+                  "vector": {
+                    "items": {
+                      "type": "number"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "vector"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "items": {
+                        "properties": {
+                          "key": {
+                            "$schema": "https://json-schema.org/draft/2020-12/schema",
+                            "format": "uint64",
+                            "minimum": 0,
+                            "title": "uint64",
+                            "type": "integer"
+                          },
+                          "score": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "score",
+                          "key"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "seq": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "seq",
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "hits, nearest first"
+          }
+        },
+        "summary": "nearest-neighbor search by raw vector"
+      }
+    },
+    "/watch": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "text/event-stream"
+          }
+        },
+        "summary": "server-sent events: one {\"seq\": n} event per commit"
+      }
+    }
+  }
+}

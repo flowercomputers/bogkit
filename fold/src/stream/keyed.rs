@@ -67,17 +67,33 @@ where
     /// Open (or create) the store at `path` and initialize the pipeline;
     /// see [`Stream::new`].
     pub fn new(path: impl AsRef<Path>, pipeline: P) -> Self {
-        let inner = Stream::new(path, pipeline);
+        Self::try_new(path, pipeline).unwrap()
+    }
+
+    /// Fallible [`new`](KeyedStream::new); see [`Stream::try_new`] for the
+    /// meaning of [`fjall::Error::Locked`].
+    pub fn try_new(path: impl AsRef<Path>, pipeline: P) -> Result<Self, fjall::Error> {
+        let inner = Stream::try_new(path, pipeline)?;
         let table = inner
             .store()
-            .keyspace("keyed_root", fjall::KeyspaceCreateOptions::default)
-            .unwrap();
-        KeyedStream {
+            .keyspace("keyed_root", fjall::KeyspaceCreateOptions::default)?;
+        Ok(KeyedStream {
             inner,
             table,
             key_buf: Default::default(),
             val_buf: Default::default(),
-        }
+        })
+    }
+
+    /// Destroy all persisted state — the primary-key table and every sink —
+    /// and re-initialize over the empty store; see [`Stream::reset`].
+    pub fn reset(&mut self) {
+        self.inner.reset();
+        self.table = self
+            .inner
+            .store()
+            .keyspace("keyed_root", fjall::KeyspaceCreateOptions::default)
+            .unwrap();
     }
 
     /// Run a write transaction over the table and the pipeline: every
@@ -88,6 +104,25 @@ where
         let key_buf = &mut self.key_buf;
         let val_buf = &mut self.val_buf;
         self.inner.wtx(move |tx| {
+            f(&mut KeyedTx {
+                tx,
+                table,
+                key_buf,
+                val_buf,
+            })
+        })
+    }
+
+    /// Run a fallible write transaction: commits only if `f` returns `Ok`,
+    /// rolls back completely on `Err`; see [`Stream::try_wtx`].
+    pub fn try_wtx<R, E>(
+        &mut self,
+        f: impl FnOnce(&mut KeyedTx<'_, '_, '_, K, D, P>) -> Result<R, E>,
+    ) -> Result<R, E> {
+        let table = self.table.clone();
+        let key_buf = &mut self.key_buf;
+        let val_buf = &mut self.val_buf;
+        self.inner.try_wtx(move |tx| {
             f(&mut KeyedTx {
                 tx,
                 table,

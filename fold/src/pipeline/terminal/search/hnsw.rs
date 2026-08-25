@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::sync::{Arc, Mutex};
 
 use anny::metric::{Metric, Scalar};
 use fjall::Readable;
@@ -19,6 +19,11 @@ fn decode_vector<T: DeserializeOwned + Copy, const DIM: usize>(bytes: &[u8]) -> 
 // persisted rows to anny's ephemeral node ids; `stale` marks the graph as
 // diverged from the store (an aborted transaction cannot un-mutate it), to
 // be rebuilt from the persisted vectors on next use.
+//
+// Shared behind Arc<Mutex> (not Rc<RefCell>) so readers can be used from
+// multiple threads — e.g. parallel snapshot readers behind an HTTP layer.
+// Searches serialize on the lock; the lock cost is noise next to the
+// graph traversal.
 struct State<
     K,
     T,
@@ -141,7 +146,7 @@ pub struct Hnsw<
     ks: Option<fjall::SingleWriterTxKeyspace>,
     metric: M,
     seed: u64,
-    state: Rc<RefCell<State<K, T, M, DIM, M0, TOP_K, EF_SEARCH, EF_BUILD, MAX_LEVEL>>>,
+    state: Arc<Mutex<State<K, T, M, DIM, M0, TOP_K, EF_SEARCH, EF_BUILD, MAX_LEVEL>>>,
     // encoded key -> (key, latest embedding, net delta this tx)
     pending: FxHashMap<Vec<u8>, (K, [T; DIM], i64)>,
     vec_buf: Vec<u8>,
@@ -174,7 +179,7 @@ where
             ks: None,
             metric,
             seed,
-            state: Rc::new(RefCell::new(State {
+            state: Arc::new(Mutex::new(State {
                 index: anny::hnsw::Hnsw::new(metric, seed),
                 ids: FxHashMap::default(),
                 keys: FxHashMap::default(),
@@ -208,7 +213,7 @@ where
     fn init(&mut self, init: &mut PipelineInitCtx<'_>) {
         let ks = init.keyspace(&self.name);
         // recover the graph from the vectors persisted by earlier runs
-        self.state.borrow_mut().rebuild(
+        self.state.lock().unwrap().rebuild(
             self.metric,
             self.seed,
             init.snapshot().iter(&ks).map(|kv| {
@@ -235,7 +240,7 @@ where
             return;
         }
         let ks = self.ks.clone().unwrap();
-        let mut state = self.state.borrow_mut();
+        let mut state = self.state.lock().unwrap();
         if state.stale {
             // the previous transaction aborted: this one sees clean
             // committed state, so resync the graph before applying
@@ -268,16 +273,17 @@ where
     fn abort(&mut self) {
         self.pending.clear();
         // graph mutations from any mid-tx flush cannot be undone in place
-        self.state.borrow_mut().stale = true;
+        self.state.lock().unwrap().stale = true;
     }
 
     fn reader<'tx, R: Readable>(&self, tx: &'tx R) -> Self::Reader<'tx, R> {
         HnswReader {
             tx,
             ks: self.ks.clone().unwrap(),
+            name: self.name.clone(),
             metric: self.metric,
             seed: self.seed,
-            state: Rc::clone(&self.state),
+            state: Arc::clone(&self.state),
         }
     }
 }
@@ -298,9 +304,10 @@ pub struct HnswReader<
 > {
     tx: &'tx R,
     ks: fjall::SingleWriterTxKeyspace,
+    name: String,
     metric: M,
     seed: u64,
-    state: Rc<RefCell<State<K, T, M, DIM, M0, TOP_K, EF_SEARCH, EF_BUILD, MAX_LEVEL>>>,
+    state: Arc<Mutex<State<K, T, M, DIM, M0, TOP_K, EF_SEARCH, EF_BUILD, MAX_LEVEL>>>,
 }
 
 impl<
@@ -322,11 +329,16 @@ where
     T: Scalar + DeserializeOwned,
     M: Metric<T> + Copy,
 {
+    /// The sink name this reader serves, as given to [`Hnsw::new`].
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
     fn with_state<Ret>(
         &self,
         f: impl FnOnce(&mut State<K, T, M, DIM, M0, TOP_K, EF_SEARCH, EF_BUILD, MAX_LEVEL>) -> Ret,
     ) -> Ret {
-        let mut state = self.state.borrow_mut();
+        let mut state = self.state.lock().unwrap();
         if state.stale {
             let entries = self.tx.iter(&self.ks).map(|kv| {
                 let (k, v) = kv.into_inner().unwrap();

@@ -58,5 +58,9 @@ pub mod pipeline;
 
 pub mod stream;
 
+// Re-exported so layers generic over readers (e.g. bog-serve) can name
+// fjall types like `Snapshot` without depending on fjall separately.
+pub use fjall;
+
 #[cfg(test)]
 mod tests;
