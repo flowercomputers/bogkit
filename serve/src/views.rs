@@ -10,8 +10,8 @@
 
 use fold::pipeline::Score;
 use fold::pipeline::terminal::{
-    BagReader, CountReader, HistogramReader, InvertedIndexReader, MultimapReader, RankedReader,
-    StatsReader, TableReader,
+    BagReader, CountReader, HistogramReader, InvertedIndexReader, KeyedRankedReader,
+    MultimapReader, RankedReader, StatsReader, TableReader,
 };
 use fold::stream::Readable;
 use schemars::JsonSchema;
@@ -21,78 +21,146 @@ use serde_json::{Value, json};
 /// What one sink contributes to the OpenAPI doc and `/schema` fingerprint.
 pub struct ViewSpec {
     pub name: String,
-    /// `"count"` | `"bag"` | `"table"` | `"bm25"` | `"hnsw"` — decides the
-    /// documented response shape.
-    pub kind: &'static str,
+    pub kind: ViewKind,
     /// Whether the view supports point lookup at `/views/{name}/{key}`.
     pub keyed: bool,
-    /// How `/views/{name}/search` queries this view, if it is searchable:
-    /// `"text"` (GET `?q=`), `"vector"` (POST `{vector}`), or `"text+vector"`.
-    pub search: Option<&'static str>,
+    pub search: Option<SearchMode>,
     /// JSON schema of one item as this view returns it.
     pub item_schema: Value,
 }
 
-/// A read request, already routed to `/views/{name}[/{key}|/search]`.
-pub struct ViewQuery {
-    /// The raw `{key}` path segment, when present.
-    pub key: Option<String>,
-    /// True when the request came through `/views/{name}/search`.
-    pub searching: bool,
-    /// Text query (`?q=`), for text-searchable views.
-    pub q: Option<String>,
-    /// Raw vector (POST body), for vector-searchable views.
-    pub vector: Option<Value>,
-    /// Max search hits to return.
-    pub k: usize,
-    pub limit: usize,
-    pub offset: usize,
-    /// List ordered views highest-first (`?desc=true`). Honored by ordered
-    /// views (ranked, histogram); ignored by unordered ones.
-    pub desc: bool,
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ViewKind {
+    Count,
+    Bag,
+    Table,
+    Stats,
+    Histogram,
+    Ranked,
+    KeyedRanked,
+    Multimap,
+    InvertedIndex,
+    Bm25,
+    Hnsw,
+}
+
+impl ViewKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Count => "count",
+            Self::Bag => "bag",
+            Self::Table => "table",
+            Self::Stats => "stats",
+            Self::Histogram => "histogram",
+            Self::Ranked => "ranked",
+            Self::KeyedRanked => "keyed_ranked",
+            Self::Multimap => "multimap",
+            Self::InvertedIndex => "inverted_index",
+            Self::Bm25 => "bm25",
+            Self::Hnsw => "hnsw",
+        }
+    }
+
+    pub(crate) fn listing(self) -> Listing {
+        match self {
+            Self::Count | Self::Stats => Listing::Scalar,
+            Self::Histogram => Listing::Object,
+            Self::Bag | Self::Table | Self::Ranked => Listing::Page,
+            Self::Multimap | Self::InvertedIndex | Self::KeyedRanked => Listing::PointOnly,
+            Self::Bm25 | Self::Hnsw => Listing::SearchOnly,
+        }
+    }
+}
+
+/// How `GET /views/{name}` is documented and served.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Listing {
+    /// One object, no pagination (count, stats).
+    Scalar,
+    /// One object whose innards paginate (histogram buckets).
+    Object,
+    /// A paginated array.
+    Page,
+    /// No listing GET; point lookup only.
+    PointOnly,
+    /// No listing GET; search only.
+    SearchOnly,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SearchMode {
+    Text,
+    Vector,
+    TextAndVector,
+}
+
+impl SearchMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Vector => "vector",
+            Self::TextAndVector => "text+vector",
+        }
+    }
+
+    pub(crate) fn has_text(self) -> bool {
+        matches!(self, Self::Text | Self::TextAndVector)
+    }
+
+    pub(crate) fn has_vector(self) -> bool {
+        matches!(self, Self::Vector | Self::TextAndVector)
+    }
+}
+
+/// A read request already routed to `/views/{name}[/{key}|/search]`.
+pub enum ViewQuery {
+    List {
+        limit: usize,
+        offset: usize,
+        desc: bool,
+    },
+    Point {
+        key: String,
+        limit: usize,
+        offset: usize,
+        desc: bool,
+    },
+    Search {
+        q: Option<String>,
+        vector: Option<Value>,
+        k: usize,
+    },
 }
 
 impl ViewQuery {
-    fn base() -> Self {
-        ViewQuery {
-            key: None,
-            searching: false,
-            q: None,
-            vector: None,
-            k: 10,
+    pub fn list(limit: usize, offset: usize, desc: bool) -> Self {
+        Self::List {
+            limit,
+            offset,
+            desc,
+        }
+    }
+
+    pub fn point(key: String) -> Self {
+        Self::Point {
+            key,
             limit: 100,
             offset: 0,
             desc: false,
         }
     }
 
-    /// A paginated listing: `GET /views/{name}`.
-    pub fn list(limit: usize, offset: usize, desc: bool) -> Self {
-        ViewQuery {
+    pub fn point_page(key: String, limit: usize, offset: usize, desc: bool) -> Self {
+        Self::Point {
+            key,
             limit,
             offset,
             desc,
-            ..Self::base()
         }
     }
 
-    /// A point lookup: `GET /views/{name}/{key}`.
-    pub fn point(key: String) -> Self {
-        ViewQuery {
-            key: Some(key),
-            ..Self::base()
-        }
-    }
-
-    /// A search: `/views/{name}/search`, by text (`q`) or raw vector.
     pub fn search(q: Option<String>, vector: Option<Value>, k: usize) -> Self {
-        ViewQuery {
-            searching: true,
-            q,
-            vector,
-            k,
-            ..Self::base()
-        }
+        Self::Search { q, vector, k }
     }
 }
 
@@ -114,12 +182,28 @@ pub trait Views {
     fn read(&self, view: &str, q: &ViewQuery) -> ViewRead;
 }
 
+pub(crate) fn spec(
+    name: impl Into<String>,
+    kind: ViewKind,
+    keyed: bool,
+    search: Option<SearchMode>,
+    item_schema: Value,
+) -> ViewSpec {
+    ViewSpec {
+        name: name.into(),
+        kind,
+        keyed,
+        search,
+        item_schema,
+    }
+}
+
 /// JSON schema for `T`, with all subschemas inlined.
 ///
 /// Inlining matters: these schemas are embedded deep inside the OpenAPI
 /// document, where a schemars-default `{"$ref": "#/$defs/..."}` would
-/// point at the *document* root and dangle. The tradeoff is that
-/// recursive types cannot be inlined — API DTOs shouldn't be recursive.
+/// point at the *document* root and dangle. Recursive types cannot be
+/// inlined — API DTOs shouldn't be recursive.
 pub(crate) fn schema_of<T: JsonSchema>() -> Value {
     let mut settings = schemars::generate::SchemaSettings::default();
     settings.inline_subschemas = true;
@@ -136,29 +220,53 @@ pub(crate) fn parse_key<K: DeserializeOwned>(raw: &str) -> Option<K> {
         .or_else(|| serde_json::from_value(Value::String(raw.to_string())).ok())
 }
 
+fn not_searchable() -> ViewRead {
+    ViewRead::BadRequest("this view is not searchable".into())
+}
+
+fn page<I, T>(
+    iter: I,
+    offset: usize,
+    limit: usize,
+    desc: bool,
+    row: impl Fn(T) -> Value,
+) -> Vec<Value>
+where
+    I: DoubleEndedIterator<Item = T>,
+{
+    if desc {
+        iter.rev().skip(offset).take(limit).map(row).collect()
+    } else {
+        iter.skip(offset).take(limit).map(row).collect()
+    }
+}
+
 impl<R: Readable> Views for CountReader<'_, R> {
     fn specs(&self, out: &mut Vec<ViewSpec>) {
-        out.push(ViewSpec {
-            name: self.name().to_string(),
-            kind: "count",
-            keyed: false,
-            search: None,
-            item_schema: json!({
+        out.push(spec(
+            self.name(),
+            ViewKind::Count,
+            false,
+            None,
+            json!({
                 "type": "object",
                 "properties": { "value": { "type": "integer" } },
                 "required": ["value"],
             }),
-        });
+        ));
     }
 
     fn read(&self, view: &str, q: &ViewQuery) -> ViewRead {
         if view != self.name() {
             return ViewRead::NotFound;
         }
-        if q.searching {
-            return ViewRead::BadRequest("this view is not searchable".into());
+        match q {
+            ViewQuery::Search { .. } => not_searchable(),
+            ViewQuery::Point { .. } => {
+                ViewRead::BadRequest("count views have no key lookup".into())
+            }
+            ViewQuery::List { .. } => ViewRead::Data(json!({ "value": self.get() })),
         }
-        ViewRead::Data(json!({ "value": self.get() }))
     }
 }
 
@@ -167,12 +275,12 @@ where
     D: Serialize + DeserializeOwned + JsonSchema,
 {
     fn specs(&self, out: &mut Vec<ViewSpec>) {
-        out.push(ViewSpec {
-            name: self.name().to_string(),
-            kind: "bag",
-            keyed: false,
-            search: None,
-            item_schema: json!({
+        out.push(spec(
+            self.name(),
+            ViewKind::Bag,
+            false,
+            None,
+            json!({
                 "type": "object",
                 "properties": {
                     "value": schema_of::<D>(),
@@ -180,26 +288,26 @@ where
                 },
                 "required": ["value", "count"],
             }),
-        });
+        ));
     }
 
     fn read(&self, view: &str, q: &ViewQuery) -> ViewRead {
         if view != self.name() {
             return ViewRead::NotFound;
         }
-        if q.searching {
-            return ViewRead::BadRequest("this view is not searchable".into());
+        match q {
+            ViewQuery::Search { .. } => not_searchable(),
+            ViewQuery::Point { .. } => ViewRead::BadRequest("bag views have no key lookup".into()),
+            ViewQuery::List { limit, offset, .. } => {
+                let items: Vec<Value> = self
+                    .iter()
+                    .skip(*offset)
+                    .take(*limit)
+                    .map(|(value, count)| json!({ "value": value, "count": count }))
+                    .collect();
+                ViewRead::Data(Value::Array(items))
+            }
         }
-        if q.key.is_some() {
-            return ViewRead::BadRequest("bag views have no key lookup".into());
-        }
-        let items: Vec<Value> = self
-            .iter()
-            .skip(q.offset)
-            .take(q.limit)
-            .map(|(value, count)| json!({ "value": value, "count": count }))
-            .collect();
-        ViewRead::Data(Value::Array(items))
     }
 }
 
@@ -209,12 +317,12 @@ where
     V: Serialize + DeserializeOwned + JsonSchema,
 {
     fn specs(&self, out: &mut Vec<ViewSpec>) {
-        out.push(ViewSpec {
-            name: self.name().to_string(),
-            kind: "table",
-            keyed: true,
-            search: None,
-            item_schema: json!({
+        out.push(spec(
+            self.name(),
+            ViewKind::Table,
+            true,
+            None,
+            json!({
                 "type": "object",
                 "properties": {
                     "key": schema_of::<K>(),
@@ -222,18 +330,16 @@ where
                 },
                 "required": ["key", "value"],
             }),
-        });
+        ));
     }
 
     fn read(&self, view: &str, q: &ViewQuery) -> ViewRead {
         if view != self.name() {
             return ViewRead::NotFound;
         }
-        if q.searching {
-            return ViewRead::BadRequest("this view is not searchable".into());
-        }
-        match &q.key {
-            Some(raw) => match parse_key::<K>(raw) {
+        match q {
+            ViewQuery::Search { .. } => not_searchable(),
+            ViewQuery::Point { key: raw, .. } => match parse_key::<K>(raw) {
                 None => {
                     ViewRead::BadRequest(format!("cannot parse {raw:?} as this table's key type"))
                 }
@@ -242,11 +348,11 @@ where
                     None => ViewRead::NotFound,
                 },
             },
-            None => {
+            ViewQuery::List { limit, offset, .. } => {
                 let items: Vec<Value> = self
                     .iter()
-                    .skip(q.offset)
-                    .take(q.limit)
+                    .skip(*offset)
+                    .take(*limit)
                     .map(|(key, value)| json!({ "key": key, "value": value }))
                     .collect();
                 ViewRead::Data(Value::Array(items))
@@ -257,12 +363,12 @@ where
 
 impl<R: Readable> Views for StatsReader<'_, R> {
     fn specs(&self, out: &mut Vec<ViewSpec>) {
-        out.push(ViewSpec {
-            name: self.name().to_string(),
-            kind: "stats",
-            keyed: false,
-            search: None,
-            item_schema: json!({
+        out.push(spec(
+            self.name(),
+            ViewKind::Stats,
+            false,
+            None,
+            json!({
                 "type": "object",
                 "properties": {
                     "count": { "type": "integer" },
@@ -273,23 +379,26 @@ impl<R: Readable> Views for StatsReader<'_, R> {
                 },
                 "required": ["count", "sum", "mean", "variance", "stddev"],
             }),
-        });
+        ));
     }
 
     fn read(&self, view: &str, q: &ViewQuery) -> ViewRead {
         if view != self.name() {
             return ViewRead::NotFound;
         }
-        if q.searching {
-            return ViewRead::BadRequest("this view is not searchable".into());
+        match q {
+            ViewQuery::Search { .. } => not_searchable(),
+            ViewQuery::Point { .. } => {
+                ViewRead::BadRequest("stats views have no key lookup".into())
+            }
+            ViewQuery::List { .. } => ViewRead::Data(json!({
+                "count": self.count(),
+                "sum": self.sum(),
+                "mean": self.mean(),
+                "variance": self.variance(),
+                "stddev": self.stddev(),
+            })),
         }
-        ViewRead::Data(json!({
-            "count": self.count(),
-            "sum": self.sum(),
-            "mean": self.mean(),
-            "variance": self.variance(),
-            "stddev": self.stddev(),
-        }))
     }
 }
 
@@ -299,12 +408,12 @@ where
     T: Score + Serialize + JsonSchema,
 {
     fn specs(&self, out: &mut Vec<ViewSpec>) {
-        out.push(ViewSpec {
-            name: self.name().to_string(),
-            kind: "histogram",
-            keyed: false,
-            search: None,
-            item_schema: json!({
+        out.push(spec(
+            self.name(),
+            ViewKind::Histogram,
+            false,
+            None,
+            json!({
                 "type": "object",
                 "properties": {
                     "total": { "type": "integer" },
@@ -322,27 +431,28 @@ where
                 },
                 "required": ["total", "buckets"],
             }),
-        });
+        ));
     }
 
     fn read(&self, view: &str, q: &ViewQuery) -> ViewRead {
         if view != self.name() {
             return ViewRead::NotFound;
         }
-        if q.searching {
-            return ViewRead::BadRequest("this view is not searchable".into());
+        match q {
+            ViewQuery::Search { .. } => not_searchable(),
+            ViewQuery::Point { .. } => {
+                ViewRead::BadRequest("histogram views have no key lookup".into())
+            }
+            ViewQuery::List {
+                limit,
+                offset,
+                desc,
+            } => {
+                let row = |(bucket, count): (T, i64)| json!({ "bucket": bucket, "count": count });
+                let buckets = page(self.iter(), *offset, *limit, *desc, row);
+                ViewRead::Data(json!({ "total": self.total(), "buckets": buckets }))
+            }
         }
-        if q.key.is_some() {
-            return ViewRead::BadRequest("histogram views have no key lookup".into());
-        }
-        let row = |(bucket, count): (T, i64)| json!({ "bucket": bucket, "count": count });
-        // iter() is ordered by bucket; ?desc=true walks it from the top
-        let buckets: Vec<Value> = if q.desc {
-            self.iter().rev().skip(q.offset).take(q.limit).map(row).collect()
-        } else {
-            self.iter().skip(q.offset).take(q.limit).map(row).collect()
-        };
-        ViewRead::Data(json!({ "total": self.total(), "buckets": buckets }))
     }
 }
 
@@ -353,12 +463,12 @@ where
     V: Clone + Serialize + DeserializeOwned + JsonSchema,
 {
     fn specs(&self, out: &mut Vec<ViewSpec>) {
-        out.push(ViewSpec {
-            name: self.name().to_string(),
-            kind: "ranked",
-            keyed: false,
-            search: None,
-            item_schema: json!({
+        out.push(spec(
+            self.name(),
+            ViewKind::Ranked,
+            false,
+            None,
+            json!({
                 "type": "object",
                 "properties": {
                     "score": schema_of::<S>(),
@@ -367,29 +477,85 @@ where
                 },
                 "required": ["score", "value", "count"],
             }),
-        });
+        ));
     }
 
     fn read(&self, view: &str, q: &ViewQuery) -> ViewRead {
         if view != self.name() {
             return ViewRead::NotFound;
         }
-        if q.searching {
-            return ViewRead::BadRequest("this view is not searchable".into());
+        match q {
+            ViewQuery::Search { .. } => not_searchable(),
+            ViewQuery::Point { .. } => {
+                ViewRead::BadRequest("ranked views have no key lookup".into())
+            }
+            ViewQuery::List {
+                limit,
+                offset,
+                desc,
+            } => {
+                let row = |(scored, count): (fold::pipeline::Scored<S, V>, i64)| json!({ "score": scored.score, "value": scored.val, "count": count });
+                ViewRead::Data(Value::Array(page(self.iter(), *offset, *limit, *desc, row)))
+            }
         }
-        if q.key.is_some() {
-            return ViewRead::BadRequest("ranked views have no key lookup".into());
+    }
+}
+
+impl<R, K, S, V> Views for KeyedRankedReader<'_, R, K, S, V>
+where
+    R: Readable,
+    K: Serialize + DeserializeOwned + JsonSchema,
+    S: Score + Serialize + JsonSchema,
+    V: Clone + Serialize + DeserializeOwned + JsonSchema,
+{
+    fn specs(&self, out: &mut Vec<ViewSpec>) {
+        out.push(spec(
+            self.name(),
+            ViewKind::KeyedRanked,
+            true,
+            None,
+            json!({
+                "type": "object",
+                "properties": {
+                    "score": schema_of::<S>(),
+                    "value": schema_of::<V>(),
+                    "count": { "type": "integer" },
+                },
+                "required": ["score", "value", "count"],
+            }),
+        ));
+    }
+
+    fn read(&self, view: &str, q: &ViewQuery) -> ViewRead {
+        if view != self.name() {
+            return ViewRead::NotFound;
         }
-        let row = |(scored, count): (fold::pipeline::Scored<S, V>, i64)| {
-            json!({ "score": scored.score, "value": scored.val, "count": count })
-        };
-        // score-ordered; ?desc=true lists best-first (the top-n read)
-        let items: Vec<Value> = if q.desc {
-            self.iter().rev().skip(q.offset).take(q.limit).map(row).collect()
-        } else {
-            self.iter().skip(q.offset).take(q.limit).map(row).collect()
-        };
-        ViewRead::Data(Value::Array(items))
+        match q {
+            ViewQuery::Search { .. } => not_searchable(),
+            ViewQuery::List { .. } => ViewRead::BadRequest(format!(
+                "keyed ranked views are point lookups: GET /views/{view}/{{key}}"
+            )),
+            ViewQuery::Point {
+                key: raw,
+                limit,
+                offset,
+                desc,
+            } => match parse_key::<K>(raw) {
+                None => {
+                    ViewRead::BadRequest(format!("cannot parse {raw:?} as this view's key type"))
+                }
+                Some(key) => {
+                    let row = |(scored, count): (fold::pipeline::Scored<S, V>, i64)| json!({ "score": scored.score, "value": scored.val, "count": count });
+                    ViewRead::Data(Value::Array(page(
+                        self.iter(&key),
+                        *offset,
+                        *limit,
+                        *desc,
+                        row,
+                    )))
+                }
+            },
+        }
     }
 }
 
@@ -400,12 +566,12 @@ where
     V: Serialize + DeserializeOwned + JsonSchema,
 {
     fn specs(&self, out: &mut Vec<ViewSpec>) {
-        out.push(ViewSpec {
-            name: self.name().to_string(),
-            kind: "multimap",
-            keyed: true,
-            search: None,
-            item_schema: json!({
+        out.push(spec(
+            self.name(),
+            ViewKind::Multimap,
+            true,
+            None,
+            json!({
                 "type": "object",
                 "properties": {
                     "key": schema_of::<K>(),
@@ -413,22 +579,22 @@ where
                 },
                 "required": ["key", "values"],
             }),
-        });
+        ));
     }
 
     fn read(&self, view: &str, q: &ViewQuery) -> ViewRead {
         if view != self.name() {
             return ViewRead::NotFound;
         }
-        if q.searching {
-            return ViewRead::BadRequest("this view is not searchable".into());
-        }
-        match &q.key {
-            None => ViewRead::BadRequest(format!(
+        match q {
+            ViewQuery::Search { .. } => not_searchable(),
+            ViewQuery::List { .. } => ViewRead::BadRequest(format!(
                 "multimap views are point lookups: GET /views/{view}/{{key}}"
             )),
-            Some(raw) => match parse_key::<K>(raw) {
-                None => ViewRead::BadRequest(format!("cannot parse {raw:?} as this view's key type")),
+            ViewQuery::Point { key: raw, .. } => match parse_key::<K>(raw) {
+                None => {
+                    ViewRead::BadRequest(format!("cannot parse {raw:?} as this view's key type"))
+                }
                 // set semantics: an absent key and an empty posting list are
                 // the same thing, so this is a 200 with [], not a 404
                 Some(key) => ViewRead::Data(json!({ "key": key, "values": self.get(&key) })),
@@ -444,12 +610,12 @@ where
     V: Serialize + DeserializeOwned + JsonSchema,
 {
     fn specs(&self, out: &mut Vec<ViewSpec>) {
-        out.push(ViewSpec {
-            name: self.name().to_string(),
-            kind: "inverted_index",
-            keyed: true,
-            search: None,
-            item_schema: json!({
+        out.push(spec(
+            self.name(),
+            ViewKind::InvertedIndex,
+            true,
+            None,
+            json!({
                 "type": "object",
                 "properties": {
                     "value": schema_of::<V>(),
@@ -457,22 +623,19 @@ where
                 },
                 "required": ["value", "keys"],
             }),
-        });
+        ));
     }
 
     fn read(&self, view: &str, q: &ViewQuery) -> ViewRead {
         if view != self.name() {
             return ViewRead::NotFound;
         }
-        if q.searching {
-            return ViewRead::BadRequest("this view is not searchable".into());
-        }
-        match &q.key {
-            None => ViewRead::BadRequest(format!(
+        match q {
+            ViewQuery::Search { .. } => not_searchable(),
+            ViewQuery::List { .. } => ViewRead::BadRequest(format!(
                 "inverted index views are point lookups: GET /views/{view}/{{value}}"
             )),
-            // the path segment here is a posted *value*, not a key
-            Some(raw) => match parse_key::<V>(raw) {
+            ViewQuery::Point { key: raw, .. } => match parse_key::<V>(raw) {
                 None => {
                     ViewRead::BadRequest(format!("cannot parse {raw:?} as this view's value type"))
                 }

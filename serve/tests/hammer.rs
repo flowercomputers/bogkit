@@ -52,7 +52,12 @@ async fn writers_readers_and_watchers_agree() {
     // subscribe to /watch before any writes so the feed spans the whole run
     let watch_resp = router
         .clone()
-        .oneshot(Request::builder().uri("/watch").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/watch")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     let mut watch_events = watch_resp.into_body().into_data_stream();

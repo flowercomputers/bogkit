@@ -1,15 +1,15 @@
 //! Drive every generated route through the router in-process: tower's
 //! `oneshot` sends one request through the service without a listener.
 
-use axum::body::Body;
-use axum::http::{Request, StatusCode, header};
+use axum::http::StatusCode;
 use bog_serve::App;
 use fold::pipeline::{KeyBy, terminal};
-use http_body_util::BodyExt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tower::ServiceExt;
+
+mod common;
+use common::send;
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema)]
 struct Entry {
@@ -30,33 +30,6 @@ fn test_router() -> axum::Router {
         ),
     )
     .into_router()
-}
-
-async fn send(
-    router: &axum::Router,
-    method: &str,
-    path: &str,
-    body: Option<Value>,
-) -> (StatusCode, Value) {
-    let req = match body {
-        Some(v) => Request::builder()
-            .method(method)
-            .uri(path)
-            .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(v.to_string()))
-            .unwrap(),
-        None => Request::builder()
-            .method(method)
-            .uri(path)
-            .body(Body::empty())
-            .unwrap(),
-    };
-    let resp = router.clone().oneshot(req).await.unwrap();
-    let status = resp.status();
-    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    let value = serde_json::from_slice(&bytes)
-        .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).into_owned()));
-    (status, value)
 }
 
 fn entry(id: u64, text: &str) -> Value {
@@ -126,7 +99,10 @@ async fn batch_commits_atomically_or_rejects_wholly() {
     let (status, _) = send(&router, "POST", "/batch", Some(bad)).await;
     assert!(status.is_client_error());
     let (_, body) = send(&router, "GET", "/views/total", None).await;
-    assert_eq!(body["data"]["value"], 1, "rejected batch must write nothing");
+    assert_eq!(
+        body["data"]["value"], 1,
+        "rejected batch must write nothing"
+    );
     assert_eq!(body["seq"], 1, "rejected batch must not commit");
 }
 

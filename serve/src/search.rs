@@ -16,7 +16,7 @@ use schemars::JsonSchema;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 
-use crate::views::{ViewQuery, ViewRead, ViewSpec, Views, schema_of};
+use crate::views::{SearchMode, ViewKind, ViewQuery, ViewRead, ViewSpec, Views, schema_of, spec};
 
 /// One search hit: `{ "score": <number>, "key": <K> }`.
 fn hit_schema(key_schema: Value) -> Value {
@@ -39,8 +39,6 @@ fn hits_json<S: Serialize, K: Serialize>(hits: &[Scored<S, K>], k: usize) -> Val
     )
 }
 
-// ---- bm25 -------------------------------------------------------------------
-
 impl<R, K, T> Views for Bm25Reader<'_, R, K, T>
 where
     R: Readable,
@@ -48,33 +46,33 @@ where
     T: Fn(&str, &mut Vec<u8>),
 {
     fn specs(&self, out: &mut Vec<ViewSpec>) {
-        out.push(ViewSpec {
-            name: self.name().to_string(),
-            kind: "bm25",
-            keyed: false,
-            search: Some("text"),
-            item_schema: hit_schema(schema_of::<K>()),
-        });
+        out.push(spec(
+            self.name(),
+            ViewKind::Bm25,
+            false,
+            Some(SearchMode::Text),
+            hit_schema(schema_of::<K>()),
+        ));
     }
 
     fn read(&self, view: &str, q: &ViewQuery) -> ViewRead {
         if view != self.name() {
             return ViewRead::NotFound;
         }
-        match &q.q {
-            Some(text) => ViewRead::Data(hits_json(&self.search(text, q.k), q.k)),
-            None if q.vector.is_some() => {
-                ViewRead::BadRequest("bm25 searches text: GET .../search?q=...".into())
-            }
-            None if q.searching => ViewRead::BadRequest("q required".into()),
-            None => ViewRead::BadRequest(format!(
+        match q {
+            ViewQuery::Search {
+                q: Some(text), k, ..
+            } => ViewRead::Data(hits_json(&self.search(text, *k), *k)),
+            ViewQuery::Search {
+                vector: Some(_), ..
+            } => ViewRead::BadRequest("bm25 searches text: GET .../search?q=...".into()),
+            ViewQuery::Search { .. } => ViewRead::BadRequest("q required".into()),
+            _ => ViewRead::BadRequest(format!(
                 "this view is searched: GET /views/{view}/search?q=..."
             )),
         }
     }
 }
-
-// ---- hnsw -------------------------------------------------------------------
 
 /// Typed vector search behind a JSON boundary — the shared surface between
 /// a bare [`HnswReader`] and one wrapped in [`TextQuery`]. `Query` is the
@@ -91,8 +89,18 @@ pub trait VectorSearch {
     fn key_schema(&self) -> Value;
 }
 
-impl<R, K, T, M, const DIM: usize, const M0: usize, const TOP_K: usize, const EF_SEARCH: usize, const EF_BUILD: usize, const MAX_LEVEL: usize>
-    VectorSearch for HnswReader<'_, R, K, T, M, DIM, M0, TOP_K, EF_SEARCH, EF_BUILD, MAX_LEVEL>
+impl<
+    R,
+    K,
+    T,
+    M,
+    const DIM: usize,
+    const M0: usize,
+    const TOP_K: usize,
+    const EF_SEARCH: usize,
+    const EF_BUILD: usize,
+    const MAX_LEVEL: usize,
+> VectorSearch for HnswReader<'_, R, K, T, M, DIM, M0, TOP_K, EF_SEARCH, EF_BUILD, MAX_LEVEL>
 where
     R: Readable,
     K: Clone + Serialize + DeserializeOwned + JsonSchema,
@@ -133,55 +141,45 @@ fn vector_read<S: VectorSearch>(
     if view != index.name() {
         return ViewRead::NotFound;
     }
-    if let Some(text) = &q.q {
-        return match encoder {
-            Some(encode) => ViewRead::Data(index.hits(&encode(text), q.k)),
+    match q {
+        ViewQuery::Search {
+            q: Some(text), k, ..
+        } => match encoder {
+            Some(encode) => ViewRead::Data(index.hits(&encode(text), *k)),
             None => ViewRead::BadRequest(
                 "this view searches by vector: POST {\"vector\": [...]} — or wrap the sink \
                  in TextQuery to enable ?q="
                     .into(),
             ),
-        };
-    }
-    if let Some(raw) = &q.vector {
-        return match index.parse(raw) {
-            Ok(vec) => ViewRead::Data(index.hits(&vec, q.k)),
+        },
+        ViewQuery::Search {
+            vector: Some(raw),
+            k,
+            ..
+        } => match index.parse(raw) {
+            Ok(vec) => ViewRead::Data(index.hits(&vec, *k)),
             Err(msg) => ViewRead::BadRequest(msg),
-        };
+        },
+        ViewQuery::Search { .. } => ViewRead::BadRequest("a q or vector query is required".into()),
+        _ => ViewRead::BadRequest(format!("this view is searched: POST /views/{view}/search")),
     }
-    if q.searching {
-        return ViewRead::BadRequest("a q or vector query is required".into());
-    }
-    ViewRead::BadRequest(format!(
-        "this view is searched: POST /views/{view}/search"
-    ))
 }
 
-impl<R, K, T, M, const DIM: usize, const M0: usize, const TOP_K: usize, const EF_SEARCH: usize, const EF_BUILD: usize, const MAX_LEVEL: usize>
-    Views for HnswReader<'_, R, K, T, M, DIM, M0, TOP_K, EF_SEARCH, EF_BUILD, MAX_LEVEL>
-where
-    R: Readable,
-    K: Clone + Serialize + DeserializeOwned + JsonSchema,
-    T: anny::metric::Scalar + Copy + DeserializeOwned,
-    M: anny::metric::Metric<T> + Copy,
-    M::Out: Serialize,
-{
+impl<I: VectorSearch> Views for I {
     fn specs(&self, out: &mut Vec<ViewSpec>) {
-        out.push(ViewSpec {
-            name: VectorSearch::name(self).to_string(),
-            kind: "hnsw",
-            keyed: false,
-            search: Some("vector"),
-            item_schema: hit_schema(self.key_schema()),
-        });
+        out.push(spec(
+            self.name(),
+            ViewKind::Hnsw,
+            false,
+            Some(SearchMode::Vector),
+            hit_schema(self.key_schema()),
+        ));
     }
 
     fn read(&self, view: &str, q: &ViewQuery) -> ViewRead {
         vector_read(self, None, view, q)
     }
 }
-
-// ---- text queries over a vector index --------------------------------------
 
 /// Wrap a vector sink with the encoder that turns query text into an
 /// embedding, enabling `GET /views/{name}/search?q=...`.
@@ -254,13 +252,13 @@ where
     I: VectorSearch<Query = E>,
 {
     fn specs(&self, out: &mut Vec<ViewSpec>) {
-        out.push(ViewSpec {
-            name: self.inner.name().to_string(),
-            kind: "hnsw",
-            keyed: false,
-            search: Some("text+vector"),
-            item_schema: hit_schema(self.inner.key_schema()),
-        });
+        out.push(spec(
+            self.inner.name(),
+            ViewKind::Hnsw,
+            false,
+            Some(SearchMode::TextAndVector),
+            hit_schema(self.inner.key_schema()),
+        ));
     }
 
     fn read(&self, view: &str, q: &ViewQuery) -> ViewRead {

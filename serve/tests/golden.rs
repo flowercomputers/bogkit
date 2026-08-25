@@ -5,15 +5,14 @@
 use std::path::Path;
 
 use anny::metric::Cosine;
-use axum::body::Body;
-use axum::http::Request;
 use bog_serve::{App, KeyedApp, NoParams, TextQuery};
 use fold::pipeline::{Keyed, Map, terminal};
-use http_body_util::BodyExt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tower::ServiceExt;
+
+mod common;
+use common::send;
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema)]
 struct Entry {
@@ -62,17 +61,8 @@ fn search_router() -> axum::Router {
 }
 
 async fn openapi(router: axum::Router) -> Value {
-    let resp = router
-        .oneshot(
-            Request::builder()
-                .uri("/openapi.json")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    serde_json::from_slice(&bytes).unwrap()
+    let (_, doc) = send(&router, "GET", "/openapi.json", None).await;
+    doc
 }
 
 fn check_golden(name: &str, doc: &Value) {

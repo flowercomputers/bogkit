@@ -5,13 +5,16 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use bog_serve::App;
-use fold::pipeline::{Keyed, KeyBy, Map, ScoreBy, terminal};
+use fold::pipeline::{KeyBy, Keyed, Map, ScoreBy, Scored, terminal};
 use http_body_util::BodyExt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio_stream::StreamExt;
 use tower::ServiceExt;
+
+mod common;
+use common::send;
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema)]
 struct Reading {
@@ -42,6 +45,10 @@ fn all_sinks_router() -> axum::Router {
                 |r: &Reading| Keyed::new(r.station.clone(), (r.temp / 10) * 10),
                 terminal::InvertedIndex::<String, i64>::new("stations_by_bucket"),
             ),
+            Map::new(
+                |r: &Reading| Keyed::new(r.station.clone(), Scored::new(r.temp, ())),
+                terminal::KeyedRanked::new("by_station_rank"),
+            ),
         ),
     )
     // custom POST for the rollback test: inserts, then rejects hot
@@ -54,33 +61,6 @@ fn all_sinks_router() -> axum::Router {
         Ok(json!({ "accepted": r.station }))
     })
     .into_router()
-}
-
-async fn send(
-    router: &axum::Router,
-    method: &str,
-    path: &str,
-    body: Option<Value>,
-) -> (StatusCode, Value) {
-    let req = match body {
-        Some(v) => Request::builder()
-            .method(method)
-            .uri(path)
-            .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(v.to_string()))
-            .unwrap(),
-        None => Request::builder()
-            .method(method)
-            .uri(path)
-            .body(Body::empty())
-            .unwrap(),
-    };
-    let resp = router.clone().oneshot(req).await.unwrap();
-    let status = resp.status();
-    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    let value = serde_json::from_slice(&bytes)
-        .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).into_owned()));
-    (status, value)
 }
 
 fn reading(station: &str, temp: i64) -> Value {
@@ -141,6 +121,18 @@ async fn every_sink_kind_serves() {
     let (status, body) = send(&router, "GET", "/views/by_station", None).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(body["error"].as_str().unwrap().contains("point lookups"));
+
+    // keyed ranked: per-station score-ordered list; ?desc=true is top-first
+    let (status, _) = send(&router, "GET", "/views/by_station_rank", None).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (_, body) = send(
+        &router,
+        "GET",
+        "/views/by_station_rank/alpha?desc=true&limit=1",
+        None,
+    )
+    .await;
+    assert_eq!(body["data"][0]["score"], 18);
 }
 
 #[tokio::test]
@@ -199,17 +191,30 @@ async fn custom_post_rolls_back_on_err() {
     seed(&router).await; // 4 readings, seq 1
 
     // rejected after the insert was already pushed: everything rolls back
-    let (status, body) =
-        send(&router, "POST", "/insert_checked", Some(reading("volcano", 999))).await;
+    let (status, body) = send(
+        &router,
+        "POST",
+        "/insert_checked",
+        Some(reading("volcano", 999)),
+    )
+    .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert!(body["error"].as_str().unwrap().contains("implausibly hot"));
     let (_, body) = send(&router, "GET", "/views/total", None).await;
-    assert_eq!(body["data"]["value"], 4, "rolled-back insert must not count");
+    assert_eq!(
+        body["data"]["value"], 4,
+        "rolled-back insert must not count"
+    );
     assert_eq!(body["seq"], 1, "no commit, no seq");
 
     // accepted: commits like any generated write
-    let (status, body) =
-        send(&router, "POST", "/insert_checked", Some(reading("delta", 21))).await;
+    let (status, body) = send(
+        &router,
+        "POST",
+        "/insert_checked",
+        Some(reading("delta", 21)),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["seq"], 2);
     let (_, body) = send(&router, "GET", "/views/total", None).await;
@@ -235,7 +240,10 @@ async fn view_watch_streams_fresh_payloads() {
         .unwrap()
         .unwrap();
     let first = String::from_utf8_lossy(&first);
-    assert!(first.contains("\"seq\":1") && first.contains("\"value\":4"), "got: {first}");
+    assert!(
+        first.contains("\"seq\":1") && first.contains("\"value\":4"),
+        "got: {first}"
+    );
 
     // a commit through a different clone of the router pushes a fresh payload
     send(&router, "POST", "/insert", Some(reading("gamma", 7))).await;
@@ -245,7 +253,10 @@ async fn view_watch_streams_fresh_payloads() {
         .unwrap()
         .unwrap();
     let second = String::from_utf8_lossy(&second);
-    assert!(second.contains("\"seq\":2") && second.contains("\"value\":5"), "got: {second}");
+    assert!(
+        second.contains("\"seq\":2") && second.contains("\"value\":5"),
+        "got: {second}"
+    );
 
     // unknown views 404 immediately instead of hanging a stream
     let (status, _) = send(&router, "GET", "/views/nope/watch", None).await;

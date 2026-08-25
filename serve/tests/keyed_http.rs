@@ -7,12 +7,14 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use bog_serve::{KeyedApp, TextQuery};
 use fold::pipeline::{Keyed, Map, terminal};
-use http_body_util::BodyExt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::json;
 use tokio_stream::StreamExt;
 use tower::ServiceExt;
+
+mod common;
+use common::send;
 
 #[derive(Deserialize, JsonSchema)]
 struct TopDocParams {
@@ -80,41 +82,13 @@ fn test_router() -> axum::Router {
     .into_router()
 }
 
-async fn send(
-    router: &axum::Router,
-    method: &str,
-    path: &str,
-    body: Option<Value>,
-) -> (StatusCode, Value) {
-    let req = match body {
-        Some(v) => Request::builder()
-            .method(method)
-            .uri(path)
-            .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(v.to_string()))
-            .unwrap(),
-        None => Request::builder()
-            .method(method)
-            .uri(path)
-            .body(Body::empty())
-            .unwrap(),
-    };
-    let resp = router.clone().oneshot(req).await.unwrap();
-    let status = resp.status();
-    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    let value = serde_json::from_slice(&bytes)
-        .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).into_owned()));
-    (status, value)
-}
-
 async fn seed(router: &axum::Router) {
     for (id, text) in [
         (1, "the postgres database was slow"),
         (2, "deployed the api to kubernetes"),
         (3, "the user prefers rust for backends"),
     ] {
-        let (status, _) =
-            send(router, "PUT", &format!("/docs/{id}"), Some(json!(text))).await;
+        let (status, _) = send(router, "PUT", &format!("/docs/{id}"), Some(json!(text))).await;
         assert_eq!(status, StatusCode::OK);
     }
 }
@@ -292,7 +266,10 @@ async fn custom_post_is_atomic_check_and_set() {
     assert!(body["error"].as_str().unwrap().contains("taken"));
 
     let (_, body) = send(&router, "GET", "/docs/9", None).await;
-    assert_eq!(body["data"], "the deploy runs at midnight", "original survives");
+    assert_eq!(
+        body["data"], "the deploy runs at midnight",
+        "original survives"
+    );
     assert_eq!(body["seq"], 4, "rejected claim must not commit a seq");
 
     // the rolled-back text was never indexed anywhere
@@ -363,15 +340,19 @@ async fn keyed_openapi_and_schema() {
     let top_doc = &paths["/top_doc"]["get"];
     assert_eq!(top_doc["parameters"][0]["name"], "q");
     assert_eq!(top_doc["parameters"][0]["required"], true);
-    let claim_body = &paths["/claim"]["post"]["requestBody"]["content"]["application/json"]["schema"];
+    let claim_body =
+        &paths["/claim"]["post"]["requestBody"]["content"]["application/json"]["schema"];
     assert!(claim_body["properties"]["key"].is_object());
     assert!(claim_body["properties"]["text"].is_object());
-    let claim_resp = &paths["/claim"]["post"]["responses"]["200"]["content"]["application/json"]
-        ["schema"];
+    let claim_resp =
+        &paths["/claim"]["post"]["responses"]["200"]["content"]["application/json"]["schema"];
     assert_eq!(claim_resp["properties"]["seq"]["type"], "integer");
 
     let (_, schema) = send(&router, "GET", "/schema", None).await;
-    assert_eq!(schema["write"]["keyed"]["type"], "integer", "u64 key schema");
+    assert_eq!(
+        schema["write"]["keyed"]["type"], "integer",
+        "u64 key schema"
+    );
     let kinds: Vec<&str> = schema["views"]
         .as_array()
         .unwrap()

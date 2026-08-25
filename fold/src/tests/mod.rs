@@ -12,6 +12,9 @@ mod hnsw;
 mod keyed_stream;
 
 #[cfg(test)]
+mod open;
+
+#[cfg(test)]
 mod retain;
 
 #[cfg(test)]

@@ -1,11 +1,8 @@
 //! Generic axum handlers over any served pipeline.
 //!
 //! Reads are identical for plain and keyed streams, so they're generic over
-//! [`ViewSource`] — the small trait both `Shared` (wrapping a fold
-//! `Stream`) and `SharedKeyed` (wrapping a `KeyedStream`) implement. Writes
-//! differ by stream flavor (raw insert/remove vs upsert/remove-by-key) and
-//! stay per-kind. Nothing here knows what the user's pipeline looks like:
-//! writes go through fold's `wtx`, reads dispatch through [`Views`].
+//! [`ViewSource`]. Writes differ by stream flavor (raw insert/remove vs
+//! upsert/remove-by-key) and stay per-kind.
 
 use std::convert::Infallible;
 use std::sync::{Arc, RwLock};
@@ -28,89 +25,200 @@ use serde_json::{Value, json};
 use tokio::sync::watch;
 use tokio_stream::StreamExt;
 
-use crate::openapi::WriteStyle;
+use crate::openapi::{CustomDoc, WriteStyle};
+use crate::to_value;
 use crate::views::{ViewQuery, ViewRead, Views, parse_key, schema_of};
 
 const DEFAULT_LIMIT: usize = 100;
 const DEFAULT_K: usize = 10;
 
-// ---- custom routes ----------------------------------------------------------
-//
-// Handlers are registered typed (`Q`/`B` in, `T` out) and stored erased so
-// `App` can hold a heterogeneous list. The typed layer lives in lib.rs; it
-// captures the JSON schemas into a `CustomDoc` *before* boxing erases the
-// types, then wraps the handler so the stored closure speaks raw query
-// strings / body bytes and `Value` results.
+/// Read access shared by every view route, implemented per stream flavor.
+trait Rtx: Send + Sync + 'static {
+    type Reader<'tx>: Views
+    where
+        Self: 'tx;
 
-/// An erased custom GET handler: pipeline readers + the raw query string.
+    fn rtx<R>(&self, f: impl for<'tx> FnOnce(Self::Reader<'tx>) -> R) -> R;
+
+    /// Fsync all committed state; see [`fold::stream::Stream::checkpoint`].
+    fn checkpoint(&mut self);
+
+    /// Wipe all persisted state and re-initialize; see
+    /// [`fold::stream::Stream::reset`].
+    fn reset(&mut self);
+}
+
+trait CustomRead<D, P>: Rtx
+where
+    D: Clone + 'static,
+    P: Push<D> + 'static,
+{
+    fn custom_read(&self, h: &ReadHandler<D, P>, query: &str) -> Result<Value, (u16, String)>;
+}
+
+impl<D, P> Rtx for Stream<D, P>
+where
+    D: Clone + Send + Sync + 'static,
+    P: Push<D> + Send + Sync + 'static,
+    for<'tx> P::Reader<'tx, Snapshot>: Views,
+{
+    type Reader<'tx> = P::Reader<'tx, Snapshot>;
+
+    fn rtx<R>(&self, f: impl for<'tx> FnOnce(Self::Reader<'tx>) -> R) -> R {
+        Stream::rtx(self, f)
+    }
+
+    fn checkpoint(&mut self) {
+        Stream::checkpoint(self)
+    }
+
+    fn reset(&mut self) {
+        Stream::reset(self)
+    }
+}
+
+impl<D, P> CustomRead<D, P> for Stream<D, P>
+where
+    D: Clone + Send + Sync + 'static,
+    P: Push<D> + Send + Sync + 'static,
+    for<'tx> P::Reader<'tx, Snapshot>: Views,
+{
+    fn custom_read(&self, h: &ReadHandler<D, P>, query: &str) -> Result<Value, (u16, String)> {
+        Stream::rtx(self, |r| h(r, query))
+    }
+}
+
+impl<K, V, P> Rtx for KeyedStream<K, V, P>
+where
+    K: Clone + Send + Sync + Serialize + 'static,
+    V: Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
+    P: Push<Keyed<K, V>> + Send + Sync + 'static,
+    for<'tx> P::Reader<'tx, Snapshot>: Views,
+{
+    type Reader<'tx> = P::Reader<'tx, Snapshot>;
+
+    fn rtx<R>(&self, f: impl for<'tx> FnOnce(Self::Reader<'tx>) -> R) -> R {
+        KeyedStream::rtx(self, f)
+    }
+
+    fn checkpoint(&mut self) {
+        KeyedStream::checkpoint(self)
+    }
+
+    fn reset(&mut self) {
+        KeyedStream::reset(self)
+    }
+}
+
+impl<K, V, P> CustomRead<Keyed<K, V>, P> for KeyedStream<K, V, P>
+where
+    K: Clone + Send + Sync + Serialize + 'static,
+    V: Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
+    P: Push<Keyed<K, V>> + Send + Sync + 'static,
+    for<'tx> P::Reader<'tx, Snapshot>: Views,
+{
+    fn custom_read(
+        &self,
+        h: &ReadHandler<Keyed<K, V>, P>,
+        query: &str,
+    ) -> Result<Value, (u16, String)> {
+        KeyedStream::rtx(self, |r| h(r, query))
+    }
+}
+
 pub(crate) type ReadHandler<D, P> = Arc<
     dyn for<'tx> Fn(<P as Push<D>>::Reader<'tx, Snapshot>, &str) -> Result<Value, (u16, String)>
         + Send
         + Sync,
 >;
 
-/// An erased custom POST handler over a plain stream: exclusive stream
-/// access + the raw body. Runs inside `try_wtx`, so `Err` rolls back.
-pub(crate) type StreamWriteHandler<D, P> =
-    Arc<dyn Fn(&mut Stream<D, P>, &[u8]) -> Result<Value, (u16, String)> + Send + Sync>;
+pub(crate) type WriteHandler<S> =
+    Arc<dyn Fn(&mut S, &[u8]) -> Result<Value, (u16, String)> + Send + Sync>;
 
-/// As [`StreamWriteHandler`], over a keyed stream.
-pub(crate) type KeyedWriteHandler<K, V, P> =
-    Arc<dyn Fn(&mut KeyedStream<K, V, P>, &[u8]) -> Result<Value, (u16, String)> + Send + Sync>;
-
-/// One registered custom route: its OpenAPI contribution plus the erased
-/// handler. `W` is the write-handler type, which differs by stream flavor.
-pub(crate) struct CustomRoute<D: Clone, P: Push<D>, W> {
-    pub doc: crate::openapi::CustomDoc,
-    pub action: CustomAction<D, P, W>,
+pub(crate) struct CustomRoute<D: Clone, P: Push<D>, S> {
+    pub doc: CustomDoc,
+    pub action: CustomAction<D, P, S>,
 }
 
-pub(crate) enum CustomAction<D: Clone, P: Push<D>, W> {
+pub(crate) enum CustomAction<D: Clone, P: Push<D>, S> {
     Read(ReadHandler<D, P>),
-    Write(W),
+    Write(WriteHandler<S>),
 }
 
-/// The documents computed once at startup and served verbatim.
+pub(crate) type StreamCustom<D, P> = CustomRoute<D, P, Stream<D, P>>;
+pub(crate) type KeyedCustom<K, V, P> = CustomRoute<Keyed<K, V>, P, KeyedStream<K, V, P>>;
+
+pub(crate) fn custom_get<D, P, S, Q, T, F>(path: String, handler: F) -> CustomRoute<D, P, S>
+where
+    D: Clone,
+    P: Push<D> + 'static,
+    Q: DeserializeOwned + JsonSchema,
+    T: Serialize + JsonSchema,
+    F: for<'tx> Fn(P::Reader<'tx, Snapshot>, Q) -> Result<T, (u16, String)> + Send + Sync + 'static,
+{
+    CustomRoute {
+        doc: CustomDoc {
+            path,
+            method: "get",
+            params: Some(schema_of::<Q>()),
+            body: None,
+            response: schema_of::<T>(),
+        },
+        action: CustomAction::Read(Arc::new(move |readers, raw_query| {
+            let q: Q = serde_urlencoded::from_str(raw_query)
+                .map_err(|e| (400, format!("invalid query: {e}")))?;
+            handler(readers, q).map(to_value)
+        })),
+    }
+}
+
+pub(crate) fn custom_write<D, P, S, B, T, F>(path: String, run: F) -> CustomRoute<D, P, S>
+where
+    D: Clone,
+    P: Push<D>,
+    B: DeserializeOwned + JsonSchema,
+    T: Serialize + JsonSchema,
+    F: Fn(&mut S, B) -> Result<T, (u16, String)> + Send + Sync + 'static,
+{
+    CustomRoute {
+        doc: CustomDoc {
+            path,
+            method: "post",
+            params: None,
+            body: Some(schema_of::<B>()),
+            response: schema_of::<T>(),
+        },
+        action: CustomAction::Write(Arc::new(move |stream, raw| {
+            let body: B =
+                serde_json::from_slice(raw).map_err(|e| (400, format!("invalid body: {e}")))?;
+            run(stream, body).map(to_value)
+        })),
+    }
+}
+
 struct Docs {
     openapi: Value,
     schema: Value,
 }
 
-/// Read access shared by every view route, implemented per stream flavor.
 trait ViewSource: Send + Sync + 'static {
-    /// One consistent observation: the commit seq and the view's answer
-    /// come from the same snapshot.
     fn view(&self, view: &str, q: &ViewQuery) -> (u64, ViewRead);
     fn docs(&self) -> &Docs;
     fn subscribe(&self) -> watch::Receiver<u64>;
 }
 
-// ---- unkeyed: Stream<D, P> --------------------------------------------------
-
-struct Shared<D: Clone, P: Push<D>> {
-    /// RwLock matches fold's access model exactly: `rtx` takes `&self`
-    /// (any number of parallel readers, each on its own pinned snapshot),
-    /// `wtx` takes `&mut self` (one writer at a time).
-    inner: RwLock<Inner<D, P>>,
+struct Shared<S> {
+    inner: RwLock<Inner<S>>,
     docs: Docs,
-    /// Broadcasts the latest commit seq to `/watch` subscribers.
     notify: watch::Sender<u64>,
 }
 
-struct Inner<D: Clone, P: Push<D>> {
-    stream: Stream<D, P>,
-    /// Bumped once per committed transaction. In-memory for now: it orders
-    /// reads against writes within one server run (read-your-writes), and
-    /// becomes persistent when the delta log lands.
+struct Inner<S> {
+    stream: S,
     seq: u64,
 }
 
-impl<D, P> ViewSource for Shared<D, P>
-where
-    D: Clone + Send + Sync + 'static,
-    P: Push<D> + Send + Sync + 'static,
-    for<'tx> P::Reader<'tx, Snapshot>: Views,
-{
+impl<S: Rtx> ViewSource for Shared<S> {
     fn view(&self, view: &str, q: &ViewQuery) -> (u64, ViewRead) {
         let inner = self.inner.read().unwrap();
         (inner.seq, inner.stream.rtx(|r| r.read(view, q)))
@@ -125,47 +233,74 @@ where
     }
 }
 
-pub(crate) fn router<D, P>(
-    stream: Stream<D, P>,
-    custom: Vec<CustomRoute<D, P, StreamWriteHandler<D, P>>>,
+/// Everything [`run`](crate::App::run) needs beyond the router itself:
+/// hooks into the shared stream for the idle watchdog, type-erased so the
+/// serve loop stays non-generic.
+pub(crate) struct Lifecycle {
+    /// The pipeline's schema fingerprint (also persisted in the `.schema`
+    /// sidecar), for the discovery sidecar.
+    pub fingerprint: String,
+    /// Drains in-flight writes (takes the write lock) and fsyncs all
+    /// committed state.
+    pub checkpoint: Box<dyn FnOnce() + Send>,
+    /// Live SSE subscriptions (`/watch`, `/views/{name}/watch`); the idle
+    /// watchdog won't exit while any are connected.
+    pub watchers: Box<dyn Fn() -> usize + Send + Sync>,
+}
+
+impl Lifecycle {
+    fn new<S: Rtx>(shared: Arc<Shared<S>>, fingerprint: String) -> Self {
+        let cp = shared.clone();
+        Lifecycle {
+            fingerprint,
+            checkpoint: Box::new(move || cp.inner.write().unwrap().stream.checkpoint()),
+            watchers: Box::new(move || shared.notify.receiver_count()),
+        }
+    }
+}
+
+fn shared_from<D, P, S: Rtx>(
+    mut stream: S,
+    custom: &[CustomRoute<D, P, S>],
     db_path: &std::path::Path,
-) -> Router
+    input_schema: &Value,
+    style: WriteStyle<'_>,
+    drift: crate::SchemaDrift,
+) -> (Arc<Shared<S>>, String)
 where
-    D: Clone + Send + Sync + DeserializeOwned + JsonSchema + 'static,
-    P: Push<D> + Send + Sync + 'static,
-    for<'tx> P::Reader<'tx, Snapshot>: Views,
+    D: Clone,
+    P: Push<D>,
 {
     let specs = stream.rtx(|r| {
         let mut specs = Vec::new();
         r.specs(&mut specs);
         specs
     });
-    let input_schema = schema_of::<D>();
     let custom_docs: Vec<_> = custom.iter().map(|c| c.doc.clone()).collect();
-
-    let schema = crate::openapi::schema_doc(&input_schema, &specs, WriteStyle::Unkeyed);
-    check_fingerprint(db_path, &schema);
-
+    let schema = crate::openapi::schema_doc(input_schema, &specs, style);
+    let fingerprint = schema["fingerprint"].as_str().unwrap().to_string();
+    check_fingerprint(db_path, &fingerprint, drift, &mut stream);
     let shared = Arc::new(Shared {
         docs: Docs {
-            openapi: crate::openapi::openapi_doc(
-                &input_schema,
-                &specs,
-                WriteStyle::Unkeyed,
-                &custom_docs,
-            ),
+            openapi: crate::openapi::openapi_doc(input_schema, &specs, style, &custom_docs),
             schema,
         },
         notify: watch::channel(0).0,
         inner: RwLock::new(Inner { stream, seq: 0 }),
     });
+    (shared, fingerprint)
+}
 
-    let mut app = read_routes::<Shared<D, P>>()
-        .route("/insert", post(insert::<D, P>))
-        .route("/remove", post(remove::<D, P>))
-        .route("/batch", post(batch::<D, P>))
-        .with_state(shared.clone());
-
+fn attach_custom<D, P, S>(
+    mut app: Router,
+    shared: Arc<Shared<S>>,
+    custom: Vec<CustomRoute<D, P, S>>,
+) -> Router
+where
+    D: Clone + 'static,
+    P: Push<D> + 'static,
+    S: Rtx + CustomRead<D, P>,
+{
     for route in custom {
         let path = route.doc.path.clone();
         match route.action {
@@ -179,8 +314,9 @@ where
                         async move {
                             let inner = shared.inner.read().unwrap();
                             let seq = inner.seq;
-                            let out =
-                                inner.stream.rtx(|r| handler(r, query.as_deref().unwrap_or("")));
+                            let out = inner
+                                .stream
+                                .custom_read(&handler, query.as_deref().unwrap_or(""));
                             drop(inner);
                             respond_custom(seq, out)
                         }
@@ -204,8 +340,6 @@ where
                                     shared.notify.send_replace(seq);
                                     Json(json!({ "seq": seq, "data": data })).into_response()
                                 }
-                                // parse failure or handler Err: the whole
-                                // transaction rolled back — no seq, no notify
                                 Err((code, msg)) => {
                                     drop(inner);
                                     error(
@@ -224,162 +358,60 @@ where
     app
 }
 
-/// Run one write transaction and return the new commit seq, notifying
-/// `/watch` subscribers. Everything pushed inside `f` commits atomically.
-fn write<D, P>(shared: &Shared<D, P>, f: impl FnOnce(&mut fold::stream::Tx<'_, '_, D, P>)) -> u64
+pub(crate) fn router<D, P>(
+    stream: Stream<D, P>,
+    custom: Vec<StreamCustom<D, P>>,
+    db_path: &std::path::Path,
+    drift: crate::SchemaDrift,
+) -> (Router, Lifecycle)
 where
-    D: Clone,
-    P: Push<D>,
-{
-    let mut inner = shared.inner.write().unwrap();
-    inner.stream.wtx(f);
-    inner.seq += 1;
-    let seq = inner.seq;
-    drop(inner); // wake subscribers only after the exclusive guard is gone
-    // send_replace, not send: send() refuses to store when no /watch
-    // client is connected yet, and late subscribers must still see the
-    // latest committed seq
-    shared.notify.send_replace(seq);
-    seq
-}
-
-async fn insert<D, P>(
-    State(shared): State<Arc<Shared<D, P>>>,
-    body: Result<Json<D>, JsonRejection>,
-) -> Response
-where
-    D: Clone + Send + Sync + DeserializeOwned + 'static,
+    D: Clone + Send + Sync + DeserializeOwned + JsonSchema + 'static,
     P: Push<D> + Send + Sync + 'static,
-{
-    let data = match require_json(body) {
-        Ok(d) => d,
-        Err(resp) => return resp,
-    };
-    let seq = write(&shared, |tx| tx.insert(&data));
-    Json(json!({ "seq": seq })).into_response()
-}
-
-async fn remove<D, P>(
-    State(shared): State<Arc<Shared<D, P>>>,
-    body: Result<Json<D>, JsonRejection>,
-) -> Response
-where
-    D: Clone + Send + Sync + DeserializeOwned + 'static,
-    P: Push<D> + Send + Sync + 'static,
-{
-    let data = match require_json(body) {
-        Ok(d) => d,
-        Err(resp) => return resp,
-    };
-    let seq = write(&shared, |tx| tx.remove(&data));
-    Json(json!({ "seq": seq })).into_response()
-}
-
-/// One operation in an unkeyed POST /batch body:
-/// `{ "op": "insert", "data": ... }` or `{ "op": "remove", "data": ... }`.
-#[derive(Deserialize)]
-#[serde(tag = "op", rename_all = "lowercase")]
-enum Op<D> {
-    Insert { data: D },
-    Remove { data: D },
-}
-
-async fn batch<D, P>(
-    State(shared): State<Arc<Shared<D, P>>>,
-    body: Result<Json<Vec<Op<D>>>, JsonRejection>,
-) -> Response
-where
-    D: Clone + Send + Sync + DeserializeOwned + 'static,
-    P: Push<D> + Send + Sync + 'static,
-{
-    // the whole body deserialized before the transaction opens: a malformed
-    // batch is rejected in full, a well-formed one commits in full
-    let ops = match require_json(body) {
-        Ok(ops) => ops,
-        Err(resp) => return resp,
-    };
-    let applied = ops.len();
-    let seq = write(&shared, |tx| {
-        for op in &ops {
-            match op {
-                Op::Insert { data } => tx.insert(data),
-                Op::Remove { data } => tx.remove(data),
-            }
-        }
-    });
-    Json(json!({ "seq": seq, "applied": applied })).into_response()
-}
-
-// ---- keyed: KeyedStream<K, V, P> --------------------------------------------
-
-struct SharedKeyed<K: Clone, V: Clone, P: Push<Keyed<K, V>>> {
-    inner: RwLock<InnerKeyed<K, V, P>>,
-    docs: Docs,
-    notify: watch::Sender<u64>,
-}
-
-struct InnerKeyed<K: Clone, V: Clone, P: Push<Keyed<K, V>>> {
-    stream: KeyedStream<K, V, P>,
-    seq: u64,
-}
-
-impl<K, V, P> ViewSource for SharedKeyed<K, V, P>
-where
-    K: Clone + Send + Sync + Serialize + 'static,
-    V: Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
-    P: Push<Keyed<K, V>> + Send + Sync + 'static,
     for<'tx> P::Reader<'tx, Snapshot>: Views,
 {
-    fn view(&self, view: &str, q: &ViewQuery) -> (u64, ViewRead) {
-        let inner = self.inner.read().unwrap();
-        (inner.seq, inner.stream.rtx(|r| r.read(view, q)))
-    }
-
-    fn docs(&self) -> &Docs {
-        &self.docs
-    }
-
-    fn subscribe(&self) -> watch::Receiver<u64> {
-        self.notify.subscribe()
-    }
+    let input_schema = schema_of::<D>();
+    let (shared, fingerprint) = shared_from::<D, P, _>(
+        stream,
+        &custom,
+        db_path,
+        &input_schema,
+        WriteStyle::Unkeyed,
+        drift,
+    );
+    let app = read_routes::<Shared<Stream<D, P>>>()
+        .route("/insert", post(insert::<D, P>))
+        .route("/remove", post(remove::<D, P>))
+        .route("/batch", post(batch::<D, P>))
+        .with_state(shared.clone());
+    let lifecycle = Lifecycle::new(shared.clone(), fingerprint);
+    (attach_custom(app, shared, custom), lifecycle)
 }
 
 pub(crate) fn router_keyed<K, V, P>(
     stream: KeyedStream<K, V, P>,
-    custom: Vec<CustomRoute<Keyed<K, V>, P, KeyedWriteHandler<K, V, P>>>,
+    custom: Vec<KeyedCustom<K, V, P>>,
     db_path: &std::path::Path,
-) -> Router
+    drift: crate::SchemaDrift,
+) -> (Router, Lifecycle)
 where
     K: Clone + Send + Sync + Serialize + DeserializeOwned + JsonSchema + 'static,
     V: Clone + Send + Sync + Serialize + DeserializeOwned + JsonSchema + 'static,
     P: Push<Keyed<K, V>> + Send + Sync + 'static,
     for<'tx> P::Reader<'tx, Snapshot>: Views,
 {
-    let specs = stream.rtx(|r| {
-        let mut specs = Vec::new();
-        r.specs(&mut specs);
-        specs
-    });
     let input_schema = schema_of::<V>();
     let key_schema = schema_of::<K>();
-    let custom_docs: Vec<_> = custom.iter().map(|c| c.doc.clone()).collect();
-    let style = WriteStyle::Keyed {
-        key_schema: &key_schema,
-    };
-
-    let schema = crate::openapi::schema_doc(&input_schema, &specs, style);
-    check_fingerprint(db_path, &schema);
-
-    let shared = Arc::new(SharedKeyed {
-        docs: Docs {
-            openapi: crate::openapi::openapi_doc(&input_schema, &specs, style, &custom_docs),
-            schema,
+    let (shared, fingerprint) = shared_from::<Keyed<K, V>, P, _>(
+        stream,
+        &custom,
+        db_path,
+        &input_schema,
+        WriteStyle::Keyed {
+            key_schema: &key_schema,
         },
-        notify: watch::channel(0).0,
-        inner: RwLock::new(InnerKeyed { stream, seq: 0 }),
-    });
-
-    let mut app = read_routes::<SharedKeyed<K, V, P>>()
+        drift,
+    );
+    let app = read_routes::<Shared<KeyedStream<K, V, P>>>()
         .route(
             "/docs/{key}",
             put(put_doc::<K, V, P>)
@@ -388,84 +420,104 @@ where
         )
         .route("/batch", post(batch_keyed::<K, V, P>))
         .with_state(shared.clone());
-
-    for route in custom {
-        let path = route.doc.path.clone();
-        match route.action {
-            CustomAction::Read(handler) => {
-                let shared = shared.clone();
-                app = app.route(
-                    &path,
-                    get(move |RawQuery(query): RawQuery| {
-                        let shared = shared.clone();
-                        let handler = handler.clone();
-                        async move {
-                            let inner = shared.inner.read().unwrap();
-                            let seq = inner.seq;
-                            let out =
-                                inner.stream.rtx(|r| handler(r, query.as_deref().unwrap_or("")));
-                            drop(inner);
-                            respond_custom(seq, out)
-                        }
-                    }),
-                );
-            }
-            CustomAction::Write(handler) => {
-                let shared = shared.clone();
-                app = app.route(
-                    &path,
-                    post(move |body: Bytes| {
-                        let shared = shared.clone();
-                        let handler = handler.clone();
-                        async move {
-                            let mut inner = shared.inner.write().unwrap();
-                            match handler(&mut inner.stream, &body) {
-                                Ok(data) => {
-                                    inner.seq += 1;
-                                    let seq = inner.seq;
-                                    drop(inner);
-                                    shared.notify.send_replace(seq);
-                                    Json(json!({ "seq": seq, "data": data })).into_response()
-                                }
-                                Err((code, msg)) => {
-                                    drop(inner);
-                                    error(
-                                        StatusCode::from_u16(code)
-                                            .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
-                                        msg,
-                                    )
-                                }
-                            }
-                        }
-                    }),
-                );
-            }
-        }
-    }
-    app
+    let lifecycle = Lifecycle::new(shared.clone(), fingerprint);
+    (attach_custom(app, shared, custom), lifecycle)
 }
 
-/// Run one keyed write transaction; returns the new seq and `f`'s result.
-fn write_keyed<K, V, P, R>(
-    shared: &SharedKeyed<K, V, P>,
-    f: impl FnOnce(&mut fold::stream::KeyedTx<'_, '_, '_, K, V, P>) -> R,
-) -> (u64, R)
-where
-    K: Clone + Serialize,
-    V: Clone + Serialize + DeserializeOwned,
-    P: Push<Keyed<K, V>>,
-{
+/// Run one write on `stream`, bump seq, notify `/watch`.
+///
+/// `send_replace`, not `send`: `send()` refuses to store when no client is
+/// connected yet, and late subscribers must still see the latest seq.
+fn commit<S>(shared: &Shared<S>, f: impl FnOnce(&mut S)) -> u64 {
     let mut inner = shared.inner.write().unwrap();
-    let out = inner.stream.wtx(f);
+    f(&mut inner.stream);
     inner.seq += 1;
     let seq = inner.seq;
     drop(inner);
-    shared.notify.send_replace(seq); // see write(): send() drops the value receiverless
+    shared.notify.send_replace(seq);
+    seq
+}
+
+fn commit_with<S, R>(shared: &Shared<S>, f: impl FnOnce(&mut S) -> R) -> (u64, R) {
+    let mut inner = shared.inner.write().unwrap();
+    let out = f(&mut inner.stream);
+    inner.seq += 1;
+    let seq = inner.seq;
+    drop(inner);
+    shared.notify.send_replace(seq);
     (seq, out)
 }
 
+async fn insert<D, P>(
+    State(shared): State<Arc<Shared<Stream<D, P>>>>,
+    body: Result<Json<D>, JsonRejection>,
+) -> Response
+where
+    D: Clone + Send + Sync + DeserializeOwned + 'static,
+    P: Push<D> + Send + Sync + 'static,
+    for<'tx> P::Reader<'tx, Snapshot>: Views,
+{
+    let data = match require_json(body) {
+        Ok(d) => d,
+        Err(resp) => return resp,
+    };
+    let seq = commit(&shared, |stream| stream.wtx(|tx| tx.insert(&data)));
+    Json(json!({ "seq": seq })).into_response()
+}
+
+async fn remove<D, P>(
+    State(shared): State<Arc<Shared<Stream<D, P>>>>,
+    body: Result<Json<D>, JsonRejection>,
+) -> Response
+where
+    D: Clone + Send + Sync + DeserializeOwned + 'static,
+    P: Push<D> + Send + Sync + 'static,
+    for<'tx> P::Reader<'tx, Snapshot>: Views,
+{
+    let data = match require_json(body) {
+        Ok(d) => d,
+        Err(resp) => return resp,
+    };
+    let seq = commit(&shared, |stream| stream.wtx(|tx| tx.remove(&data)));
+    Json(json!({ "seq": seq })).into_response()
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "op", rename_all = "lowercase")]
+enum Op<D> {
+    Insert { data: D },
+    Remove { data: D },
+}
+
+async fn batch<D, P>(
+    State(shared): State<Arc<Shared<Stream<D, P>>>>,
+    body: Result<Json<Vec<Op<D>>>, JsonRejection>,
+) -> Response
+where
+    D: Clone + Send + Sync + DeserializeOwned + 'static,
+    P: Push<D> + Send + Sync + 'static,
+    for<'tx> P::Reader<'tx, Snapshot>: Views,
+{
+    let ops = match require_json(body) {
+        Ok(ops) => ops,
+        Err(resp) => return resp,
+    };
+    let applied = ops.len();
+    let seq = commit(&shared, |stream| {
+        stream.wtx(|tx| {
+            for op in &ops {
+                match op {
+                    Op::Insert { data } => tx.insert(data),
+                    Op::Remove { data } => tx.remove(data),
+                }
+            }
+        })
+    });
+    Json(json!({ "seq": seq, "applied": applied })).into_response()
+}
+
 async fn put_doc<K, V, P>(
-    State(shared): State<Arc<SharedKeyed<K, V, P>>>,
+    State(shared): State<Arc<Shared<KeyedStream<K, V, P>>>>,
     Path(raw): Path<String>,
     body: Result<Json<V>, JsonRejection>,
 ) -> Response
@@ -473,6 +525,7 @@ where
     K: Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
     V: Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
     P: Push<Keyed<K, V>> + Send + Sync + 'static,
+    for<'tx> P::Reader<'tx, Snapshot>: Views,
 {
     let data = match require_json(body) {
         Ok(d) => d,
@@ -481,34 +534,36 @@ where
     let Some(key) = parse_key::<K>(&raw) else {
         return error(StatusCode::BAD_REQUEST, key_parse_msg(&raw));
     };
-    let (seq, old) = write_keyed(&shared, |tx| tx.upsert(&key, &data));
+    let (seq, old) = commit_with(&shared, |stream| stream.wtx(|tx| tx.upsert(&key, &data)));
     Json(json!({ "seq": seq, "replaced": old.is_some() })).into_response()
 }
 
 async fn delete_doc<K, V, P>(
-    State(shared): State<Arc<SharedKeyed<K, V, P>>>,
+    State(shared): State<Arc<Shared<KeyedStream<K, V, P>>>>,
     Path(raw): Path<String>,
 ) -> Response
 where
     K: Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
     V: Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
     P: Push<Keyed<K, V>> + Send + Sync + 'static,
+    for<'tx> P::Reader<'tx, Snapshot>: Views,
 {
     let Some(key) = parse_key::<K>(&raw) else {
         return error(StatusCode::BAD_REQUEST, key_parse_msg(&raw));
     };
-    let (seq, old) = write_keyed(&shared, |tx| tx.remove(&key));
+    let (seq, old) = commit_with(&shared, |stream| stream.wtx(|tx| tx.remove(&key)));
     Json(json!({ "seq": seq, "removed": old.is_some() })).into_response()
 }
 
 async fn get_doc<K, V, P>(
-    State(shared): State<Arc<SharedKeyed<K, V, P>>>,
+    State(shared): State<Arc<Shared<KeyedStream<K, V, P>>>>,
     Path(raw): Path<String>,
 ) -> Response
 where
     K: Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
     V: Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
     P: Push<Keyed<K, V>> + Send + Sync + 'static,
+    for<'tx> P::Reader<'tx, Snapshot>: Views,
 {
     let Some(key) = parse_key::<K>(&raw) else {
         return error(StatusCode::BAD_REQUEST, key_parse_msg(&raw));
@@ -523,9 +578,6 @@ where
     }
 }
 
-/// One operation in a keyed POST /batch body:
-/// `{ "op": "upsert", "key": ..., "data": ... }` or
-/// `{ "op": "remove", "key": ... }`.
 #[derive(Deserialize)]
 #[serde(tag = "op", rename_all = "lowercase")]
 enum KeyedOp<K, V> {
@@ -534,30 +586,33 @@ enum KeyedOp<K, V> {
 }
 
 async fn batch_keyed<K, V, P>(
-    State(shared): State<Arc<SharedKeyed<K, V, P>>>,
+    State(shared): State<Arc<Shared<KeyedStream<K, V, P>>>>,
     body: Result<Json<Vec<KeyedOp<K, V>>>, JsonRejection>,
 ) -> Response
 where
     K: Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
     V: Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
     P: Push<Keyed<K, V>> + Send + Sync + 'static,
+    for<'tx> P::Reader<'tx, Snapshot>: Views,
 {
     let ops = match require_json(body) {
         Ok(ops) => ops,
         Err(resp) => return resp,
     };
     let applied = ops.len();
-    let (seq, ()) = write_keyed(&shared, |tx| {
-        for op in &ops {
-            match op {
-                KeyedOp::Upsert { key, data } => {
-                    tx.upsert(key, data);
-                }
-                KeyedOp::Remove { key } => {
-                    tx.remove(key);
+    let (seq, ()) = commit_with(&shared, |stream| {
+        stream.wtx(|tx| {
+            for op in &ops {
+                match op {
+                    KeyedOp::Upsert { key, data } => {
+                        tx.upsert(key, data);
+                    }
+                    KeyedOp::Remove { key } => {
+                        tx.remove(key);
+                    }
                 }
             }
-        }
+        })
     });
     Json(json!({ "seq": seq, "applied": applied })).into_response()
 }
@@ -566,13 +621,10 @@ fn key_parse_msg(raw: &str) -> String {
     format!("cannot parse {raw:?} as this stream's key type")
 }
 
-// ---- reads (generic over both flavors) --------------------------------------
-
 fn read_routes<S: ViewSource>() -> Router<Arc<S>> {
     Router::new()
         .route("/healthz", get(async || "ok"))
         .route("/views/{name}", get(view_list::<S>))
-        // static "search"/"watch" outrank the {key} capture in axum's router
         .route(
             "/views/{name}/search",
             get(search_get::<S>).post(search_post::<S>),
@@ -592,12 +644,17 @@ struct Page {
 }
 
 impl Page {
-    fn query(&self) -> ViewQuery {
-        ViewQuery::list(
+    fn parts(&self) -> (usize, usize, bool) {
+        (
             self.limit.unwrap_or(DEFAULT_LIMIT),
             self.offset.unwrap_or(0),
             self.desc.unwrap_or(false),
         )
+    }
+
+    fn query(&self) -> ViewQuery {
+        let (limit, offset, desc) = self.parts();
+        ViewQuery::list(limit, offset, desc)
     }
 }
 
@@ -616,8 +673,14 @@ async fn view_list<S: ViewSource>(
 async fn view_key<S: ViewSource>(
     State(shared): State<Arc<S>>,
     Path((name, key)): Path<(String, String)>,
+    page: Result<Query<Page>, QueryRejection>,
 ) -> Response {
-    respond(shared.view(&name, &ViewQuery::point(key)))
+    let page = match require_query(page) {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    let (limit, offset, desc) = page.parts();
+    respond(shared.view(&name, &ViewQuery::point_page(key, limit, offset, desc)))
 }
 
 #[derive(Deserialize)]
@@ -658,9 +721,6 @@ async fn search_post<S: ViewSource>(
     respond(shared.view(&name, &q))
 }
 
-/// Watch one view: an SSE stream that re-reads the view after every commit
-/// and pushes the fresh `{seq, data}` payload. `?limit`/`?desc` shape the
-/// read, so `/views/leaderboard/watch?desc=true&limit=10` is a live top-10.
 async fn watch_view<S: ViewSource>(
     State(shared): State<Arc<S>>,
     Path(name): Path<String>,
@@ -671,7 +731,6 @@ async fn watch_view<S: ViewSource>(
         Err(resp) => return resp,
     };
     let q = page.query();
-    // probe once so a bad view name is an immediate 404, not a silent stream
     match shared.view(&name, &q).1 {
         ViewRead::NotFound => return error(StatusCode::NOT_FOUND, "not found"),
         ViewRead::BadRequest(msg) => return error(StatusCode::BAD_REQUEST, msg),
@@ -679,12 +738,9 @@ async fn watch_view<S: ViewSource>(
     }
 
     let events = tokio_stream::wrappers::WatchStream::new(shared.subscribe()).map(move |_| {
-        // re-read rather than reuse the probe: each commit notification
-        // triggers a fresh consistent snapshot of this view
         let (seq, out) = shared.view(&name, &q);
         let data = match out {
             ViewRead::Data(data) => data,
-            // can't happen after a successful probe; keep the stream alive
             _ => Value::Null,
         };
         Ok::<_, Infallible>(
@@ -706,9 +762,6 @@ async fn serve_schema<S: ViewSource>(State(shared): State<Arc<S>>) -> Response {
     Json(shared.docs().schema.clone()).into_response()
 }
 
-/// SSE commit feed: one `{"seq": n}` event per committed transaction (the
-/// current seq arrives immediately on connect). Slow consumers see the
-/// latest seq, not every intermediate one — it's a level, not a log.
 async fn watch_sse<S: ViewSource>(State(shared): State<Arc<S>>) -> impl IntoResponse {
     let events = tokio_stream::wrappers::WatchStream::new(shared.subscribe()).map(|seq| {
         Ok::<_, Infallible>(
@@ -728,8 +781,7 @@ fn respond((seq, outcome): (u64, ViewRead)) -> Response {
     }
 }
 
-/// Unwrap a JSON body or produce the standard error shape. The rejection's
-/// text carries serde's message, which names the offending field.
+#[allow(clippy::result_large_err)]
 fn require_json<T>(body: Result<Json<T>, JsonRejection>) -> Result<T, Response> {
     match body {
         Ok(Json(v)) => Ok(v),
@@ -740,7 +792,7 @@ fn require_json<T>(body: Result<Json<T>, JsonRejection>) -> Result<T, Response> 
     }
 }
 
-/// Unwrap query parameters or produce the standard error shape.
+#[allow(clippy::result_large_err)]
 fn require_query<T>(query: Result<Query<T>, QueryRejection>) -> Result<T, Response> {
     match query {
         Ok(Query(v)) => Ok(v),
@@ -769,34 +821,48 @@ fn error(status: StatusCode, msg: impl Into<String>) -> Response {
 /// persisted in a sidecar file (`<data dir>.schema`) on first open; a
 /// mismatch on a later open means the pipeline's input type or sink
 /// structure changed, and reads through the new pipeline could silently
-/// misinterpret persisted state — so refuse to start, loudly.
-fn check_fingerprint(db_path: &std::path::Path, schema: &Value) {
-    let fingerprint = schema["fingerprint"].as_str().unwrap();
+/// misinterpret persisted state. What happens then is the caller's choice
+/// ([`SchemaDrift`](crate::SchemaDrift)): refuse to start loudly, or wipe
+/// the store and rebuild from empty.
+fn check_fingerprint<S: Rtx>(
+    db_path: &std::path::Path,
+    fingerprint: &str,
+    drift: crate::SchemaDrift,
+    stream: &mut S,
+) {
     let mut marker = db_path.as_os_str().to_owned();
     marker.push(".schema");
 
     match std::fs::read_to_string(&marker) {
-        Ok(stored) if stored.trim() == fingerprint => {}
-        Ok(stored) => panic!(
-            "pipeline changed since this data dir was written\n\
-             \n\
-             data dir:            {}\n\
-             stored fingerprint:  {}\n\
-             current fingerprint: {}\n\
-             \n\
-             The input type or sink structure no longer matches the persisted\n\
-             state. Either restore the previous pipeline, or start fresh\n\
-             (`bogkit dev --fresh`, or delete the data dir and its .schema file).",
-            db_path.display(),
-            stored.trim(),
-            fingerprint,
-        ),
-        // first open (or unreadable marker): record the fingerprint;
-        // best-effort — a read-only fs shouldn't stop the server
-        Err(_) => {
-            if let Err(e) = std::fs::write(&marker, fingerprint) {
-                eprintln!("bog-serve: could not persist schema fingerprint: {e}");
+        Ok(stored) if stored.trim() == fingerprint => return,
+        Ok(stored) => match drift {
+            crate::SchemaDrift::Panic => panic!(
+                "pipeline changed since this data dir was written\n\
+                 \n\
+                 data dir:            {}\n\
+                 stored fingerprint:  {}\n\
+                 current fingerprint: {}\n\
+                 \n\
+                 The input type or sink structure no longer matches the persisted\n\
+                 state. Either restore the previous pipeline, or start fresh\n\
+                 (`bogkit dev --fresh`, or delete the data dir and its .schema file).",
+                db_path.display(),
+                stored.trim(),
+                fingerprint,
+            ),
+            crate::SchemaDrift::WipeAndRebuild => {
+                eprintln!(
+                    "bog-serve: pipeline changed since {} was written \
+                     (stored {}, current {fingerprint}); wiping and rebuilding",
+                    db_path.display(),
+                    stored.trim(),
+                );
+                stream.reset();
             }
-        }
+        },
+        Err(_) => {}
+    }
+    if let Err(e) = std::fs::write(&marker, fingerprint) {
+        eprintln!("bog-serve: could not persist schema fingerprint: {e}");
     }
 }

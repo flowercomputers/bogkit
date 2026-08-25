@@ -4,7 +4,7 @@
 
 use serde_json::{Value, json};
 
-use crate::views::ViewSpec;
+use crate::views::{Listing, ViewKind, ViewSpec};
 
 /// How this server writes: raw deltas, or upsert/remove by primary key.
 #[derive(Clone, Copy)]
@@ -210,53 +210,64 @@ pub(crate) fn openapi_doc(
     }
 
     for spec in specs {
-        // single-object views return one item; list-shaped views a page.
-        // Point-lookup-only views (multimap, inverted index) and searched
-        // views (bm25, hnsw) have no listing GET, so don't document one.
-        let single = matches!(spec.kind, "count" | "stats" | "histogram");
-        let point_only = matches!(spec.kind, "multimap" | "inverted_index");
-        if !point_only && spec.search.is_none() {
-            let (data, summary) = if single {
-                (spec.item_schema.clone(), "read this view".to_string())
-            } else {
-                (
-                    json!({ "type": "array", "items": spec.item_schema }),
-                    format!("list this {} view (paginated)", spec.kind),
-                )
-            };
-            let mut get = json!({
-                "summary": summary,
-                "responses": json_response("one consistent snapshot", envelope(data)),
-            });
-            if !single || spec.kind == "histogram" {
-                get["parameters"] = page_params();
-            }
-            paths.insert(format!("/views/{}", spec.name), json!({ "get": get }));
+        match spec.kind.listing() {
+            Listing::SearchOnly | Listing::PointOnly => {}
+            listing => {
+                let (data, summary) = match listing {
+                    Listing::Scalar | Listing::Object => {
+                        (spec.item_schema.clone(), "read this view".to_string())
+                    }
+                    Listing::Page => (
+                        json!({ "type": "array", "items": spec.item_schema }),
+                        format!("list this {} view (paginated)", spec.kind.as_str()),
+                    ),
+                    Listing::PointOnly | Listing::SearchOnly => unreachable!(),
+                };
+                let mut get = json!({
+                    "summary": summary,
+                    "responses": json_response("one consistent snapshot", envelope(data)),
+                });
+                if listing != Listing::Scalar {
+                    get["parameters"] = page_params();
+                }
+                paths.insert(format!("/views/{}", spec.name), json!({ "get": get }));
 
-            paths.insert(
-                format!("/views/{}/watch", spec.name),
-                json!({ "get": {
-                    "summary": "server-sent events: this view's fresh payload after every commit \
-                                (?limit/?desc shape the read)",
-                    "responses": { "200": { "description": "text/event-stream" } },
-                } }),
-            );
+                paths.insert(
+                    format!("/views/{}/watch", spec.name),
+                    json!({ "get": {
+                        "summary": "server-sent events: this view's fresh payload after every commit \
+                                    (?limit/?desc shape the read)",
+                        "responses": { "200": { "description": "text/event-stream" } },
+                    } }),
+                );
+            }
         }
 
         if spec.keyed {
+            let key_param = json!({
+                "name": "key", "in": "path", "required": true,
+                "schema": { "type": "string" },
+                "description": "the key, as JSON or a bare string",
+            });
+            let ranked = spec.kind == ViewKind::KeyedRanked;
+            let data = if ranked {
+                json!({ "type": "array", "items": spec.item_schema })
+            } else {
+                spec.item_schema.clone()
+            };
+            let mut params = vec![key_param];
+            if ranked && let Value::Array(extra) = page_params() {
+                params.extend(extra);
+            }
             paths.insert(
                 format!("/views/{}/{{key}}", spec.name),
                 json!({
                     "get": {
                         "summary": "point-read one key",
-                        "parameters": [{
-                            "name": "key", "in": "path", "required": true,
-                            "schema": { "type": "string" },
-                            "description": "the key, as JSON or a bare string",
-                        }],
+                        "parameters": params,
                         "responses": json_response(
                             "the current value under this key",
-                            envelope(spec.item_schema.clone()),
+                            envelope(data),
                         ),
                     }
                 }),
@@ -266,34 +277,40 @@ pub(crate) fn openapi_doc(
         if let Some(mode) = spec.search {
             let hits = envelope(json!({ "type": "array", "items": spec.item_schema }));
             let mut ops = serde_json::Map::new();
-            if mode.contains("text") {
-                ops.insert("get".into(), json!({
-                    "summary": "text search, ranked",
-                    "parameters": [
-                        { "name": "q", "in": "query", "required": true,
-                          "schema": { "type": "string" } },
-                        { "name": "k", "in": "query",
-                          "schema": { "type": "integer", "default": 10 } },
-                    ],
-                    "responses": json_response("hits, best first", hits.clone()),
-                }));
+            if mode.has_text() {
+                ops.insert(
+                    "get".into(),
+                    json!({
+                        "summary": "text search, ranked",
+                        "parameters": [
+                            { "name": "q", "in": "query", "required": true,
+                              "schema": { "type": "string" } },
+                            { "name": "k", "in": "query",
+                              "schema": { "type": "integer", "default": 10 } },
+                        ],
+                        "responses": json_response("hits, best first", hits.clone()),
+                    }),
+                );
             }
-            if mode.contains("vector") {
-                ops.insert("post".into(), json!({
-                    "summary": "nearest-neighbor search by raw vector",
-                    "requestBody": {
-                        "required": true,
-                        "content": { "application/json": { "schema": {
-                            "type": "object",
-                            "properties": {
-                                "vector": { "type": "array", "items": { "type": "number" } },
-                                "k": { "type": "integer", "default": 10 },
-                            },
-                            "required": ["vector"],
-                        } } },
-                    },
-                    "responses": json_response("hits, nearest first", hits),
-                }));
+            if mode.has_vector() {
+                ops.insert(
+                    "post".into(),
+                    json!({
+                        "summary": "nearest-neighbor search by raw vector",
+                        "requestBody": {
+                            "required": true,
+                            "content": { "application/json": { "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "vector": { "type": "array", "items": { "type": "number" } },
+                                    "k": { "type": "integer", "default": 10 },
+                                },
+                                "required": ["vector"],
+                            } } },
+                        },
+                        "responses": json_response("hits, nearest first", hits),
+                    }),
+                );
             }
             paths.insert(format!("/views/{}/search", spec.name), Value::Object(ops));
         }
@@ -357,10 +374,12 @@ pub(crate) fn openapi_doc(
 pub(crate) fn schema_doc(input: &Value, specs: &[ViewSpec], style: WriteStyle<'_>) -> Value {
     let views: Vec<Value> = specs
         .iter()
-        .map(|s| json!({
-            "name": s.name, "kind": s.kind, "keyed": s.keyed,
-            "search": s.search, "item": s.item_schema,
-        }))
+        .map(|s| {
+            json!({
+                "name": s.name, "kind": s.kind.as_str(), "keyed": s.keyed,
+                "search": s.search.map(|m| m.as_str()), "item": s.item_schema,
+            })
+        })
         .collect();
     let write = match style {
         WriteStyle::Unkeyed => json!("unkeyed"),

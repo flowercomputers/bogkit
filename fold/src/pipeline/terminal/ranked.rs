@@ -328,6 +328,7 @@ where
         KeyedRankedReader {
             tx,
             ks: self.ks.clone().unwrap(),
+            name: self.name.clone(),
             _p: PhantomData,
         }
     }
@@ -337,7 +338,15 @@ where
 pub struct KeyedRankedReader<'tx, R: Readable, K, S, V> {
     tx: &'tx R,
     ks: fjall::SingleWriterTxKeyspace,
+    name: String,
     _p: PhantomData<(K, S, V)>,
+}
+
+impl<'tx, R: Readable, K, S, V> KeyedRankedReader<'tx, R, K, S, V> {
+    /// The sink name this reader serves, as given to [`KeyedRanked::new`].
+    pub fn name(&self) -> &str {
+        &self.name
+    }
 }
 
 impl<'tx, R, K, S, V> KeyedRankedReader<'tx, R, K, S, V>
