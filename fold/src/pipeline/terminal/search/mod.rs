@@ -12,7 +12,9 @@ use crate::{
     stream::{PipelineInitCtx, WriteTx},
 };
 
+mod flat;
 mod hnsw;
+pub use flat::*;
 pub use hnsw::*;
 
 /// Default tokenizer: split on whitespace, strip non-ASCII-alphanumerics,
@@ -83,9 +85,9 @@ pub struct Bm25<K, V, T = fn(&str, &mut Vec<u8>)> {
     tokens: Vec<u8>,
     k1: f64,
     b: f64,
-    // pending accumulated deltas this tx, by encoded store key
-    postings: FxHashMap<Vec<u8>, i64>,
-    doc_lens: FxHashMap<Vec<u8>, i64>,
+    // per-document resolution of this transaction's pushes, keyed by the
+    // doclen store key; posting writes are decided per document at commit
+    pending: FxHashMap<Vec<u8>, DocPending>,
     docs: i64,
     len: i64,
     _p: PhantomData<(K, V)>,
@@ -113,8 +115,7 @@ impl<K, V, T> Bm25<K, V, T> {
             tokens: Vec::default(),
             k1: 1.2,
             b: 0.75,
-            postings: FxHashMap::default(),
-            doc_lens: FxHashMap::default(),
+            pending: FxHashMap::default(),
             docs: 0,
             len: 0,
             _p: PhantomData,
@@ -130,22 +131,20 @@ impl<K, V, T> Bm25<K, V, T> {
     }
 }
 
-// flush a pending delta map set-semantically, like `InvertedIndex`: the net
-// sign decides between writing the magnitude and deleting the key, with no
-// read of prior state — a read-modify-write here turns mass retraction into
-// a random point read per key
-fn fold(
-    tx: &mut WriteTx<'_>,
-    ks: &fjall::SingleWriterTxKeyspace,
-    pending: &mut FxHashMap<Vec<u8>, i64>,
-) {
-    for (key, delta) in pending.drain() {
-        match delta {
-            1.. => tx.insert(ks, &key, delta.to_be_bytes()),
-            0 => {}
-            _ => tx.remove(ks, &key),
-        }
-    }
+/// One document's pushes within a transaction, resolved at commit with no
+/// store reads. A same-transaction replacement (retract old text, insert
+/// new) must delete exactly the old terms and write the new term
+/// frequencies absolutely — accumulating per-term net deltas corrupts every
+/// term the two texts share.
+#[derive(Default)]
+struct DocPending {
+    net: i64,
+    last_was_positive: bool,
+    /// full posting keys -> term frequency, from the latest positive push
+    added: FxHashMap<Vec<u8>, i64>,
+    added_dl: i64,
+    /// posting keys named by retractions (frequencies irrelevant)
+    removed: FxHashMap<Vec<u8>, i64>,
 }
 
 impl<K, V, T> Push<Keyed<K, V>> for Bm25<K, V, T>
@@ -175,30 +174,58 @@ where
             dl += 1;
         }
 
+        let mut keys: FxHashMap<Vec<u8>, i64> = FxHashMap::default();
         for (term, n) in tf {
             tx.buf.clear();
             tx.buf.push(POSTING);
             postcard::to_io(term, &mut tx.buf).unwrap();
             postcard::to_io(key, &mut tx.buf).unwrap();
-            *self.postings.entry(tx.buf.clone()).or_insert(0) += n * delta;
+            keys.insert(tx.buf.clone(), n);
         }
 
         tx.buf.clear();
         tx.buf.push(DOCLEN);
         postcard::to_io(key, &mut tx.buf).unwrap();
-        *self.doc_lens.entry(tx.buf.clone()).or_insert(0) += dl * delta;
+        let e = self.pending.entry(tx.buf.clone()).or_default();
+        e.net += delta;
+        e.last_was_positive = delta > 0;
+        if delta > 0 {
+            e.added = keys;
+            e.added_dl = dl;
+        } else {
+            e.removed.extend(keys);
+        }
 
         self.docs += delta;
         self.len += dl * delta;
     }
 
     fn commit(&mut self, tx: &mut WriteTx<'_>) {
-        if self.postings.is_empty() && self.doc_lens.is_empty() {
+        if self.pending.is_empty() {
             return;
         }
         let ks = self.ks.clone().unwrap();
-        fold(tx, &ks, &mut self.postings);
-        fold(tx, &ks, &mut self.doc_lens);
+        for (dl_key, p) in self.pending.drain() {
+            // same per-key discipline as the Hnsw sink: net > 0 or a
+            // trailing positive push means the document lives under its
+            // latest text; net < 0 deletes it; a cancelled insert is a no-op
+            if p.net > 0 || (p.net == 0 && p.last_was_positive) {
+                for k in p.removed.keys() {
+                    if !p.added.contains_key(k) {
+                        tx.remove(&ks, k);
+                    }
+                }
+                for (k, tf) in &p.added {
+                    tx.insert(&ks, k, tf.to_be_bytes());
+                }
+                tx.insert(&ks, &dl_key, p.added_dl.to_be_bytes());
+            } else if p.net < 0 {
+                for k in p.removed.keys().chain(p.added.keys()) {
+                    tx.remove(&ks, k);
+                }
+                tx.remove(&ks, &dl_key);
+            }
+        }
 
         let (mut n, mut l) = tx
             .get(&ks, [STATS])
@@ -225,8 +252,7 @@ where
     }
 
     fn abort(&mut self) {
-        self.postings.clear();
-        self.doc_lens.clear();
+        self.pending.clear();
         self.docs = 0;
         self.len = 0;
     }

@@ -59,13 +59,26 @@ impl<D: Clone, P: Push<D>> Stream<D, P> {
         })) {
             Ok(r) => r,
             Err(p) => {
-                // fjall tx rolls back on drop
+                // roll back HERE, in a non-unwinding context: dropping the
+                // fjall tx while a panic is in flight would poison the
+                // store's writer lock for the rest of the process
+                drop(wtx);
                 self.pipeline.abort();
                 std::panic::resume_unwind(p);
             }
         };
 
-        self.pipeline.commit(&mut wtx);
+        // commit runs stateful nodes' flush logic, which can panic (store
+        // reads, deserialization, index rebuilds); it needs the same
+        // abort-on-panic protection as the closure, or nodes keep pending
+        // state that the rolled-back store never saw
+        if let Err(p) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.pipeline.commit(&mut wtx);
+        })) {
+            drop(wtx); // as above: roll back before the panic resumes
+            self.pipeline.abort();
+            std::panic::resume_unwind(p);
+        }
         wtx.commit();
         r
     }
@@ -81,11 +94,29 @@ impl<D: Clone, P: Push<D>> Stream<D, P> {
         // tx drops here
     }
 
-    /// Fsync all committed state to disk.
+    /// Fsync all committed state to disk and flush memtables so the journal
+    /// can be retired.
     ///
     /// Commits are durable against process crashes as soon as `wtx` returns;
     /// checkpointing additionally hardens them against OS/power failure.
+    /// Flushing also bounds reopen cost: without it the journal grows for
+    /// the lifetime of the database and is replayed in full on every open.
+    ///
+    /// Call this after bulk ingestion, not per small write: each call seals
+    /// a memtable per keyspace, and tiny frequent seals shred fjall's L0
+    /// into many one-row runs. Caveats: the rotation goes through fjall's
+    /// `#[doc(hidden)]` test surface (no supported public flush exists in
+    /// the single-writer API), and its wait loop can block indefinitely if
+    /// a flush worker has died (e.g. disk full) — a wedged checkpoint means
+    /// the store itself is in a failed state.
     pub fn checkpoint(&mut self) {
+        for name in self.store.list_keyspace_names() {
+            let ks = self
+                .store
+                .keyspace(name.as_ref(), fjall::KeyspaceCreateOptions::default)
+                .unwrap();
+            ks.as_ref().rotate_memtable_and_wait().unwrap();
+        }
         self.store.persist(fjall::PersistMode::SyncAll).unwrap();
     }
 

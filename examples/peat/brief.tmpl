@@ -1,0 +1,50 @@
+{{ ("== peat brief · " ~ today ~ " ==") | h1 }}
+{%- if active %}
+
+{{ "active in the last hour:" | h1 }}
+{%- for a in active %}
+  {{ a.where | accent }} {{ ("[" ~ a.session ~ "]") | dim }} — {{ a.age }} ago{% if a.commits %}, {{ a.commits }} commits{% endif %}
+{%- endfor %}
+{%- endif %}
+{%- if days %}
+
+{{ "recent activity:" | h1 }}
+{%- for d in days %}
+  {{ d.day }}: {{ d.tools | k }} tools{% if d.fails %}{{ (" (" ~ d.fails ~ " fail)") | dim }}{% endif %}{% if d.commits %} · {{ d.commits }} commits{% endif %}{% if d.files %} · {{ d.files | join(", ") }}{% endif %}
+{%- endfor %}
+{%- endif %}
+{%- if further %}
+
+{{ "further back:" | h1 }}
+{%- for b in further %}
+  {{ ("[" ~ b.label ~ (" · " ~ b.span if b.span else "") ~ "]") | dim }} {{ b.tools | k }} tools{% if b.fails %}{{ (" (" ~ b.fails ~ " fail)") | dim }}{% endif %}{% if b.commits %} · {{ b.commits }} commits{% endif %}{% if b.sessions %} · {{ b.sessions }} sessions{% endif %}{% if b.obs %} · {{ b.obs }} obs{% endif %}{% if b.files %} · {{ b.files | join(", ") }}{% endif %}  {{ ("▸ " ~ b.handle) | dim }}
+{%- endfor %}
+{%- endif %}
+{%- if last_session %}
+
+{{ "last session" | h1 }}{{ (" (" ~ last_session.age ~ (", " ~ last_session.branch if last_session.branch else "") ~ "):") | dim }}
+  {{ last_session.final_msg | clip(400) }}
+{%- endif %}
+{%- if files %}
+
+{{ "recently touched files:" | h1 }}
+{%- for f in files %}
+  {{ f.path }} — sessions {{ f.sessions | join(", ") }}
+{%- endfor %}
+{%- endif %}
+{%- if relevant %}
+
+{{ "possibly relevant (judge each; origin and age shown):" | h1 }}
+{%- for r in relevant %}
+  {{ ("[" ~ r.tag ~ "]") | dim }} {{ r.text | clip(160) }}{% if not loop.last %}
+{% endif %}
+{%- endfor %}
+{%- endif %}
+{%- if subjects %}
+
+{{ "current understanding (agent-asserted, newest wins):" | h1 }}
+{%- for s in subjects %}
+  {{ s.subject | accent }}{{ (" (" ~ s.count ~ " obs") | dim }}{% if not s.cited %}{{ ", uncited" | warn }}{% endif %}{{ (", " ~ s.age ~ "):") | dim }} {{ s.text | clip(120) }}  {{ s.handle | dim }}{% if not loop.last %}
+{% endif %}
+{%- endfor %}
+{%- endif %}

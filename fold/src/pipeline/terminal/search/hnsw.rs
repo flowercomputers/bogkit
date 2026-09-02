@@ -142,8 +142,15 @@ pub struct Hnsw<
     metric: M,
     seed: u64,
     state: Rc<RefCell<State<K, T, M, DIM, M0, TOP_K, EF_SEARCH, EF_BUILD, MAX_LEVEL>>>,
-    // encoded key -> (key, latest embedding, net delta this tx)
-    pending: FxHashMap<Vec<u8>, (K, [T; DIM], i64)>,
+    // encoded (key, embedding) -> (key, embedding, net delta this tx).
+    // Keyed by value as well as key — the Bm25 discipline — so a retraction
+    // of the old embedding and an insertion of a new one never cancel: a
+    // replacement inside one transaction must reach the graph and the store.
+    // per-key resolution of this transaction's pushes, in push order:
+    // (net delta, whether the LAST push was positive, latest positively-
+    // pushed record). Order within one key is well-defined (push order);
+    // nothing depends on cross-key drain order.
+    pending: FxHashMap<Vec<u8>, (i64, bool, Option<(K, [T; DIM])>)>,
     vec_buf: Vec<u8>,
 }
 
@@ -207,15 +214,10 @@ where
 
     fn init(&mut self, init: &mut PipelineInitCtx<'_>) {
         let ks = init.keyspace(&self.name);
-        // recover the graph from the vectors persisted by earlier runs
-        self.state.borrow_mut().rebuild(
-            self.metric,
-            self.seed,
-            init.snapshot().iter(&ks).map(|kv| {
-                let (k, v) = kv.into_inner().unwrap();
-                (k.to_vec(), v.to_vec())
-            }),
-        );
+        // defer graph recovery to first use (the same lazy path aborted
+        // transactions take): opening a stream must not pay an O(n) graph
+        // rebuild when this sink may never be touched
+        self.state.borrow_mut().stale = true;
         self.ks = Some(ks);
     }
 
@@ -225,9 +227,12 @@ where
         let e = self
             .pending
             .entry(tx.buf.clone())
-            .or_insert_with(|| (data.key.clone(), data.val, 0));
-        e.1 = data.val;
-        e.2 += delta as i64;
+            .or_insert((0, false, None));
+        e.0 += delta as i64;
+        e.1 = delta > 0;
+        if delta > 0 {
+            e.2 = Some((data.key.clone(), data.val));
+        }
     }
 
     fn commit(&mut self, tx: &mut WriteTx<'_>) {
@@ -246,20 +251,27 @@ where
             let (metric, seed) = (self.metric, self.seed);
             state.rebuild(metric, seed, entries);
         }
-        for (kenc, (key, vec, delta)) in self.pending.drain() {
-            match delta {
-                1.. => {
-                    self.vec_buf.clear();
-                    postcard::to_io(&vec[..], &mut self.vec_buf).unwrap();
-
-                    tx.insert(&ks, &kenc, &self.vec_buf);
-                    state.upsert(kenc, key, vec);
-                }
-                0 => {}
-                _ => {
-                    if state.remove(&kenc) {
-                        tx.remove(&ks, &kenc);
-                    }
+        for (kenc, (net, last_was_positive, last_pos)) in self.pending.drain() {
+            // Per-key semantics, resolved in memory with no store reads:
+            //   net > 0                        -> (re)index the latest record
+            //   net == 0, last push positive   -> replacement (-old, +new):
+            //                                     index the new record
+            //   net == 0, last push negative   -> insert+retract cancels
+            //   net < 0                        -> delete by key, regardless
+            //                                     of what value the caller
+            //                                     reproduced (embeddings may
+            //                                     be recomputed; a byte
+            //                                     mismatch must not make a
+            //                                     row undeletable)
+            if net > 0 || (net == 0 && last_was_positive) {
+                let (key, vec) = last_pos.expect("positive push recorded a record");
+                self.vec_buf.clear();
+                postcard::to_io(&vec[..], &mut self.vec_buf).unwrap();
+                tx.insert(&ks, &kenc, &self.vec_buf);
+                state.upsert(kenc, key, vec);
+            } else if net < 0 {
+                if state.remove(&kenc) {
+                    tx.remove(&ks, &kenc);
                 }
             }
         }
