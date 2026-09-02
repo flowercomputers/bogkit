@@ -12,7 +12,9 @@ use crate::{
     stream::{PipelineInitCtx, WriteTx},
 };
 
+mod flat;
 mod hnsw;
+pub use flat::*;
 pub use hnsw::*;
 
 /// Default tokenizer: split on whitespace, strip non-ASCII-alphanumerics,

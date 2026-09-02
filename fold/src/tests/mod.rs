@@ -7,6 +7,7 @@ mod abort;
 mod bm25;
 
 #[cfg(test)]
+mod flat;
 mod hnsw;
 
 #[cfg(test)]
