@@ -25,8 +25,23 @@ impl<D: Clone, P: Push<D>> Stream<D, P> {
     /// # Panics
     /// Panics if the store cannot be opened or if two nodes claim the same
     /// name.
-    pub fn new(path: impl AsRef<Path>, mut pipeline: P) -> Self {
-        let store = fjall::SingleWriterTxDatabase::builder(path).open().unwrap();
+    pub fn new(path: impl AsRef<Path>, pipeline: P) -> Self {
+        Self::open(fjall::SingleWriterTxDatabase::builder(path), pipeline)
+    }
+
+    /// [`Stream::new`] with an explicit block-cache capacity in bytes,
+    /// replacing fjall's 32 MiB default. Point-read-heavy sinks (BM25
+    /// postings, doc tables) degrade sharply once their hot set outgrows
+    /// the cache; fjall's own guidance is ~20-25% of available memory.
+    pub fn with_cache(path: impl AsRef<Path>, pipeline: P, cache_bytes: u64) -> Self {
+        Self::open(
+            fjall::SingleWriterTxDatabase::builder(path).cache_size(cache_bytes),
+            pipeline,
+        )
+    }
+
+    fn open(builder: fjall::DatabaseBuilder<fjall::SingleWriterTxDatabase>, mut pipeline: P) -> Self {
+        let store = builder.open().unwrap();
 
         let mut init = PipelineInitCtx::new(&store);
         pipeline.init(&mut init);
@@ -90,6 +105,15 @@ impl<D: Clone, P: Push<D>> Stream<D, P> {
     }
 
     pub(crate) fn store(&self) -> &fjall::SingleWriterTxDatabase {
+        &self.store
+    }
+
+    /// The underlying fjall database, for maintenance operations outside
+    /// fold's transaction model (memtable rotation before snapshotting the
+    /// directory, disk-usage inspection, ...). Writes through this handle
+    /// bypass the pipeline and will desynchronize the sinks — read/flush
+    /// operations only.
+    pub fn db(&self) -> &fjall::SingleWriterTxDatabase {
         &self.store
     }
 }

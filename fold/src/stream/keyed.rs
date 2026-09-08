@@ -67,7 +67,16 @@ where
     /// Open (or create) the store at `path` and initialize the pipeline;
     /// see [`Stream::new`].
     pub fn new(path: impl AsRef<Path>, pipeline: P) -> Self {
-        let inner = Stream::new(path, pipeline);
+        Self::from_inner(Stream::new(path, pipeline))
+    }
+
+    /// [`KeyedStream::new`] with an explicit block-cache capacity in
+    /// bytes; see [`Stream::with_cache`].
+    pub fn with_cache(path: impl AsRef<Path>, pipeline: P, cache_bytes: u64) -> Self {
+        Self::from_inner(Stream::with_cache(path, pipeline, cache_bytes))
+    }
+
+    fn from_inner(inner: Stream<Keyed<K, D>, P>) -> Self {
         let table = inner
             .store()
             .keyspace("keyed_root", fjall::KeyspaceCreateOptions::default)
@@ -133,6 +142,11 @@ where
     /// Fsync all committed state to disk; see [`Stream::checkpoint`].
     pub fn checkpoint(&mut self) {
         self.inner.checkpoint()
+    }
+
+    /// The underlying fjall database; see [`Stream::db`].
+    pub fn db(&self) -> &fjall::SingleWriterTxDatabase {
+        self.inner.db()
     }
 }
 
