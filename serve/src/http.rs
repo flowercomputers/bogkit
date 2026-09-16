@@ -27,7 +27,7 @@ use tokio_stream::StreamExt;
 
 use crate::openapi::{CustomDoc, WriteStyle};
 use crate::to_value;
-use crate::views::{ViewQuery, ViewRead, Views, parse_key, schema_of};
+use crate::views::{ViewQuery, ViewRead, Views, parse_key_mode, schema_of};
 
 const DEFAULT_LIMIT: usize = 100;
 const DEFAULT_K: usize = 10;
@@ -205,12 +205,14 @@ trait ViewSource: Send + Sync + 'static {
     fn view(&self, view: &str, q: &ViewQuery) -> (u64, ViewRead);
     fn docs(&self) -> &Docs;
     fn subscribe(&self) -> watch::Receiver<u64>;
+    fn raw_string_keys(&self) -> bool;
 }
 
 struct Shared<S> {
     inner: RwLock<Inner<S>>,
     docs: Docs,
     notify: watch::Sender<u64>,
+    raw_string_keys: bool,
 }
 
 struct Inner<S> {
@@ -230,6 +232,10 @@ impl<S: Rtx> ViewSource for Shared<S> {
 
     fn subscribe(&self) -> watch::Receiver<u64> {
         self.notify.subscribe()
+    }
+
+    fn raw_string_keys(&self) -> bool {
+        self.raw_string_keys
     }
 }
 
@@ -266,6 +272,7 @@ fn shared_from<D, P, S: Rtx>(
     input_schema: &Value,
     style: WriteStyle<'_>,
     drift: crate::SchemaDrift,
+    raw_string_keys: bool,
 ) -> (Arc<Shared<S>>, String)
 where
     D: Clone,
@@ -286,6 +293,7 @@ where
             schema,
         },
         notify: watch::channel(0).0,
+        raw_string_keys,
         inner: RwLock::new(Inner { stream, seq: 0 }),
     });
     (shared, fingerprint)
@@ -377,6 +385,7 @@ where
         &input_schema,
         WriteStyle::Unkeyed,
         drift,
+        false,
     );
     let app = read_routes::<Shared<Stream<D, P>>>()
         .route("/insert", post(insert::<D, P>))
@@ -392,6 +401,7 @@ pub(crate) fn router_keyed<K, V, P>(
     custom: Vec<KeyedCustom<K, V, P>>,
     db_path: &std::path::Path,
     drift: crate::SchemaDrift,
+    raw_string_keys: bool,
 ) -> (Router, Lifecycle)
 where
     K: Clone + Send + Sync + Serialize + DeserializeOwned + JsonSchema + 'static,
@@ -410,6 +420,7 @@ where
             key_schema: &key_schema,
         },
         drift,
+        raw_string_keys,
     );
     let app = read_routes::<Shared<KeyedStream<K, V, P>>>()
         .route(
@@ -531,7 +542,7 @@ where
         Ok(d) => d,
         Err(resp) => return resp,
     };
-    let Some(key) = parse_key::<K>(&raw) else {
+    let Some(key) = parse_key_mode::<K>(&raw, shared.raw_string_keys) else {
         return error(StatusCode::BAD_REQUEST, key_parse_msg(&raw));
     };
     let (seq, old) = commit_with(&shared, |stream| stream.wtx(|tx| tx.upsert(&key, &data)));
@@ -548,7 +559,7 @@ where
     P: Push<Keyed<K, V>> + Send + Sync + 'static,
     for<'tx> P::Reader<'tx, Snapshot>: Views,
 {
-    let Some(key) = parse_key::<K>(&raw) else {
+    let Some(key) = parse_key_mode::<K>(&raw, shared.raw_string_keys) else {
         return error(StatusCode::BAD_REQUEST, key_parse_msg(&raw));
     };
     let (seq, old) = commit_with(&shared, |stream| stream.wtx(|tx| tx.remove(&key)));
@@ -565,7 +576,7 @@ where
     P: Push<Keyed<K, V>> + Send + Sync + 'static,
     for<'tx> P::Reader<'tx, Snapshot>: Views,
 {
-    let Some(key) = parse_key::<K>(&raw) else {
+    let Some(key) = parse_key_mode::<K>(&raw, shared.raw_string_keys) else {
         return error(StatusCode::BAD_REQUEST, key_parse_msg(&raw));
     };
     let inner = shared.inner.read().unwrap();
@@ -680,7 +691,9 @@ async fn view_key<S: ViewSource>(
         Err(resp) => return resp,
     };
     let (limit, offset, desc) = page.parts();
-    respond(shared.view(&name, &ViewQuery::point_page(key, limit, offset, desc)))
+    let query = ViewQuery::point_page(key, limit, offset, desc)
+        .with_raw_string_key(shared.raw_string_keys());
+    respond(shared.view(&name, &query))
 }
 
 #[derive(Deserialize)]

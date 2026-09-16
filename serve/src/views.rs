@@ -124,6 +124,7 @@ pub enum ViewQuery {
         limit: usize,
         offset: usize,
         desc: bool,
+        raw_string_key: bool,
     },
     Search {
         q: Option<String>,
@@ -147,6 +148,7 @@ impl ViewQuery {
             limit: 100,
             offset: 0,
             desc: false,
+            raw_string_key: false,
         }
     }
 
@@ -156,7 +158,15 @@ impl ViewQuery {
             limit,
             offset,
             desc,
+            raw_string_key: false,
         }
+    }
+
+    pub(crate) fn with_raw_string_key(mut self, enabled: bool) -> Self {
+        if let Self::Point { raw_string_key, .. } = &mut self {
+            *raw_string_key = enabled;
+        }
+        self
     }
 
     pub fn search(q: Option<String>, vector: Option<Value>, k: usize) -> Self {
@@ -218,6 +228,14 @@ pub(crate) fn parse_key<K: DeserializeOwned>(raw: &str) -> Option<K> {
     serde_json::from_str(raw)
         .ok()
         .or_else(|| serde_json::from_value(Value::String(raw.to_string())).ok())
+}
+
+pub(crate) fn parse_key_mode<K: DeserializeOwned>(raw: &str, raw_string: bool) -> Option<K> {
+    if raw_string {
+        serde_json::from_value(Value::String(raw.to_string())).ok()
+    } else {
+        parse_key(raw)
+    }
 }
 
 fn not_searchable() -> ViewRead {
@@ -339,7 +357,11 @@ where
         }
         match q {
             ViewQuery::Search { .. } => not_searchable(),
-            ViewQuery::Point { key: raw, .. } => match parse_key::<K>(raw) {
+            ViewQuery::Point {
+                key: raw,
+                raw_string_key,
+                ..
+            } => match parse_key_mode::<K>(raw, *raw_string_key) {
                 None => {
                     ViewRead::BadRequest(format!("cannot parse {raw:?} as this table's key type"))
                 }
@@ -540,7 +562,8 @@ where
                 limit,
                 offset,
                 desc,
-            } => match parse_key::<K>(raw) {
+                raw_string_key,
+            } => match parse_key_mode::<K>(raw, *raw_string_key) {
                 None => {
                     ViewRead::BadRequest(format!("cannot parse {raw:?} as this view's key type"))
                 }
@@ -591,7 +614,11 @@ where
             ViewQuery::List { .. } => ViewRead::BadRequest(format!(
                 "multimap views are point lookups: GET /views/{view}/{{key}}"
             )),
-            ViewQuery::Point { key: raw, .. } => match parse_key::<K>(raw) {
+            ViewQuery::Point {
+                key: raw,
+                raw_string_key,
+                ..
+            } => match parse_key_mode::<K>(raw, *raw_string_key) {
                 None => {
                     ViewRead::BadRequest(format!("cannot parse {raw:?} as this view's key type"))
                 }
@@ -635,7 +662,11 @@ where
             ViewQuery::List { .. } => ViewRead::BadRequest(format!(
                 "inverted index views are point lookups: GET /views/{view}/{{value}}"
             )),
-            ViewQuery::Point { key: raw, .. } => match parse_key::<V>(raw) {
+            ViewQuery::Point {
+                key: raw,
+                raw_string_key,
+                ..
+            } => match parse_key_mode::<V>(raw, *raw_string_key) {
                 None => {
                     ViewRead::BadRequest(format!("cannot parse {raw:?} as this view's value type"))
                 }

@@ -148,6 +148,7 @@ struct ServeOpts {
     bind: Option<Bind>,
     idle_timeout: Option<std::time::Duration>,
     drift: SchemaDrift,
+    raw_string_keys: bool,
 }
 
 pub(crate) fn to_value<T: Serialize>(t: T) -> Value {
@@ -276,12 +277,21 @@ where
     /// Open (or create) the database at `path` and wrap `pipeline` — which
     /// receives [`Keyed`]`<K, V>` deltas — in a server.
     pub fn stream(path: impl AsRef<std::path::Path>, pipeline: P) -> Self {
-        KeyedApp {
-            stream: KeyedStream::new(&path, pipeline),
+        Self::try_stream(path, pipeline).unwrap()
+    }
+
+    /// Fallible [`stream`](KeyedApp::stream), for callers that need to
+    /// report store locks and filesystem failures without panicking.
+    pub fn try_stream(
+        path: impl AsRef<std::path::Path>,
+        pipeline: P,
+    ) -> Result<Self, fold::fjall::Error> {
+        Ok(KeyedApp {
+            stream: KeyedStream::try_new(&path, pipeline)?,
             custom: Vec::new(),
             db_path: path.as_ref().to_path_buf(),
             opts: ServeOpts::default(),
-        }
+        })
     }
 
     /// Where [`run`](KeyedApp::run) listens; see [`App::bind`].
@@ -299,6 +309,13 @@ where
     /// Schema-drift handling; see [`App::on_schema_drift`].
     pub fn on_schema_drift(mut self, drift: SchemaDrift) -> Self {
         self.opts.drift = drift;
+        self
+    }
+
+    /// Treat URL path keys as literal strings instead of trying JSON first.
+    /// This is opt-in so existing typed-key routes retain their behavior.
+    pub fn raw_string_keys(mut self) -> Self {
+        self.opts.raw_string_keys = true;
         self
     }
 
@@ -343,15 +360,27 @@ where
     /// fingerprint mismatch) and the drift mode is [`SchemaDrift::Panic`]
     /// — see the `/schema` route.
     pub fn into_router(self) -> axum::Router {
-        http::router_keyed(self.stream, self.custom, &self.db_path, self.opts.drift).0
+        http::router_keyed(
+            self.stream,
+            self.custom,
+            &self.db_path,
+            self.opts.drift,
+            self.opts.raw_string_keys,
+        )
+        .0
     }
 
     /// Serve blocking forever; see [`App::run`].
     pub fn run(mut self) {
         let opts = std::mem::take(&mut self.opts);
         let db_path = self.db_path.clone();
-        let (router, lifecycle) =
-            http::router_keyed(self.stream, self.custom, &self.db_path, opts.drift);
+        let (router, lifecycle) = http::router_keyed(
+            self.stream,
+            self.custom,
+            &self.db_path,
+            opts.drift,
+            opts.raw_string_keys,
+        );
         serve_blocking(router, lifecycle, opts, &db_path)
     }
 }
