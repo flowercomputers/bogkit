@@ -17,7 +17,6 @@ These are local checks, not deployment evidence. Raw development logs are under 
 
 ## Remaining release gates
 
-- Linux integrated suite on the final code revision.
 - Tested release image and isolated Fly deployment with persistent volume.
 - REST and SDK MCP acceptance over the real HTTPS endpoint from a separate machine.
 - Service restart persistence and independent restore on the deployment host.
@@ -33,3 +32,13 @@ Codex CLI 0.145.0, GPT-5.5, completed 12 actual MCP tool calls against a real lo
 The runner uses temporary `-c` connection settings and process-local approval for only the four authorized fixture mutation tools. Other saved servers are disabled for that invocation; the shell sandbox stays read-only. No saved MCP configuration is changed. `scripts/cloud/codex_acceptance.py` supports an optional `BOG_CODEX_MODEL` for compatibility with the installed CLI. The initial default-client attempt could not load the desktop model metadata; the successful run used GPT-5.5. An initial unattended attempt correctly stopped at its mutation-approval prompt; the scoped fixture approval setting enabled the authorized test.
 
 This passes the actual agent-client workflow locally. Remote endpoint/client and service restart/restore evidence are still pending.
+
+## Linux and review completion
+
+The Docker `verify` stage passed the complete Fold, serve, records, cloud and MCP suite on Linux at source revision `56b5aeb`. Image: `sha256:3c688ddc9f836481b755b78711a12ed3bc51b926a15f79e17e95876e8f4af670`. Evidence: `/tmp/bog-cloud-linux-release.log`. Final scoped Clippy checks also passed with warnings denied.
+
+The final review found and reproduced a manager-restart failure involving a temporarily paused surviving worker. Commit `fb131eb` preserves worker ownership and identity through that interruption. Both established-worker and pre-socket startup regression tests passed; the reviewer independently reran the original reproduction and confirmed recovery.
+
+## Fly preparation
+
+Created the isolated `flower-bog-cloud` app in `flower-computer-co` and encrypted 3 GiB `bog_data` volume `vol_vdejp8zk83nw3864` in `iad`. Owner-secret provisioning requires the specific approval requested after automatic approval review rejected that action. Resource creation is not deployment or endpoint acceptance evidence.

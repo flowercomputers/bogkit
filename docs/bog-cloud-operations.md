@@ -61,6 +61,14 @@ Copy completed backup directories to independent protected storage for host-loss
 
 Build/deploy from a tested commit, with that revision in `BOG_BUILD_COMMIT`. Set `BOG_CLOUD_OWNER_TOKEN` using Fly secrets through stdin, never a literal command argument. `BOG_CLOUD_ALLOWED_HOSTS` and `BOG_CLOUD_ALLOWED_ORIGINS` must match the endpoint exactly. Fly logs provide request status history; export/retention is a separate operator setting.
 
+Run from the repository root; Fly resolves the configured Dockerfile relative to the configuration file, while the explicit working directory supplies the repository build context:
+
+```sh
+flyctl deploy . --config deploy/bog-cloud/fly.toml --ha=false --build-arg BOG_BUILD_COMMIT="$(git rev-parse HEAD)"
+```
+
+The initial encrypted 3 GiB volume has Fly's automatic snapshots enabled with five-day retention. These platform snapshots are separate from the application's checked, closed-store backups and do not establish a tested disaster-recovery procedure.
+
 A restart uses the same volume and credentials. For rollback, stop the new service, retain the volume and backups, and deploy a previously verified compatible image. Never roll back across unknown storage/template versions in place. Template changes use a new instance with validated record transfer and preserve the source.
 
 Actual deployment, client and recovery evidence is recorded in [acceptance](verification/bog-cloud-acceptance.md). Prepared configuration alone does not establish a live deployment.

@@ -4,7 +4,7 @@ kill_signal = "SIGTERM"
 kill_timeout = 120
 
 [build]
-  dockerfile = "deploy/bog-cloud/Dockerfile"
+  dockerfile = "Dockerfile"
 
 [env]
   BOG_CLOUD_ROOT = "/data/bog"
