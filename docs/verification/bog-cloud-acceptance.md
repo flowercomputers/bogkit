@@ -15,15 +15,9 @@ Branch: `codex/personal-bog-cloud`, based on Sam's `sam/vibe-bog-serve` at `5a0f
 
 These are local checks, not deployment evidence. Raw development logs are under `/tmp/bog-cloud-*.log`; they are not committed and contain no intentional credentials.
 
-## Remaining release gates
+## Release gates
 
-- Tested release image and isolated Fly deployment with persistent volume.
-- REST and SDK MCP acceptance over the real HTTPS endpoint from a separate machine.
-- Service restart persistence and independent restore on the deployment host.
-- Actual natural-language agent-client workflow; protocol/SDK tests alone do not satisfy this gate.
-- Record the deployed source revision, image, endpoint, client version and redacted remote results here.
-
-No milestone is marked remotely complete by this report yet. Backups on the same volume are not off-host disaster recovery; no recurring backup schedule has been installed.
+The initial single-host release gates passed, including deployment, remote REST/MCP, actual Codex-client use, independent restore, and Machine restart persistence. Evidence follows below. Backups on the same volume are not off-host disaster recovery; no recurring application backup schedule has been installed.
 
 ## Actual Codex client — local
 
@@ -31,7 +25,7 @@ Codex CLI 0.145.0, GPT-5.5, completed 12 actual MCP tool calls against a real lo
 
 The runner uses temporary `-c` connection settings and process-local approval for only the four authorized fixture mutation tools. Other saved servers are disabled for that invocation; the shell sandbox stays read-only. No saved MCP configuration is changed. `scripts/cloud/codex_acceptance.py` supports an optional `BOG_CODEX_MODEL` for compatibility with the installed CLI. The initial default-client attempt could not load the desktop model metadata; the successful run used GPT-5.5. An initial unattended attempt correctly stopped at its mutation-approval prompt; the scoped fixture approval setting enabled the authorized test.
 
-This passes the actual agent-client workflow locally. Remote endpoint/client and service restart/restore evidence are still pending.
+This local result was followed by the successful remote checks recorded below.
 
 ## Linux and review completion
 
@@ -41,6 +35,22 @@ The final review found and reproduced a manager-restart failure involving a temp
 
 ## Fly preparation
 
-Created the isolated `flower-bog-cloud` app in `flower-computer-co` and encrypted 3 GiB `bog_data` volume `vol_vdejp8zk83nw3864` in `iad`. Owner-secret provisioning requires the specific approval requested after automatic approval review rejected that action. Resource creation is not deployment or endpoint acceptance evidence.
+Created the isolated `flower-bog-cloud` app in `flower-computer-co` and encrypted 3 GiB `bog_data` volume `vol_vdejp8zk83nw3864` in `iad`. Owner-secret provisioning was subsequently explicitly approved and completed through Fly Secrets. A private local copy is stored outside the repository with mode 0600.
 
-Fly's remote Linux amd64 release build succeeded and pushed `registry.fly.io/flower-bog-cloud:deployment-01M2NKS3532VZ86ETV9RXK4406` (32 MB). Runtime source and embedded build revision: `56b5aeb`; the build includes the configuration path correction subsequently committed as `f4bf348`. This was explicitly build-only: no service Machine was deployed and no owner secret was provisioned. Evidence: `/tmp/bog-cloud-fly-build.log`.
+Fly's remote Linux amd64 release build succeeded and pushed `registry.fly.io/flower-bog-cloud:deployment-01M2NKS3532VZ86ETV9RXK4406` (32 MB). Runtime source and embedded build revision: `56b5aeb`; the build includes the configuration path correction subsequently committed as `f4bf348`. This initial build-only step was followed by deployment of the same image. Evidence: `/tmp/bog-cloud-fly-build.log`.
+
+## Live deployment and remote acceptance — 2026-09-16
+
+- Origin: https://flower-bog-cloud.fly.dev; MCP: https://flower-bog-cloud.fly.dev/mcp.
+- Organization: `flower-computer-co`; Machine: `4d895395c393e8`, region `iad`; one shared CPU, 1 GiB RAM, encrypted 3 GiB persistent volume.
+- Deployed runtime source: `56b5aeb`; image tag above, digest `sha256:3f7fb3528b92d117a88256c70e1e79b6fc9bdf39c2df331ecb53cc3b7c05991b`. Later commits update deployment configuration, acceptance scripts and documentation without changing runtime source.
+- The operator's Mac acted as a separate remote client over HTTPS. REST acceptance passed idempotent creation, nested objects, replacement, Fold counts, scope isolation, invalid-batch atomicity, batch/delete and revocation.
+- Official rmcp 3.4.0 client passed creation/CRUD/batch/views, independent REST comparisons, and revocation of an already-connected client; negotiated protocol `2025-11-25`.
+- Codex CLI 0.145.0 with GPT-5.5 completed 12 real MCP calls; independent REST assertions verified final records and counts. Saved client configuration was not changed.
+- Closed-store backup `ad8ec5d7-6915-45a8-b742-3f0bd610059b` restored source `d733dcdc-ce0f-4f6f-8cd4-768f26ff1a38` into independent Bog `3786ca96-eebc-4839-8066-c5f32207f85a`. Full document table and count matched; source-scoped credentials could not access the restored Bog.
+- Restarted the Fly Machine with SIGTERM; both stores and the test scoped credential survived. The test credential was then revoked. An initial restart command was rejected by Fly for exceeding its 60-second timeout limit; the corrected command passed.
+- After restart: HTTPS health returned 200; unauthenticated REST and MCP returned 401. Fly's service health check passed.
+
+Redacted evidence: `/tmp/bog-cloud-fly-deploy.log`, `/tmp/bog-cloud-remote-rest.log`, `/tmp/bog-cloud-remote-sdk.log`, `/tmp/bog-cloud-remote-codex.log`, `/tmp/bog-cloud-remote-recovery.log`. Recovery runner: `scripts/cloud/fly_recovery_acceptance.py`.
+
+Five acceptance Bogs remain for inspection and consume five of the initial eight instance slots: REST fixtures `d733dcdc-ce0f-4f6f-8cd4-768f26ff1a38` and `4206f626-5bb6-461d-896a-685b0d0dfed0`, SDK fixture `b73a147b-29af-4de8-a6c2-1e854959e5d8`, Codex fixture `792ef450-9a95-41d4-9177-720601253cd8`, and the restored Bog above. Only synthetic test records are present. Instance deletion is not an implemented API; do not repeatedly run creation acceptance tests against this bounded service.

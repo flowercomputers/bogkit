@@ -79,7 +79,7 @@ Run this example on a real second machine for remote protocol evidence. Separate
 
 ## Tested Codex CLI workflow
 
-Codex CLI 0.145.0 with GPT-5.5 has completed the natural-language creation/CRUD/batch/count workflow against the local service, independently checked through REST. See the acceptance report for deployment-specific evidence.
+Codex CLI 0.145.0 with GPT-5.5 has completed the natural-language creation/CRUD/batch/count workflow against both the local service and the deployed Fly HTTPS endpoint, independently checked through REST. See the acceptance report for deployment-specific evidence.
 
 For a saved direct HTTP connection, the bounded configuration is:
 

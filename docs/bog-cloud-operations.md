@@ -72,3 +72,17 @@ The initial encrypted 3 GiB volume has Fly's automatic snapshots enabled with fi
 A restart uses the same volume and credentials. For rollback, stop the new service, retain the volume and backups, and deploy a previously verified compatible image. Never roll back across unknown storage/template versions in place. Template changes use a new instance with validated record transfer and preserve the source.
 
 Actual deployment, client and recovery evidence is recorded in [acceptance](verification/bog-cloud-acceptance.md). Prepared configuration alone does not establish a live deployment.
+
+## Connect to the deployed service
+
+The verified endpoint is `https://flower-bog-cloud.fly.dev`; MCP uses `/mcp`. The approved owner credential is in Fly Secrets and in the private local file `~/.config/bog-cloud/flower-bog-cloud.env` (mode 0600). Do not commit or share that file. To load it into a terminal session without printing the token:
+
+```sh
+source ~/.config/bog-cloud/flower-bog-cloud.env
+export BOG_CLOUD_TOKEN="$BOG_CLOUD_OWNER_TOKEN"
+export BOG_CLOUD_URL=https://flower-bog-cloud.fly.dev
+```
+
+Use the [MCP connection instructions](bog-cloud-mcp.md#tested-codex-cli-workflow) for Codex. Ordinary application clients should receive a scoped credential for their Bog through the owner-only token endpoint. The owner token can create resources and access all Bogs.
+
+The first deployment retains five synthetic acceptance Bogs, leaving three of the initial eight slots available. Their IDs are in the acceptance report. Instance deletion, additional templates and off-host backup scheduling remain follow-up work; the running service currently supports the fixed records template and its document/count Fold views.
