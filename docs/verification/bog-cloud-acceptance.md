@@ -25,3 +25,11 @@ These are local checks, not deployment evidence. Raw development logs are under 
 - Record the deployed source revision, image, endpoint, client version and redacted remote results here.
 
 No milestone is marked remotely complete by this report yet. Backups on the same volume are not off-host disaster recovery; no recurring backup schedule has been installed.
+
+## Actual Codex client — local
+
+Codex CLI 0.145.0, GPT-5.5, completed 12 actual MCP tool calls against a real loopback listener. A natural-language request created a Bog, wrote/read nested JSON, replaced the document, applied a batch, checked Fold counts (1 → 3 → 2), deleted one record, and read the final two records. Independent REST assertions matched both final objects and the count. Redacted result: `PASS`, fixture `b97b10f8-002f-4145-91c0-9d1d04ea039a` (disposable local root subsequently removed).
+
+The runner uses temporary `-c` connection settings and process-local approval for only the four authorized fixture mutation tools. Other saved servers are disabled for that invocation; the shell sandbox stays read-only. No saved MCP configuration is changed. `scripts/cloud/codex_acceptance.py` supports an optional `BOG_CODEX_MODEL` for compatibility with the installed CLI. The initial default-client attempt could not load the desktop model metadata; the successful run used GPT-5.5. An initial unattended attempt correctly stopped at its mutation-approval prompt; the scoped fixture approval setting enabled the authorized test.
+
+This passes the actual agent-client workflow locally. Remote endpoint/client and service restart/restore evidence are still pending.

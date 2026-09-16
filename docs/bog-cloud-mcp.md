@@ -76,3 +76,25 @@ cargo run --locked -p bog-cloud-mcp --example mcp_acceptance
 The example requires HTTPS except for loopback HTTP, creates a disposable Bog, obtains a temporary scoped token through REST, performs nested JSON write/read/replacement/count/batch/delete through MCP, independently checks records/counts through REST, then revokes the scoped token and checks that the existing client loses access. It prints a redacted PASS line with the database ID and negotiated version. It leaves the empty disposable database for inspection. A failed run may leave its fixture and temporary token; inspect the fixture and revoke that token through the operator's normal REST process. The owner credential is preserved.
 
 Run this example on a real second machine for remote protocol evidence. Separately record the selected agent client's version, its reviewed bounded settings change, redacted tool results, REST cross-checks, and revocation behavior before marking the real-client milestone complete.
+
+## Tested Codex CLI workflow
+
+Codex CLI 0.145.0 with GPT-5.5 has completed the natural-language creation/CRUD/batch/count workflow against the local service, independently checked through REST. See the acceptance report for deployment-specific evidence.
+
+For a saved direct HTTP connection, the bounded configuration is:
+
+```toml
+[mcp_servers.bog_cloud]
+url = "https://flower-bog-cloud.fly.dev/mcp"
+bearer_token_env_var = "BOG_CLOUD_TOKEN"
+```
+
+Supply that environment variable from your protected secret source before launching the client. This snippet has not been added to your saved settings automatically. Leave mutation confirmation at your preferred default for everyday use. Static bearer configuration follows the [official Codex configuration reference](https://developers.openai.com/codex/config-reference); this service does not offer OAuth login.
+
+To repeat the isolated conversational acceptance run with an owner credential in the environment:
+
+```sh
+BOG_CODEX_MODEL=gpt-5.5 python3 scripts/cloud/codex_acceptance.py
+```
+
+It creates one disposable Bog, grants only the run's four fixture mutation tools process-local approval, leaves its final two records for independent verification, and changes no saved client settings. Do not run repeatedly against a nearly-full eight-Bog service; each successful run consumes one instance slot.

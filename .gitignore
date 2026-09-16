@@ -3,3 +3,5 @@ target/
 .DS_Store
 .superpowers/
 .env.bog-cloud
+
+__pycache__/

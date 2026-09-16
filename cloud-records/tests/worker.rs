@@ -37,8 +37,16 @@ fn request(socket: &Path, method: &str, path: &str, body: Value) -> (u16, Value)
     stream
         .set_read_timeout(Some(Duration::from_secs(3)))
         .unwrap();
-    let body = body.to_string();
-    write!(stream,"{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",body.len()).unwrap();
+    let body = if method == "GET" {
+        String::new()
+    } else {
+        body.to_string()
+    };
+    let wire = format!(
+        "{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    );
+    stream.write_all(wire.as_bytes()).unwrap();
     let mut response = String::new();
     stream.read_to_string(&mut response).unwrap();
     let (head, body) = response.split_once("\r\n\r\n").unwrap();
