@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["fold", "anny", "ese", "cli", "serve", "examples/*", "cloud", "cloud-records"]
+members = ["fold", "anny", "ese", "cli", "serve", "examples/*", "cloud", "cloud-records", "cloud-mcp"]
 
 # hoisted from fold; applies workspace-wide
 [profile.release]
