@@ -5,7 +5,10 @@ use crate::{
 use std::{
     collections::HashMap,
     fs::{File, OpenOptions},
-    os::unix::fs::{OpenOptionsExt, PermissionsExt},
+    os::{
+        fd::AsRawFd,
+        unix::fs::{OpenOptionsExt, PermissionsExt},
+    },
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
@@ -212,10 +215,41 @@ impl Supervisor {
             );
             return Ok(client);
         }
+        // Acquire this before recording a new generation, and pass the open
+        // file description to the child. It survives a manager crash even if
+        // the worker has not opened its store or bound its socket yet. A probe
+        // timeout alone must never destroy the surviving worker's identity.
+        let generation_lock = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(dir.join("worker.lock"))
+            .map_err(|_| unavailable("cannot open worker ownership lock"))?;
+        generation_lock
+            .try_lock()
+            .map_err(|_| unavailable("existing worker is not yet responsive"))?;
+        // Also protect adoption of a worker launched before the lifetime lock
+        // was introduced (or directly by an administrator).
+        match OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(dir.join("data/lock"))
+        {
+            Ok(store_lock) => store_lock
+                .try_lock()
+                .map_err(|_| unavailable("existing worker still owns the store"))?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err(unavailable("cannot inspect store ownership")),
+        }
         for attempt in 0..3 {
             let nonce = random_secret()?;
             self.registry.start_generation(id, &nonce)?;
-            let spawned = Command::new(&self.config.worker_binary)
+            let mut command = Command::new(&self.config.worker_binary);
+            command
                 .args([
                     "--data-dir",
                     dir.join("data")
@@ -234,8 +268,20 @@ impl Supervisor {
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
-                .kill_on_drop(true)
-                .spawn();
+                .kill_on_drop(true);
+            let lock_fd = generation_lock.as_raw_fd();
+            // Only the child clears CLOEXEC; unrelated concurrently spawned
+            // workers cannot inherit this instance's ownership lock. fcntl is
+            // async-signal-safe and the file remains live throughout spawn.
+            unsafe {
+                command.pre_exec(move || {
+                    if libc::fcntl(lock_fd, libc::F_SETFD, 0) == -1 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
+            let spawned = command.spawn();
             let mut child = match spawned {
                 Ok(child) => child,
                 Err(_) => {
@@ -280,8 +326,10 @@ impl Supervisor {
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             }
-            let _ = child.kill().await;
-            let _ = child.wait().await;
+            child
+                .kill()
+                .await
+                .map_err(|_| unavailable("worker exit could not be confirmed"))?;
             if attempt < 2 {
                 tokio::time::sleep(std::time::Duration::from_millis(100 * (attempt + 1))).await;
             }
