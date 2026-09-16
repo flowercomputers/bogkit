@@ -15,6 +15,33 @@ use uuid::Uuid;
 pub fn build_rest_router(service: Arc<CloudService>) -> Router {
     Router::new()
         .route(
+            "/",
+            get(|| async {
+                guide_asset(
+                    "text/html; charset=utf-8",
+                    include_str!("../static/index.html"),
+                )
+            }),
+        )
+        .route(
+            "/guide.css",
+            get(|| async {
+                guide_asset(
+                    "text/css; charset=utf-8",
+                    include_str!("../static/guide.css"),
+                )
+            }),
+        )
+        .route(
+            "/guide.js",
+            get(|| async {
+                guide_asset(
+                    "text/javascript; charset=utf-8",
+                    include_str!("../static/guide.js"),
+                )
+            }),
+        )
+        .route(
             "/healthz",
             get(|State(service): State<Arc<CloudService>>| async move {
                 match service.registry.list() {
@@ -28,6 +55,15 @@ pub fn build_rest_router(service: Arc<CloudService>) -> Router {
         )
         .fallback(dispatch)
         .with_state(service)
+}
+
+fn guide_asset(content_type: &'static str, body: &'static str) -> Response {
+    ([
+        (header::CONTENT_TYPE, content_type),
+        (header::CONTENT_SECURITY_POLICY, "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"),
+        (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        (header::CACHE_CONTROL, "no-cache"),
+    ], body).into_response()
 }
 pub fn error_response(error: CloudError, request_id: &str) -> Response {
     let status = match error.code.as_str() {

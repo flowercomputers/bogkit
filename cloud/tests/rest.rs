@@ -52,6 +52,28 @@ async fn auth_scope_errors_and_management_are_consistent() {
     let b = svc.registry.create("b", "records-v1", "b").unwrap();
     let reader = svc.auth.issue(&owner, a.id, Scope::Read).unwrap();
     let router = build_rest_router(svc.clone());
+    for (path, content_type) in [
+        ("/", "text/html; charset=utf-8"),
+        ("/guide.css", "text/css; charset=utf-8"),
+        ("/guide.js", "text/javascript; charset=utf-8"),
+    ] {
+        let response = router
+            .clone()
+            .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        assert_eq!(response.headers()["content-type"], content_type);
+        assert_eq!(response.headers()["x-content-type-options"], "nosniff");
+        assert!(
+            response.headers()["content-security-policy"]
+                .to_str()
+                .unwrap()
+                .contains("frame-ancestors 'none'")
+        );
+        let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+        assert!(!String::from_utf8_lossy(&body).contains(OWNER));
+    }
     let (status, body) = request(&router, "GET", "/v1/bogs", None, None).await;
     assert_eq!(status, 401);
     assert!(body["request_id"].is_string());

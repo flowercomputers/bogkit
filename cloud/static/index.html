@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="A small home for your application's data. Create a Bog, store JSON records, and read Fold views through HTTP or MCP."><title>Bog Cloud — a small home for your data</title><link rel="stylesheet" href="/guide.css"><script src="/guide.js" defer></script></head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header><a class="brand" href="/">✳ BOG <span>by Flower</span></a><nav aria-label="Main"><a href="#connect">Connect</a><a href="#api">API guide</a><a href="#reference">Reference</a></nav></header>
+<main id="main">
+<section class="hero"><p class="eyebrow">BOG CLOUD / INTERNAL PREVIEW</p><h1>A small home<br>for your data.</h1><p class="intro">Give your scripts, apps, and agents a database of their own. Create a Bog, write JSON records, and let Fold keep your views up to date.</p><div class="actions"><a class="primary" href="#connect">Connect your agent <span>↗</span></a><a class="secondary" href="#api">Try the API <span>↓</span></a></div><p class="quiet">Private access · HTTP + MCP · Powered by Fold</p></section>
+<section class="flow" aria-label="How Bog works"><div><span>01 / CREATE</span><strong>One Bog per project.</strong><p>An isolated record store with its own identity.</p></div><div><span>02 / WRITE</span><strong>Put your data in.</strong><p>JSON objects, addressed by a key you choose.</p></div><div><span>03 / READ</span><strong>Your views follow along.</strong><p>Documents and a count maintained by Fold.</p></div></section>
+<section id="connect"><div class="section-head"><p class="eyebrow">01 / USE WITH AN AGENT</p><h2>Start with a conversation.</h2><p>Connect an MCP client, then ask it to create and use a Bog. You need a token from the service owner; there is no public signup or OAuth login.</p></div><div class="columns"><div><h3>Connect Codex</h3><p>Load your token into <code>BOG_CLOUD_TOKEN</code> before launching Codex. Add this to <code>~/.codex/config.toml</code>, then start a new client session.</p><div class="code"><div class="code-head"><span>config.toml</span><button data-copy="mcp-config" aria-label="Copy Codex configuration">Copy</button></div><pre id="mcp-config">[mcp_servers.bog_cloud]
+url = "https://flower-bog-cloud.fly.dev/mcp"
+bearer_token_env_var = "BOG_CLOUD_TOKEN"</pre></div><p class="small">Other MCP clients need Streamable HTTP and a bearer-token header. Clients that require OAuth are not supported yet. Use an owner token to create Bogs; a scoped token can only work inside its assigned Bog.</p></div><div><h3>Then ask for what you need</h3><blockquote>“Create a Bog called reading-list. Save a book under the key dune, with its title and reading status. Read it back and tell me how many records I have.”</blockquote><p>The agent can create, list and describe Bogs; read, replace and delete records; submit batches; and read views. Your client's normal tool approvals still apply.</p><p class="small">Good first projects: an agent notebook, a small personal catalog, or shared state for an internal script.</p></div></div></section>
+<section id="api"><div class="section-head"><p class="eyebrow">02 / USE THE API</p><h2>From nothing to a record.</h2><p>Run these examples in one Bash terminal with <code>curl</code> and <code>jq</code> installed. All data requests require a bearer token. Keep credentials in your server or terminal, never in a public frontend bundle.</p></div>
+<article class="step"><div><span class="number">01</span><h3>Set your connection</h3><p>Enter an owner token at the hidden prompt. It stays in this terminal session; the page never receives it.</p></div><div class="code"><div class="code-head"><span>Bash</span><button data-copy="setup" aria-label="Copy connection setup">Copy</button></div><pre id="setup">export BOG_CLOUD_URL=https://flower-bog-cloud.fly.dev
+printf 'Owner token: '
+read -r -s BOG_CLOUD_TOKEN; printf '\n'
+export BOG_CLOUD_TOKEN
+
+bog() {
+  curl --fail-with-body --silent --show-error \
+    -H "Authorization: Bearer $BOG_CLOUD_TOKEN" \
+    -H 'Content-Type: application/json' "$@"
+}</pre></div></article>
+<article class="step"><div><span class="number">02</span><h3>Create a Bog</h3><p>Creation returns an ID and starts the store. Keep the same idempotency key when retrying this request; a new key creates a new Bog.</p></div><div class="code"><div class="code-head"><span>POST /v1/bogs</span><button data-copy="create" aria-label="Copy create request">Copy</button></div><pre id="create">CREATE_KEY=$(uuidgen)
+CREATED=$(bog -X POST "$BOG_CLOUD_URL/v1/bogs" \
+  -H "Idempotency-Key: $CREATE_KEY" \
+  -d '{"name":"reading-list","template":"records-v1"}')
+BOG_ID=$(printf '%s' "$CREATED" | jq -er '.id')
+export BOG_ID
+printf 'Bog: %s\n' "$BOG_ID"
+
+# Repeat until status is "ready" before writing.
+bog "$BOG_CLOUD_URL/v1/bogs/$BOG_ID" | jq</pre></div></article>
+<article class="step"><div><span class="number">03</span><h3>Write, then read</h3><p>Each key holds one JSON object. Writing the same key again replaces the entire object. Nested objects and arrays are welcome.</p></div><div class="code"><div class="code-head"><span>PUT + GET /docs/{key}</span><button data-copy="records" aria-label="Copy record requests">Copy</button></div><pre id="records">bog -X PUT "$BOG_CLOUD_URL/v1/bogs/$BOG_ID/docs/dune" \
+  -d '{"title":"Dune","status":"to-read","tags":["fiction"]}'
+
+bog "$BOG_CLOUD_URL/v1/bogs/$BOG_ID/docs/dune" | jq '.data'
+
+# Returned record:
+# {"title":"Dune","status":"to-read","tags":["fiction"]}</pre></div></article>
+<article class="step"><div><span class="number">04</span><h3>Read a Fold view</h3><p><code>docs</code> lists records; <code>total</code> counts them. Replacing a record keeps the count steady. Adding or removing a key changes it.</p></div><div class="code"><div class="code-head"><span>GET /views/{view}</span><button data-copy="views" aria-label="Copy view requests">Copy</button></div><pre id="views">bog "$BOG_CLOUD_URL/v1/bogs/$BOG_ID/views/docs?limit=20&amp;offset=0" | jq '.data'
+
+bog "$BOG_CLOUD_URL/v1/bogs/$BOG_ID/views/total" | jq '.data.value'
+# 1</pre></div></article>
+<details><summary>Batch changes and delete a record <span>+</span></summary><p>A batch validates all operations before applying one transaction. This example adds two records, then removes one.</p><div class="code"><div class="code-head"><span>POST /batch · DELETE /docs/{key}</span><button data-copy="batch" aria-label="Copy batch and delete requests">Copy</button></div><pre id="batch">bog -X POST "$BOG_CLOUD_URL/v1/bogs/$BOG_ID/batch" -d '[
+  {"op":"upsert","key":"solaris","data":{"title":"Solaris"}},
+  {"op":"upsert","key":"piranesi","data":{"title":"Piranesi"}}
+]'
+
+bog -X DELETE "$BOG_CLOUD_URL/v1/bogs/$BOG_ID/docs/solaris"</pre></div></details>
+<details><summary>Give an app access to just this Bog <span>+</span></summary><p>Use the owner token to issue a <code>read</code> or <code>write</code> token. Write includes read access. The raw token is returned only once: put it in your application's protected environment, and save its ID for revocation.</p><div class="code"><div class="code-head"><span>Owner only / scoped credentials</span><button data-copy="tokens" aria-label="Copy scoped token requests">Copy</button></div><pre id="tokens"># This response contains a secret. Do not share it or log it.
+bog -X POST "$BOG_CLOUD_URL/v1/bogs/$BOG_ID/tokens" \
+  -d '{"scope":"write"}'
+
+# Later, revoke it using the returned token ID:
+# TOKEN_ID=the-returned-id
+# bog -X DELETE "$BOG_CLOUD_URL/v1/bogs/$BOG_ID/tokens/$TOKEN_ID"</pre></div></details>
+</section>
+<section id="reference"><div class="section-head"><p class="eyebrow">03 / AT A GLANCE</p><h2>A small, deliberate API.</h2></div><div class="table-wrap"><table><caption class="sr-only">Bog Cloud API endpoints</caption><thead><tr><th>Method</th><th>Path</th><th>What it does</th></tr></thead><tbody><tr><td>POST / GET</td><td>/v1/bogs</td><td>Create / list Bogs. Owner only.</td></tr><tr><td>GET</td><td>/v1/bogs/{id}</td><td>Check identity and readiness.</td></tr><tr><td>GET</td><td>/v1/bogs/{id}/schema</td><td>Inspect the available schema.</td></tr><tr><td>PUT / GET / DELETE</td><td>/v1/bogs/{id}/docs/{key}</td><td>Replace, read, or remove a record.</td></tr><tr><td>POST</td><td>/v1/bogs/{id}/batch</td><td>Apply a group of record changes.</td></tr><tr><td>GET</td><td>/v1/bogs/{id}/views/{view}</td><td>Read docs or total.</td></tr><tr><td>POST</td><td>/v1/bogs/{id}/tokens</td><td>Issue a scoped token. Owner only.</td></tr><tr><td>DELETE</td><td>/v1/bogs/{id}/tokens/{token-id}</td><td>Revoke a token. Owner only.</td></tr></tbody></table></div>
+<div class="columns notes"><div><h3>When a request fails</h3><p>Errors include an <code>error.code</code> and a <code>request_id</code>. Keep the request ID when asking for help.</p><p><b>401</b> missing or invalid token · <b>403</b> insufficient permission · <b>404</b> missing or inaccessible resource · <b>409</b> conflicting creation request · <b>413</b> size limit · <b>429</b> capacity reached · <b>503</b> not ready or unavailable.</p></div><div><h3>The current boundaries</h3><p>JSON objects up to 256 KiB; 100 operations per batch; paged document views. Keys are at most 256 bytes and cannot contain slashes or control characters, or be just <code>.</code> or <code>..</code>. URL-encode keys.</p><p>This preview runs on one persistent host with eight instance slots. It has no SQL, joins, custom uploaded Fold views, public signup, or instance deletion yet. Backups and restores are operator-run; automatic off-host backups are not configured.</p></div></div></section>
+<section class="closing"><p class="eyebrow">A PLACE TO START</p><h2>Bring a little state<br>to your next idea.</h2><p>Start with a notebook or a small internal tool. Use an app-specific token once your Bog is ready.</p><a href="#connect">Connect an agent ↗</a><a href="#api">Start with HTTP ↑</a></section>
+</main><footer><span>✳ Bog, by Flower</span><span>records-v1 · Internal preview</span></footer><p class="sr-only" id="copy-status" role="status" aria-live="polite"></p>
+</body></html>
