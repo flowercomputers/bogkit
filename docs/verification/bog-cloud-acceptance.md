@@ -42,3 +42,5 @@ The final review found and reproduced a manager-restart failure involving a temp
 ## Fly preparation
 
 Created the isolated `flower-bog-cloud` app in `flower-computer-co` and encrypted 3 GiB `bog_data` volume `vol_vdejp8zk83nw3864` in `iad`. Owner-secret provisioning requires the specific approval requested after automatic approval review rejected that action. Resource creation is not deployment or endpoint acceptance evidence.
+
+Fly's remote Linux amd64 release build succeeded and pushed `registry.fly.io/flower-bog-cloud:deployment-01M2NKS3532VZ86ETV9RXK4406` (32 MB). Runtime source and embedded build revision: `56b5aeb`; the build includes the configuration path correction subsequently committed as `f4bf348`. This was explicitly build-only: no service Machine was deployed and no owner secret was provisioned. Evidence: `/tmp/bog-cloud-fly-build.log`.
