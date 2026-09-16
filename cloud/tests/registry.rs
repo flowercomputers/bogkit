@@ -73,3 +73,29 @@ fn names_are_display_metadata_and_invalid_inputs_are_rejected() {
         "invalid_request"
     );
 }
+
+#[test]
+fn template_version_is_persisted_and_separate_connections_converge() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("registry.sqlite");
+    let registry = Registry::open(&path).unwrap();
+    let a = registry
+        .create("versioned", "records-v1", "version")
+        .unwrap();
+    let encoded = serde_json::to_value(&a).unwrap();
+    assert_eq!(encoded["template_version"], "records-v1");
+    let handles: Vec<_> = (0..4)
+        .map(|_| {
+            let path = path.clone();
+            std::thread::spawn(move || {
+                Registry::open(&path)
+                    .unwrap()
+                    .create("cross connection", "records-v1", "multi")
+                    .unwrap()
+                    .id
+            })
+        })
+        .collect();
+    let ids: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+    assert!(ids.iter().all(|id| *id == ids[0]));
+}

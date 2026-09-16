@@ -1,4 +1,4 @@
-use crate::{Bog, BogId, CloudError};
+use crate::{Bog, BogId, CloudError, DesiredState, ObservedState, TemplateId};
 use rusqlite::{Connection, OptionalExtension, params};
 use sha2::{Digest, Sha256};
 use std::{
@@ -31,16 +31,16 @@ fn read_bog(row: &rusqlite::Row<'_>) -> rusqlite::Result<Bog> {
     Ok(Bog {
         id: BogId(id),
         name: row.get(1)?,
-        template: row.get(2)?,
-        desired_state: row.get(3)?,
-        status: row.get(4)?,
+        template: parse_column(row, 2)?,
+        template_version: row.get(8)?,
+        desired_state: parse_column(row, 3)?,
+        status: parse_column(row, 4)?,
         generation: row.get(5)?,
         failure_code: row.get(6)?,
         created_at: row.get(7)?,
     })
 }
-const COLUMNS: &str =
-    "id,name,template,desired_state,observed_state,generation,failure_code,created_at";
+const COLUMNS: &str = "id,name,template,desired_state,observed_state,generation,failure_code,created_at,template_version";
 impl Registry {
     pub fn open(path: &Path) -> Result<Self, CloudError> {
         let db = Connection::open(path).map_err(db_error)?;
@@ -136,14 +136,15 @@ impl Registry {
         let bog = Bog {
             id: BogId(Uuid::new_v4()),
             name,
-            template: template.into(),
-            status: "creating".into(),
-            desired_state: "running".into(),
+            template: TemplateId::RecordsV1,
+            template_version: "records-v1".into(),
+            status: ObservedState::Creating,
+            desired_state: DesiredState::Running,
             generation: 0,
             failure_code: None,
             created_at: now(),
         };
-        tx.execute("INSERT INTO bogs(id,name,template,desired_state,observed_state,created_at) VALUES (?1,?2,?3,'running','creating',?4)",params![bog.id.to_string(),bog.name,bog.template,bog.created_at]).map_err(db_error)?;
+        tx.execute("INSERT INTO bogs(id,name,template,desired_state,observed_state,created_at,template_version) VALUES (?1,?2,?3,'running','creating',?4,'records-v1')",params![bog.id.to_string(),bog.name,bog.template.as_str(),bog.created_at]).map_err(db_error)?;
         tx.execute(
             "INSERT INTO create_requests(request_key,body_hash,bog_id) VALUES (?1,?2,?3)",
             params![request_key, digest, bog.id.to_string()],
@@ -178,26 +179,14 @@ impl Registry {
     pub fn set_status(
         &self,
         id: BogId,
-        status: &str,
+        status: ObservedState,
         failure: Option<&str>,
     ) -> Result<(), CloudError> {
-        if ![
-            "creating",
-            "ready",
-            "stopped",
-            "failed",
-            "restoring",
-            "maintenance",
-        ]
-        .contains(&status)
-        {
-            return Err(CloudError::new("invalid_request", "invalid status"));
-        }
         let n = self
             .connection()?
             .execute(
                 "UPDATE bogs SET observed_state=?2,failure_code=?3 WHERE id=?1",
-                params![id.to_string(), status, failure],
+                params![id.to_string(), status.as_str(), failure],
             )
             .map_err(db_error)?;
         if n == 0 {
@@ -232,4 +221,14 @@ impl Registry {
             )
             .map_err(db_error)
     }
+}
+
+fn parse_column<T: std::str::FromStr<Err = CloudError>>(
+    row: &rusqlite::Row<'_>,
+    index: usize,
+) -> rusqlite::Result<T> {
+    let raw: String = row.get(index)?;
+    raw.parse().map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(index, rusqlite::types::Type::Text, Box::new(e))
+    })
 }

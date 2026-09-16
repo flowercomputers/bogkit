@@ -54,8 +54,17 @@ impl Auth {
                 bog_id: None,
             });
         }
+        let (public_id, _) = secret.split_once('.').ok_or_else(denied)?;
+        Uuid::parse_str(public_id).map_err(|_| denied())?;
         let db = self.registry.connection()?;
-        let row:Option<(String,String,Vec<u8>)>=db.query_row("SELECT id,bog_id,secret_hash FROM tokens WHERE secret_hash=?1 AND revoked_at IS NULL",[&digest],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(db_error)?;
+        let row: Option<(String, String, Vec<u8>)> = db
+            .query_row(
+                "SELECT id,bog_id,secret_hash FROM tokens WHERE id=?1 AND revoked_at IS NULL",
+                [public_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()
+            .map_err(db_error)?;
         let (token_id, bog_id, stored) = row.ok_or_else(denied)?;
         if !bool::from(digest.ct_eq(&stored)) {
             return Err(denied());
@@ -103,8 +112,8 @@ impl Auth {
     ) -> Result<IssuedToken, CloudError> {
         self.authorize(principal, None, true)?;
         self.registry.get(bog)?;
-        let secret = random_secret()?;
         let id = Uuid::new_v4().to_string();
+        let secret = format!("{id}.{}", random_secret()?);
         self.registry.connection()?.execute("INSERT INTO tokens(id,bog_id,secret_hash,scope,created_at) VALUES (?1,?2,?3,?4,?5)",params![id,bog.to_string(),hash(secret.as_bytes()),match scope{Scope::Read=>"read",Scope::Write=>"write"},now()]).map_err(db_error)?;
         Ok(IssuedToken { id, secret })
     }

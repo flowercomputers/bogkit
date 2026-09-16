@@ -38,10 +38,26 @@ pub enum Scope {
 pub struct Bog {
     pub id: BogId,
     pub name: String,
-    pub template: String,
-    pub status: String,
-    pub desired_state: String,
+    pub template: TemplateId,
+    pub template_version: String,
+    pub status: ObservedState,
+    pub desired_state: DesiredState,
     pub generation: i64,
     pub failure_code: Option<String>,
     pub created_at: i64,
 }
+
+macro_rules! string_enum {
+ ($name:ident { $($variant:ident => $value:literal),+ $(,)? }) => {
+  #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+  pub enum $name { $(#[serde(rename=$value)] $variant),+ }
+  impl $name { pub fn as_str(self) -> &'static str { match self {$(Self::$variant=>$value),+} } }
+  impl std::str::FromStr for $name {
+   type Err=CloudError;
+   fn from_str(s:&str)->Result<Self,Self::Err>{match s{$($value=>Ok(Self::$variant)),+, _=>Err(CloudError::new("invalid_request","unsupported value"))}}
+  }
+ };
+}
+string_enum!(TemplateId { RecordsV1=>"records-v1" });
+string_enum!(DesiredState { Running=>"running", Stopped=>"stopped" });
+string_enum!(ObservedState { Creating=>"creating", Ready=>"ready", Stopped=>"stopped", Failed=>"failed", Restoring=>"restoring", Maintenance=>"maintenance" });

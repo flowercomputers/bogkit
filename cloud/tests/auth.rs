@@ -34,6 +34,16 @@ fn scope_and_revocation_apply_to_existing_principals_and_persist() {
         auth.authorize(&reader, Some(a), false).unwrap_err().code,
         "unauthorized"
     );
+    for entry in std::fs::read_dir(dir.path()).unwrap() {
+        let bytes = std::fs::read(entry.unwrap().path()).unwrap();
+        for secret in [&issued.secret, &write.secret, &OWNER.to_string()] {
+            assert!(
+                !bytes
+                    .windows(secret.len())
+                    .any(|window| window == secret.as_bytes())
+            );
+        }
+    }
     drop(auth);
     drop(registry);
     let registry = Arc::new(Registry::open(&path).unwrap());
