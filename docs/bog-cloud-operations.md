@@ -75,7 +75,7 @@ Actual deployment, client and recovery evidence is recorded in [acceptance](veri
 
 ## Connect to the deployed service
 
-The verified endpoint is `https://flower-bog-cloud.fly.dev`; MCP uses `/mcp`. The approved owner credential is in Fly Secrets and in the private local file `~/.config/bog-cloud/flower-bog-cloud.env` (mode 0600). Do not commit or share that file. To load it into a terminal session without printing the token:
+The verified endpoint is `https://flower-bog-cloud.fly.dev`; MCP uses `/mcp`. The root address serves the public getting-started guide with copyable API examples, Codex connection settings, and a compact endpoint reference. The guide never asks for credentials in the browser; data endpoints remain authenticated. The approved owner credential is in Fly Secrets and in the private local file `~/.config/bog-cloud/flower-bog-cloud.env` (mode 0600). Do not commit or share that file. To load it into a terminal session without printing the token:
 
 ```sh
 source ~/.config/bog-cloud/flower-bog-cloud.env

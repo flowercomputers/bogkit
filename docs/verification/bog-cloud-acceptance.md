@@ -54,3 +54,9 @@ Fly's remote Linux amd64 release build succeeded and pushed `registry.fly.io/flo
 Redacted evidence: `/tmp/bog-cloud-fly-deploy.log`, `/tmp/bog-cloud-remote-rest.log`, `/tmp/bog-cloud-remote-sdk.log`, `/tmp/bog-cloud-remote-codex.log`, `/tmp/bog-cloud-remote-recovery.log`. Recovery runner: `scripts/cloud/fly_recovery_acceptance.py`.
 
 Five acceptance Bogs remain for inspection and consume five of the initial eight instance slots: REST fixtures `d733dcdc-ce0f-4f6f-8cd4-768f26ff1a38` and `4206f626-5bb6-461d-896a-685b0d0dfed0`, SDK fixture `b73a147b-29af-4de8-a6c2-1e854959e5d8`, Codex fixture `792ef450-9a95-41d4-9177-720601253cd8`, and the restored Bog above. Only synthetic test records are present. Instance deletion is not an implemented API; do not repeatedly run creation acceptance tests against this bounded service.
+
+## Public getting-started guide — 2026-09-16
+
+Deployed runtime revision `adc5949`, image `registry.fly.io/flower-bog-cloud:deployment-01M2NTDYBCJ8PKZR46X95J09AD`. The root page now explains agent and HTTP usage, with copyable examples, scoped-token guidance, endpoint reference and current limitations.
+
+Verified desktop and 390px mobile layouts in Chrome, copy feedback and expandable examples. The exact create/write/read/views/batch/delete snippets passed against a disposable local gateway, with final record and count assertions. Extended REST tests passed for public asset types/security headers while protected API authorization remains enforced. After deployment, all public assets returned 200, unauthenticated REST/MCP returned 401, and existing synthetic records matched their pre-deployment contents. Fly health and DNS checks passed; the live page and copy control were inspected in Chrome. No new live Bog was created for this documentation test.
