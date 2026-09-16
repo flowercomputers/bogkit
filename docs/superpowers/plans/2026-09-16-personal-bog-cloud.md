@@ -66,12 +66,14 @@ For each implementation task: inspect current state, implement its meaningful fa
 - [x] Upstream branch refreshed and base commit recorded.
 - [x] Dedicated working branch created.
 - [x] Design, subsystem plans, limits, and acceptance gates written.
-- [ ] Phase 0: JSON/worker proof.
-- [ ] Phase 1: REST management proof on local host.
+- [x] Phase 0: JSON/worker proof.
+- [x] Phase 1: REST management proof on local host.
 - [ ] Phase 1: REST proof from a remote machine.
 - [ ] Phase 2: MCP proof through a real client.
 - [ ] Phase 3: restore and recovery proof.
 - [ ] Phase 3: bounded deployment and operational handoff.
+
+Local MCP acceptance through Codex CLI and local restore/recovery tests also pass. Their remote deployment gates remain open. See the dated [acceptance evidence](../../verification/bog-cloud-acceptance.md) for the tested revisions and remaining work.
 
 ## Final acceptance transcript
 
