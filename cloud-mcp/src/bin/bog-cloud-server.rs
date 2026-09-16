@@ -28,11 +28,19 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         allowed_origins: entries("BOG_CLOUD_ALLOWED_ORIGINS"),
         allowed_hosts: (!hosts.is_empty()).then_some(hosts),
     };
-    let service = CloudService::open(Config::new(root.into(), binary.into()), &token)?;
+    let service = CloudService::open(
+        Config::from_env(root.clone().into(), binary.into())?,
+        &token,
+    )?;
     let listener = tokio::net::TcpListener::bind(bind).await?;
     for (_, code) in service.supervisor.reconcile().await? {
         eprintln!("{{\"event\":\"reconcile_failed\",\"code\":\"{code}\"}}");
     }
+    let admin = bog_cloud::admin::bind(
+        service.clone(),
+        std::path::Path::new(&root).join("admin.sock"),
+    )
+    .await?;
     let app = bog_cloud::build_rest_router(service.clone())
         .merge(build_mcp_router_with_options(service.clone(), options));
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
@@ -41,6 +49,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             tokio::select! {_=tokio::signal::ctrl_c()=>{},_=terminate.recv()=>{}}
         })
         .await;
+    admin.shutdown().await?;
     service.supervisor.shutdown().await?;
     serving?;
     Ok(())

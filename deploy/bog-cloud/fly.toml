@@ -1,0 +1,46 @@
+app = "flower-bog-cloud"
+primary_region = "iad"
+kill_signal = "SIGTERM"
+kill_timeout = 120
+
+[build]
+  dockerfile = "deploy/bog-cloud/Dockerfile"
+
+[env]
+  BOG_CLOUD_ROOT = "/data/bog"
+  BOG_WORKER_BINARY = "/usr/local/bin/bog-records-worker"
+  BOG_CLOUD_BIND = "0.0.0.0:8080"
+  BOG_CLOUD_MAX_ACTIVE = "8"
+  BOG_CLOUD_MAX_STARTS = "2"
+  BOG_CLOUD_MIN_FREE_BYTES = "67108864"
+  BOG_CLOUD_ALLOWED_HOSTS = "flower-bog-cloud.fly.dev"
+  BOG_CLOUD_ALLOWED_ORIGINS = "https://flower-bog-cloud.fly.dev"
+
+[[mounts]]
+  source = "bog_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 32
+    hard_limit = 64
+  [[http_service.checks]]
+    interval = "15s"
+    timeout = "3s"
+    grace_period = "30s"
+    method = "GET"
+    path = "/healthz"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "1gb"
+
+[[restart]]
+  policy = "always"

@@ -2,10 +2,10 @@ name: cli
 
 on:
   pull_request:
-    paths: ["cli/**", "serve/**", "fold/**", "Cargo.toml", ".github/workflows/cli.yml"]
+    paths: ["cli/**", "serve/**", "fold/**", "cloud/**", "cloud-records/**", "cloud-mcp/**", "deploy/bog-cloud/**", "scripts/cloud/**", "Cargo.toml", "Cargo.lock", ".github/workflows/cli.yml"]
   push:
     branches: [main]
-    paths: ["cli/**", "serve/**", "fold/**", "Cargo.toml", ".github/workflows/cli.yml"]
+    paths: ["cli/**", "serve/**", "fold/**", "cloud/**", "cloud-records/**", "cloud-mcp/**", "deploy/bog-cloud/**", "scripts/cloud/**", "Cargo.toml", "Cargo.lock", ".github/workflows/cli.yml"]
 
 concurrency:
   group: cli-${{ github.ref }}
@@ -22,8 +22,11 @@ jobs:
       - name: Build the CLI
         run: cargo build -p bogkit
 
-      - name: bog-serve tests
-        run: cargo test -p bog-serve
+      - name: Build records worker for process tests
+        run: cargo build --locked -p bog-cloud-records --bin bog-records-worker
+
+      - name: Fold, server and cloud tests
+        run: cargo test --locked -p fold -p bog-serve -p bog-cloud-records -p bog-cloud -p bog-cloud-mcp
 
       - name: Golden OpenAPI docs validate against the spec
         run: pipx run openapi-spec-validator serve/tests/golden/template.json serve/tests/golden/search.json

@@ -285,3 +285,30 @@ fn schema_mismatch_returns_a_typed_startup_error() {
 fn percent_decode_for_assertion(key: &str) -> String {
     key.replace("%22", "\"")
 }
+
+#[tokio::test]
+async fn large_view_is_rejected_before_materializing_an_unbounded_page() {
+    let dir = tempfile::tempdir().unwrap();
+    let router = records_router(dir.path()).unwrap();
+    for n in 0..20 {
+        assert_eq!(
+            send(
+                &router,
+                "PUT",
+                &format!("/docs/{n}"),
+                Some(json!({"x":"x".repeat(240*1024)}))
+            )
+            .await
+            .0,
+            StatusCode::OK
+        );
+    }
+    assert_eq!(
+        send(&router, "GET", "/views/docs?limit=1000", None).await.0,
+        StatusCode::PAYLOAD_TOO_LARGE
+    );
+    assert_eq!(
+        send(&router, "GET", "/views/docs?limit=1", None).await.0,
+        StatusCode::OK
+    );
+}

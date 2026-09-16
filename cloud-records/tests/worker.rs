@@ -281,3 +281,39 @@ fn sigterm_during_requests_preserves_every_acknowledged_write() {
     );
     wait(&mut reopened);
 }
+
+#[test]
+fn unfinished_request_cannot_hold_worker_beyond_shutdown_deadline() {
+    let (_dir, data, socket) = paths();
+    let mut worker = start(&data, &socket);
+    ready(&mut worker, &socket);
+    let mut unfinished = UnixStream::connect(&socket).unwrap();
+    unfinished.write_all(b"PUT /docs/slow HTTP/1.1\r\nHost: worker\r\nContent-Type: application/json\r\nContent-Length: 1000\r\n\r\n{").unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(
+        request(
+            &socket,
+            "POST",
+            "/_cloud/shutdown",
+            json!({"nonce":"private-test-nonce"})
+        )
+        .0,
+        200
+    );
+    let deadline = Instant::now() + Duration::from_secs(13);
+    loop {
+        if let Some(status) = worker.0.try_wait().unwrap() {
+            assert!(
+                !status.success(),
+                "unfinished request must not claim clean shutdown"
+            );
+            assert!(
+                socket.exists(),
+                "failed drain must leave its owned socket marker"
+            );
+            break;
+        }
+        assert!(Instant::now() < deadline, "shutdown exceeded hard deadline");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}

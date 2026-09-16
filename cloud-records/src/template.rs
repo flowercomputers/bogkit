@@ -27,6 +27,12 @@ pub enum TemplateError {
     Initialize(String),
 }
 
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct RecordPage {
+    limit: Option<usize>,
+    offset: Option<usize>,
+}
+
 pub fn records_router(path: &Path) -> Result<Router, TemplateError> {
     Ok(records_service(path)?.router())
 }
@@ -39,6 +45,25 @@ pub fn records_service(path: &Path) -> Result<ServedApp, TemplateError> {
     )
     .map_err(TemplateError::OpenStore)?
     .raw_string_keys()
+    .get("/views/docs", |(docs, _total), page: RecordPage| {
+        let mut bytes = 0usize;
+        let mut items = Vec::new();
+        for (key, value) in docs
+            .iter()
+            .skip(page.offset.unwrap_or(0))
+            .take(page.limit.unwrap_or(100))
+        {
+            let item = json!({"key":key,"value":value});
+            bytes += serde_json::to_vec(&item)
+                .map_err(|_| (503, "cannot encode view".into()))?
+                .len();
+            if bytes > 4 * 1024 * 1024 - 4096 {
+                return Err((413, "reduce the requested page size".into()));
+            }
+            items.push(item);
+        }
+        Ok(Value::Array(items))
+    })
     .durability(Durability::CheckpointBeforeAck)
     .try_into_service()
     .map_err(|e| TemplateError::Initialize(e.to_string()))?;
@@ -167,12 +192,13 @@ fn percent_decode(raw: &str) -> Result<String, String> {
     let mut decoded = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let (Some(hi), Some(lo)) = (hex(bytes[i + 1]), hex(bytes[i + 2])) {
-                decoded.push(hi * 16 + lo);
-                i += 3;
-                continue;
-            }
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && let (Some(hi), Some(lo)) = (hex(bytes[i + 1]), hex(bytes[i + 2]))
+        {
+            decoded.push(hi * 16 + lo);
+            i += 3;
+            continue;
         }
         decoded.push(bytes[i]);
         i += 1;

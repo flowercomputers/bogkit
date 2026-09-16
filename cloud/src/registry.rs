@@ -75,6 +75,45 @@ impl Registry {
             .map_err(|_| CloudError::new("unavailable", "registry lock failed"))
     }
     pub fn create(&self, name: &str, template: &str, request_key: &str) -> Result<Bog, CloudError> {
+        self.create_limited(name, template, request_key, usize::MAX)
+    }
+    pub fn create_limited(
+        &self,
+        name: &str,
+        template: &str,
+        request_key: &str,
+        maximum: usize,
+    ) -> Result<Bog, CloudError> {
+        self.create_with_state(
+            name,
+            template,
+            request_key,
+            maximum,
+            ObservedState::Creating,
+        )
+    }
+    pub(crate) fn create_restoring(
+        &self,
+        name: &str,
+        request_key: &str,
+        maximum: usize,
+    ) -> Result<Bog, CloudError> {
+        self.create_with_state(
+            name,
+            "records-v1",
+            request_key,
+            maximum,
+            ObservedState::Restoring,
+        )
+    }
+    fn create_with_state(
+        &self,
+        name: &str,
+        template: &str,
+        request_key: &str,
+        maximum: usize,
+        initial: ObservedState,
+    ) -> Result<Bog, CloudError> {
         let name = name.trim().to_lowercase();
         if name.is_empty()
             || name.len() > 128
@@ -133,18 +172,28 @@ impl Registry {
         {
             return Err(CloudError::new("conflict", "database name already exists"));
         }
+        let active: i64 = tx
+            .query_row(
+                "SELECT COUNT(*) FROM bogs WHERE desired_state='running'",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(db_error)?;
+        if active as u64 >= maximum as u64 {
+            return Err(CloudError::new("capacity", "active database limit reached"));
+        }
         let bog = Bog {
             id: BogId(Uuid::new_v4()),
             name,
             template: TemplateId::RecordsV1,
             template_version: "records-v1".into(),
-            status: ObservedState::Creating,
+            status: initial,
             desired_state: DesiredState::Running,
             generation: 0,
             failure_code: None,
             created_at: now(),
         };
-        tx.execute("INSERT INTO bogs(id,name,template,desired_state,observed_state,created_at,template_version) VALUES (?1,?2,?3,'running','creating',?4,'records-v1')",params![bog.id.to_string(),bog.name,bog.template.as_str(),bog.created_at]).map_err(db_error)?;
+        tx.execute("INSERT INTO bogs(id,name,template,desired_state,observed_state,created_at,template_version) VALUES (?1,?2,?3,'running',?5,?4,'records-v1')",params![bog.id.to_string(),bog.name,bog.template.as_str(),bog.created_at,initial.as_str()]).map_err(db_error)?;
         tx.execute(
             "INSERT INTO create_requests(request_key,body_hash,bog_id) VALUES (?1,?2,?3)",
             params![request_key, digest, bog.id.to_string()],

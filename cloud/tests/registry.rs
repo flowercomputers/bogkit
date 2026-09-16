@@ -99,3 +99,27 @@ fn template_version_is_persisted_and_separate_connections_converge() {
     let ids: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
     assert!(ids.iter().all(|id| *id == ids[0]));
 }
+
+#[test]
+fn capacity_is_atomic_and_retries_do_not_consume_slots() {
+    let dir = tempfile::tempdir().unwrap();
+    let registry = bog_cloud::Registry::open(&dir.path().join("registry.sqlite")).unwrap();
+    let first = registry
+        .create_limited("one", "records-v1", "one", 1)
+        .unwrap();
+    assert_eq!(
+        first.id,
+        registry
+            .create_limited("one", "records-v1", "one", 1)
+            .unwrap()
+            .id
+    );
+    assert_eq!(
+        registry
+            .create_limited("two", "records-v1", "two", 1)
+            .unwrap_err()
+            .code,
+        "capacity"
+    );
+    assert_eq!(registry.list().unwrap().len(), 1);
+}

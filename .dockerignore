@@ -1,0 +1,10 @@
+.git
+.superpowers
+.codex
+.agents
+**/target
+**/node_modules
+**/.env*
+**/*.sqlite*
+**/*.log
+.DS_Store

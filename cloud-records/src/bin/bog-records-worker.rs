@@ -194,13 +194,20 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             result??;
         }
         Err(_) => {
-            server.abort();
-            let _ = server.await;
-            service.shutdown()?;
-            return Err("request drain timed out".into());
+            // Connection tasks can outlive the listener task and hold the store lock.
+            // A failed drain must not enter a blocking checkpoint or remove the socket.
+            eprintln!("bog-records-worker: request drain timed out");
+            std::process::exit(1);
         }
     }
-    service.shutdown()?;
+    let checkpoint = tokio::task::spawn_blocking(move || service.shutdown());
+    match tokio::time::timeout(Duration::from_secs(5), checkpoint).await {
+        Ok(result) => result??,
+        Err(_) => {
+            eprintln!("bog-records-worker: final checkpoint timed out");
+            std::process::exit(1);
+        }
+    }
     socket_guard.clean_exit = true;
     Ok(())
 }
