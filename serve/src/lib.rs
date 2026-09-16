@@ -113,6 +113,47 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
+/// Write acknowledgement policy. The default preserves the existing journal-commit behavior.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Durability {
+    #[default]
+    Journal,
+    /// Call Fold's SyncAll checkpoint before acknowledging each successful mutation.
+    CheckpointBeforeAck,
+}
+
+#[derive(Debug)]
+pub struct ServeError(pub String);
+impl std::fmt::Display for ServeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+impl std::error::Error for ServeError {}
+
+/// Owns lifecycle control for an externally hosted router. Drop every router clone
+/// after draining the listener to release the store's exclusive lock.
+pub struct ServedApp {
+    router: axum::Router,
+    lifecycle: http::Lifecycle,
+}
+impl ServedApp {
+    pub fn router(&self) -> axum::Router {
+        self.router.clone()
+    }
+    /// Refuse new requests, close watchers, wait for the current write and checkpoint.
+    pub fn begin_shutdown(&self) {
+        (self.lifecycle.stop)();
+    }
+    pub fn shutdown(self) -> Result<(), ServeError> {
+        (self.lifecycle.checkpoint)()
+    }
+    pub fn map_router(mut self, f: impl FnOnce(axum::Router) -> axum::Router) -> Self {
+        self.router = f(self.router);
+        self
+    }
+}
+
 /// Typed "no query parameters" for custom GET routes that take none:
 /// `.get("/path", |readers, _: NoParams| ...)`.
 #[derive(serde::Deserialize, JsonSchema)]
@@ -149,6 +190,7 @@ struct ServeOpts {
     idle_timeout: Option<std::time::Duration>,
     drift: SchemaDrift,
     raw_string_keys: bool,
+    durability: Durability,
 }
 
 pub(crate) fn to_value<T: Serialize>(t: T) -> Value {
@@ -179,6 +221,17 @@ where
             db_path: path.as_ref().to_path_buf(),
             opts: ServeOpts::default(),
         }
+    }
+
+    /// Set write acknowledgement policy; the default is [`Durability::Journal`].
+    pub fn durability(mut self, durability: Durability) -> Self {
+        self.opts.durability = durability;
+        self
+    }
+
+    /// Build a router with an explicit checkpoint/shutdown owner, returning schema I/O errors.
+    pub fn try_into_service(self) -> Result<ServedApp, ServeError> {
+        self.into_service_result()
     }
 
     /// Where [`run`](App::run) listens; overrides `$PORT`.
@@ -243,7 +296,20 @@ where
     /// fingerprint mismatch) and the drift mode is [`SchemaDrift::Panic`]
     /// — see the `/schema` route.
     pub fn into_router(self) -> axum::Router {
-        http::router(self.stream, self.custom, &self.db_path, self.opts.drift).0
+        self.into_service_result()
+            .expect("initializing served app")
+            .router
+    }
+
+    fn into_service_result(self) -> Result<ServedApp, ServeError> {
+        let (router, lifecycle) = http::router(
+            self.stream,
+            self.custom,
+            &self.db_path,
+            self.opts.drift,
+            self.opts.durability,
+        )?;
+        Ok(ServedApp { router, lifecycle })
     }
 
     /// Serve blocking forever on the configured [`bind`](App::bind)
@@ -252,7 +318,14 @@ where
     pub fn run(mut self) {
         let opts = std::mem::take(&mut self.opts);
         let db_path = self.db_path.clone();
-        let (router, lifecycle) = http::router(self.stream, self.custom, &self.db_path, opts.drift);
+        let (router, lifecycle) = http::router(
+            self.stream,
+            self.custom,
+            &self.db_path,
+            opts.drift,
+            opts.durability,
+        )
+        .expect("initializing served app");
         serve_blocking(router, lifecycle, opts, &db_path)
     }
 }
@@ -292,6 +365,17 @@ where
             db_path: path.as_ref().to_path_buf(),
             opts: ServeOpts::default(),
         })
+    }
+
+    /// Set write acknowledgement policy; the default is [`Durability::Journal`].
+    pub fn durability(mut self, durability: Durability) -> Self {
+        self.opts.durability = durability;
+        self
+    }
+
+    /// Build a router with an explicit checkpoint/shutdown owner, returning schema I/O errors.
+    pub fn try_into_service(self) -> Result<ServedApp, ServeError> {
+        self.into_service_result()
     }
 
     /// Where [`run`](KeyedApp::run) listens; see [`App::bind`].
@@ -360,14 +444,21 @@ where
     /// fingerprint mismatch) and the drift mode is [`SchemaDrift::Panic`]
     /// — see the `/schema` route.
     pub fn into_router(self) -> axum::Router {
-        http::router_keyed(
+        self.into_service_result()
+            .expect("initializing served app")
+            .router
+    }
+
+    fn into_service_result(self) -> Result<ServedApp, ServeError> {
+        let (router, lifecycle) = http::router_keyed(
             self.stream,
             self.custom,
             &self.db_path,
             self.opts.drift,
             self.opts.raw_string_keys,
-        )
-        .0
+            self.opts.durability,
+        )?;
+        Ok(ServedApp { router, lifecycle })
     }
 
     /// Serve blocking forever; see [`App::run`].
@@ -380,7 +471,9 @@ where
             &self.db_path,
             opts.drift,
             opts.raw_string_keys,
-        );
+            opts.durability,
+        )
+        .expect("initializing served app");
         serve_blocking(router, lifecycle, opts, &db_path)
     }
 }
@@ -424,8 +517,7 @@ impl Activity {
 
     fn touch(&self) {
         let ms = self.start.elapsed().as_millis() as u64;
-        self.last_ms
-            .store(ms, std::sync::atomic::Ordering::Relaxed);
+        self.last_ms.store(ms, std::sync::atomic::Ordering::Relaxed);
     }
 
     fn idle_for(&self) -> std::time::Duration {
@@ -541,6 +633,7 @@ async fn watchdog(
     eprintln!("bog-serve: idle for {timeout:?}, shutting down");
     tokio::task::spawn_blocking(lifecycle.checkpoint)
         .await
+        .expect("checkpoint task on idle shutdown")
         .expect("checkpoint on idle shutdown");
     for path in &cleanup {
         let _ = std::fs::remove_file(path);

@@ -41,7 +41,7 @@ trait Rtx: Send + Sync + 'static {
     fn rtx<R>(&self, f: impl for<'tx> FnOnce(Self::Reader<'tx>) -> R) -> R;
 
     /// Fsync all committed state; see [`fold::stream::Stream::checkpoint`].
-    fn checkpoint(&mut self);
+    fn checkpoint(&mut self) -> Result<(), fold::fjall::Error>;
 
     /// Wipe all persisted state and re-initialize; see
     /// [`fold::stream::Stream::reset`].
@@ -68,8 +68,8 @@ where
         Stream::rtx(self, f)
     }
 
-    fn checkpoint(&mut self) {
-        Stream::checkpoint(self)
+    fn checkpoint(&mut self) -> Result<(), fold::fjall::Error> {
+        Stream::try_checkpoint(self)
     }
 
     fn reset(&mut self) {
@@ -101,8 +101,8 @@ where
         KeyedStream::rtx(self, f)
     }
 
-    fn checkpoint(&mut self) {
-        KeyedStream::checkpoint(self)
+    fn checkpoint(&mut self) -> Result<(), fold::fjall::Error> {
+        KeyedStream::try_checkpoint(self)
     }
 
     fn reset(&mut self) {
@@ -206,18 +206,39 @@ trait ViewSource: Send + Sync + 'static {
     fn docs(&self) -> &Docs;
     fn subscribe(&self) -> watch::Receiver<u64>;
     fn raw_string_keys(&self) -> bool;
+    fn stopped(&self) -> watch::Receiver<bool>;
 }
+
+#[cfg(test)]
+type CheckpointHook = Arc<dyn Fn() -> Result<(), fold::fjall::Error> + Send + Sync>;
+#[cfg(test)]
+thread_local! { static CHECKPOINT_HOOK: std::cell::RefCell<Option<CheckpointHook>> = const { std::cell::RefCell::new(None) }; }
 
 struct Shared<S> {
     inner: RwLock<Inner<S>>,
     docs: Docs,
     notify: watch::Sender<u64>,
     raw_string_keys: bool,
+    durability: crate::Durability,
+    #[cfg(test)]
+    checkpoint_hook: Option<CheckpointHook>,
+    stopped: watch::Sender<bool>,
+}
+
+impl<S: Rtx> Shared<S> {
+    fn checkpoint(&self, stream: &mut S) -> Result<(), fold::fjall::Error> {
+        #[cfg(test)]
+        if let Some(hook) = &self.checkpoint_hook {
+            hook()?;
+        }
+        stream.checkpoint()
+    }
 }
 
 struct Inner<S> {
     stream: S,
     seq: u64,
+    failed: bool,
 }
 
 impl<S: Rtx> ViewSource for Shared<S> {
@@ -234,6 +255,10 @@ impl<S: Rtx> ViewSource for Shared<S> {
         self.notify.subscribe()
     }
 
+    fn stopped(&self) -> watch::Receiver<bool> {
+        self.stopped.subscribe()
+    }
+
     fn raw_string_keys(&self) -> bool {
         self.raw_string_keys
     }
@@ -246,9 +271,10 @@ pub(crate) struct Lifecycle {
     /// The pipeline's schema fingerprint (also persisted in the `.schema`
     /// sidecar), for the discovery sidecar.
     pub fingerprint: String,
+    pub stop: Box<dyn Fn() + Send + Sync>,
     /// Drains in-flight writes (takes the write lock) and fsyncs all
     /// committed state.
-    pub checkpoint: Box<dyn FnOnce() + Send>,
+    pub checkpoint: Box<dyn FnOnce() -> Result<(), crate::ServeError> + Send>,
     /// Live SSE subscriptions (`/watch`, `/views/{name}/watch`); the idle
     /// watchdog won't exit while any are connected.
     pub watchers: Box<dyn Fn() -> usize + Send + Sync>,
@@ -257,9 +283,21 @@ pub(crate) struct Lifecycle {
 impl Lifecycle {
     fn new<S: Rtx>(shared: Arc<Shared<S>>, fingerprint: String) -> Self {
         let cp = shared.clone();
+        let stop = shared.clone();
         Lifecycle {
             fingerprint,
-            checkpoint: Box::new(move || cp.inner.write().unwrap().stream.checkpoint()),
+            stop: Box::new(move || {
+                stop.stopped.send_replace(true);
+            }),
+            checkpoint: Box::new(move || {
+                cp.stopped.send_replace(true);
+                cp.checkpoint(&mut cp.inner.write().unwrap().stream)
+                    .map_err(|_| {
+                        crate::ServeError(
+                            "checkpoint failed; committed outcome is uncertain".into(),
+                        )
+                    })
+            }),
             watchers: Box::new(move || shared.notify.receiver_count()),
         }
     }
@@ -273,7 +311,8 @@ fn shared_from<D, P, S: Rtx>(
     style: WriteStyle<'_>,
     drift: crate::SchemaDrift,
     raw_string_keys: bool,
-) -> (Arc<Shared<S>>, String)
+    durability: crate::Durability,
+) -> Result<(Arc<Shared<S>>, String), crate::ServeError>
 where
     D: Clone,
     P: Push<D>,
@@ -286,7 +325,7 @@ where
     let custom_docs: Vec<_> = custom.iter().map(|c| c.doc.clone()).collect();
     let schema = crate::openapi::schema_doc(input_schema, &specs, style);
     let fingerprint = schema["fingerprint"].as_str().unwrap().to_string();
-    check_fingerprint(db_path, &fingerprint, drift, &mut stream);
+    check_fingerprint(db_path, &fingerprint, drift, &mut stream)?;
     let shared = Arc::new(Shared {
         docs: Docs {
             openapi: crate::openapi::openapi_doc(input_schema, &specs, style, &custom_docs),
@@ -294,9 +333,17 @@ where
         },
         notify: watch::channel(0).0,
         raw_string_keys,
-        inner: RwLock::new(Inner { stream, seq: 0 }),
+        durability,
+        #[cfg(test)]
+        checkpoint_hook: CHECKPOINT_HOOK.with(|hook| hook.borrow().clone()),
+        stopped: watch::channel(false).0,
+        inner: RwLock::new(Inner {
+            stream,
+            seq: 0,
+            failed: false,
+        }),
     });
-    (shared, fingerprint)
+    Ok((shared, fingerprint))
 }
 
 fn attach_custom<D, P, S>(
@@ -339,23 +386,11 @@ where
                         let shared = shared.clone();
                         let handler = handler.clone();
                         async move {
-                            let mut inner = shared.inner.write().unwrap();
-                            match handler(&mut inner.stream, &body) {
-                                Ok(data) => {
-                                    inner.seq += 1;
-                                    let seq = inner.seq;
-                                    drop(inner);
-                                    shared.notify.send_replace(seq);
+                            match try_commit(&shared, |stream| handler(stream, &body)) {
+                                Ok((seq, data)) => {
                                     Json(json!({ "seq": seq, "data": data })).into_response()
                                 }
-                                Err((code, msg)) => {
-                                    drop(inner);
-                                    error(
-                                        StatusCode::from_u16(code)
-                                            .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
-                                        msg,
-                                    )
-                                }
+                                Err(resp) => resp,
                             }
                         }
                     }),
@@ -371,7 +406,8 @@ pub(crate) fn router<D, P>(
     custom: Vec<StreamCustom<D, P>>,
     db_path: &std::path::Path,
     drift: crate::SchemaDrift,
-) -> (Router, Lifecycle)
+    durability: crate::Durability,
+) -> Result<(Router, Lifecycle), crate::ServeError>
 where
     D: Clone + Send + Sync + DeserializeOwned + JsonSchema + 'static,
     P: Push<D> + Send + Sync + 'static,
@@ -386,14 +422,27 @@ where
         WriteStyle::Unkeyed,
         drift,
         false,
-    );
+        durability,
+    )?;
     let app = read_routes::<Shared<Stream<D, P>>>()
         .route("/insert", post(insert::<D, P>))
         .route("/remove", post(remove::<D, P>))
         .route("/batch", post(batch::<D, P>))
         .with_state(shared.clone());
     let lifecycle = Lifecycle::new(shared.clone(), fingerprint);
-    (attach_custom(app, shared, custom), lifecycle)
+    let guard = shared.clone();
+    let app = attach_custom(app, shared, custom).layer(axum::middleware::from_fn(
+        move |req: axum::extract::Request, next: axum::middleware::Next| {
+            let guard = guard.clone();
+            async move {
+                if *guard.stopped.borrow() || guard.inner.read().unwrap().failed {
+                    return unavailable();
+                }
+                next.run(req).await
+            }
+        },
+    ));
+    Ok((app, lifecycle))
 }
 
 pub(crate) fn router_keyed<K, V, P>(
@@ -402,7 +451,8 @@ pub(crate) fn router_keyed<K, V, P>(
     db_path: &std::path::Path,
     drift: crate::SchemaDrift,
     raw_string_keys: bool,
-) -> (Router, Lifecycle)
+    durability: crate::Durability,
+) -> Result<(Router, Lifecycle), crate::ServeError>
 where
     K: Clone + Send + Sync + Serialize + DeserializeOwned + JsonSchema + 'static,
     V: Clone + Send + Sync + Serialize + DeserializeOwned + JsonSchema + 'static,
@@ -421,7 +471,8 @@ where
         },
         drift,
         raw_string_keys,
-    );
+        durability,
+    )?;
     let app = read_routes::<Shared<KeyedStream<K, V, P>>>()
         .route(
             "/docs/{key}",
@@ -432,31 +483,67 @@ where
         .route("/batch", post(batch_keyed::<K, V, P>))
         .with_state(shared.clone());
     let lifecycle = Lifecycle::new(shared.clone(), fingerprint);
-    (attach_custom(app, shared, custom), lifecycle)
+    let guard = shared.clone();
+    let app = attach_custom(app, shared, custom).layer(axum::middleware::from_fn(
+        move |req: axum::extract::Request, next: axum::middleware::Next| {
+            let guard = guard.clone();
+            async move {
+                if *guard.stopped.borrow() || guard.inner.read().unwrap().failed {
+                    return unavailable();
+                }
+                next.run(req).await
+            }
+        },
+    ));
+    Ok((app, lifecycle))
 }
 
 /// Run one write on `stream`, bump seq, notify `/watch`.
 ///
 /// `send_replace`, not `send`: `send()` refuses to store when no client is
 /// connected yet, and late subscribers must still see the latest seq.
-fn commit<S>(shared: &Shared<S>, f: impl FnOnce(&mut S)) -> u64 {
-    let mut inner = shared.inner.write().unwrap();
-    f(&mut inner.stream);
-    inner.seq += 1;
-    let seq = inner.seq;
-    drop(inner);
-    shared.notify.send_replace(seq);
-    seq
+fn unavailable() -> Response {
+    (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": {"code":"storage_unavailable", "message":"storage unavailable; a committed write may not have been checkpointed"}}))).into_response()
 }
 
-fn commit_with<S, R>(shared: &Shared<S>, f: impl FnOnce(&mut S) -> R) -> (u64, R) {
+#[allow(clippy::result_large_err)]
+fn try_commit<S: Rtx, R>(
+    shared: &Shared<S>,
+    f: impl FnOnce(&mut S) -> Result<R, (u16, String)>,
+) -> Result<(u64, R), Response> {
     let mut inner = shared.inner.write().unwrap();
-    let out = f(&mut inner.stream);
+    if inner.failed || *shared.stopped.borrow() {
+        return Err(unavailable());
+    }
+    let out = f(&mut inner.stream).map_err(|(code, msg)| {
+        error(
+            StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+            msg,
+        )
+    })?;
+    if shared.durability == crate::Durability::CheckpointBeforeAck
+        && shared.checkpoint(&mut inner.stream).is_err()
+    {
+        inner.failed = true;
+        shared.stopped.send_replace(true);
+        return Err(unavailable());
+    }
     inner.seq += 1;
     let seq = inner.seq;
-    drop(inner);
     shared.notify.send_replace(seq);
-    (seq, out)
+    Ok((seq, out))
+}
+
+#[allow(clippy::result_large_err)]
+fn commit<S: Rtx>(shared: &Shared<S>, f: impl FnOnce(&mut S)) -> Result<u64, Response> {
+    try_commit(shared, |stream| Ok(f(stream))).map(|(seq, ())| seq)
+}
+#[allow(clippy::result_large_err)]
+fn commit_with<S: Rtx, R>(
+    shared: &Shared<S>,
+    f: impl FnOnce(&mut S) -> R,
+) -> Result<(u64, R), Response> {
+    try_commit(shared, |stream| Ok(f(stream)))
 }
 
 async fn insert<D, P>(
@@ -472,7 +559,10 @@ where
         Ok(d) => d,
         Err(resp) => return resp,
     };
-    let seq = commit(&shared, |stream| stream.wtx(|tx| tx.insert(&data)));
+    let seq = match commit(&shared, |stream| stream.wtx(|tx| tx.insert(&data))) {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
     Json(json!({ "seq": seq })).into_response()
 }
 
@@ -489,7 +579,10 @@ where
         Ok(d) => d,
         Err(resp) => return resp,
     };
-    let seq = commit(&shared, |stream| stream.wtx(|tx| tx.remove(&data)));
+    let seq = match commit(&shared, |stream| stream.wtx(|tx| tx.remove(&data))) {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
     Json(json!({ "seq": seq })).into_response()
 }
 
@@ -514,7 +607,7 @@ where
         Err(resp) => return resp,
     };
     let applied = ops.len();
-    let seq = commit(&shared, |stream| {
+    let seq = match commit(&shared, |stream| {
         stream.wtx(|tx| {
             for op in &ops {
                 match op {
@@ -523,7 +616,10 @@ where
                 }
             }
         })
-    });
+    }) {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
     Json(json!({ "seq": seq, "applied": applied })).into_response()
 }
 
@@ -545,7 +641,10 @@ where
     let Some(key) = parse_key_mode::<K>(&raw, shared.raw_string_keys) else {
         return error(StatusCode::BAD_REQUEST, key_parse_msg(&raw));
     };
-    let (seq, old) = commit_with(&shared, |stream| stream.wtx(|tx| tx.upsert(&key, &data)));
+    let (seq, old) = match commit_with(&shared, |stream| stream.wtx(|tx| tx.upsert(&key, &data))) {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
     Json(json!({ "seq": seq, "replaced": old.is_some() })).into_response()
 }
 
@@ -562,7 +661,10 @@ where
     let Some(key) = parse_key_mode::<K>(&raw, shared.raw_string_keys) else {
         return error(StatusCode::BAD_REQUEST, key_parse_msg(&raw));
     };
-    let (seq, old) = commit_with(&shared, |stream| stream.wtx(|tx| tx.remove(&key)));
+    let (seq, old) = match commit_with(&shared, |stream| stream.wtx(|tx| tx.remove(&key))) {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
     Json(json!({ "seq": seq, "removed": old.is_some() })).into_response()
 }
 
@@ -611,7 +713,7 @@ where
         Err(resp) => return resp,
     };
     let applied = ops.len();
-    let (seq, ()) = commit_with(&shared, |stream| {
+    let (seq, ()) = match commit_with(&shared, |stream| {
         stream.wtx(|tx| {
             for op in &ops {
                 match op {
@@ -624,7 +726,10 @@ where
                 }
             }
         })
-    });
+    }) {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
     Json(json!({ "seq": seq, "applied": applied })).into_response()
 }
 
@@ -750,18 +855,26 @@ async fn watch_view<S: ViewSource>(
         ViewRead::Data(_) => {}
     }
 
-    let events = tokio_stream::wrappers::WatchStream::new(shared.subscribe()).map(move |_| {
-        let (seq, out) = shared.view(&name, &q);
-        let data = match out {
-            ViewRead::Data(data) => data,
-            _ => Value::Null,
-        };
-        Ok::<_, Infallible>(
-            Event::default()
-                .id(seq.to_string())
-                .data(json!({ "seq": seq, "data": data }).to_string()),
+    let events = tokio_stream::wrappers::WatchStream::new(shared.subscribe())
+        .map(Some)
+        .merge(
+            tokio_stream::wrappers::WatchStream::new(shared.stopped())
+                .filter(|stop| *stop)
+                .map(|_| None),
         )
-    });
+        .take_while(|seq| seq.is_some())
+        .map(move |_| {
+            let (seq, out) = shared.view(&name, &q);
+            let data = match out {
+                ViewRead::Data(data) => data,
+                _ => Value::Null,
+            };
+            Ok::<_, Infallible>(
+                Event::default()
+                    .id(seq.to_string())
+                    .data(json!({ "seq": seq, "data": data }).to_string()),
+            )
+        });
     Sse::new(events)
         .keep_alive(KeepAlive::default())
         .into_response()
@@ -776,13 +889,21 @@ async fn serve_schema<S: ViewSource>(State(shared): State<Arc<S>>) -> Response {
 }
 
 async fn watch_sse<S: ViewSource>(State(shared): State<Arc<S>>) -> impl IntoResponse {
-    let events = tokio_stream::wrappers::WatchStream::new(shared.subscribe()).map(|seq| {
-        Ok::<_, Infallible>(
-            Event::default()
-                .id(seq.to_string())
-                .data(json!({ "seq": seq }).to_string()),
+    let events = tokio_stream::wrappers::WatchStream::new(shared.subscribe())
+        .map(Some)
+        .merge(
+            tokio_stream::wrappers::WatchStream::new(shared.stopped())
+                .filter(|stop| *stop)
+                .map(|_| None),
         )
-    });
+        .take_while(|seq| seq.is_some())
+        .map(|seq| {
+            Ok::<_, Infallible>(
+                Event::default()
+                    .id(seq.unwrap().to_string())
+                    .data(json!({ "seq": seq.unwrap() }).to_string()),
+            )
+        });
     Sse::new(events).keep_alive(KeepAlive::default())
 }
 
@@ -842,27 +963,18 @@ fn check_fingerprint<S: Rtx>(
     fingerprint: &str,
     drift: crate::SchemaDrift,
     stream: &mut S,
-) {
+) -> Result<(), crate::ServeError> {
     let mut marker = db_path.as_os_str().to_owned();
     marker.push(".schema");
 
     match std::fs::read_to_string(&marker) {
-        Ok(stored) if stored.trim() == fingerprint => return,
+        Ok(stored) if stored.trim() == fingerprint => return Ok(()),
         Ok(stored) => match drift {
-            crate::SchemaDrift::Panic => panic!(
-                "pipeline changed since this data dir was written\n\
-                 \n\
-                 data dir:            {}\n\
-                 stored fingerprint:  {}\n\
-                 current fingerprint: {}\n\
-                 \n\
-                 The input type or sink structure no longer matches the persisted\n\
-                 state. Either restore the previous pipeline, or start fresh\n\
-                 (`bogkit dev --fresh`, or delete the data dir and its .schema file).",
-                db_path.display(),
-                stored.trim(),
-                fingerprint,
-            ),
+            crate::SchemaDrift::Panic => {
+                return Err(crate::ServeError(
+                    "pipeline changed since this data dir was written".into(),
+                ));
+            }
             crate::SchemaDrift::WipeAndRebuild => {
                 eprintln!(
                     "bog-serve: pipeline changed since {} was written \
@@ -873,9 +985,194 @@ fn check_fingerprint<S: Rtx>(
                 stream.reset();
             }
         },
-        Err(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(crate::ServeError(e.to_string())),
     }
     if let Err(e) = std::fs::write(&marker, fingerprint) {
-        eprintln!("bog-serve: could not persist schema fingerprint: {e}");
+        return Err(crate::ServeError(format!(
+            "could not persist schema fingerprint: {e}"
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod durability_tests {
+    use super::*;
+    use crate::{App, Durability, KeyedApp};
+    use fold::pipeline::terminal;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use tower::ServiceExt;
+    async fn send(router: &Router, method: &str, path: &str, body: Value) -> Response {
+        router
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .method(method)
+                    .uri(path)
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    }
+    #[tokio::test]
+    async fn every_mutation_checkpoints_and_failed_custom_does_not() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let fail = Arc::new(AtomicBool::new(false));
+        let hook: CheckpointHook = {
+            let calls = calls.clone();
+            let fail = fail.clone();
+            Arc::new(move || {
+                calls.fetch_add(1, Ordering::SeqCst);
+                if fail.load(Ordering::SeqCst) {
+                    Err(std::io::Error::other("injected checkpoint failure").into())
+                } else {
+                    Ok(())
+                }
+            })
+        };
+        CHECKPOINT_HOOK.with(|value| *value.borrow_mut() = Some(hook));
+        let dir = tempfile::tempdir().unwrap();
+        let router =
+            App::<String, _>::stream(dir.path().join("plain"), terminal::Count::new("total"))
+                .durability(Durability::CheckpointBeforeAck)
+                .post("/custom", |tx, value: String| {
+                    tx.insert(&value);
+                    Ok(value)
+                })
+                .post("/reject", |tx, value: String| {
+                    tx.insert(&value);
+                    Err::<String, _>((422, "rejected".into()))
+                })
+                .into_router();
+        for (n, path, body) in [
+            (1, "/insert", json!("a")),
+            (2, "/remove", json!("a")),
+            (3, "/batch", json!([{"op":"insert","data":"b"}])),
+            (4, "/custom", json!("c")),
+        ] {
+            assert_eq!(send(&router, "POST", path, body).await.status(), 200);
+            assert_eq!(calls.load(Ordering::SeqCst), n);
+        }
+        assert_eq!(
+            send(&router, "POST", "/reject", json!("d")).await.status(),
+            422
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 4);
+        let before = axum::body::to_bytes(
+            send(&router, "GET", "/views/total", Value::Null)
+                .await
+                .into_body(),
+            4096,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&before).unwrap(),
+            json!({"seq":4,"data":{"value":2}})
+        );
+        let keyed = KeyedApp::<String, String, _>::stream(
+            dir.path().join("keyed"),
+            terminal::Table::new("docs"),
+        )
+        .durability(Durability::CheckpointBeforeAck)
+        .post("/custom", |tx, value: String| {
+            tx.upsert(&"custom".into(), &value);
+            Ok(value)
+        })
+        .post("/reject", |tx, value: String| {
+            tx.upsert(&"bad".into(), &value);
+            Err::<String, _>((422, "rejected".into()))
+        })
+        .into_router();
+        let default_router =
+            App::<String, _>::stream(dir.path().join("default"), terminal::Count::new("total"))
+                .into_router();
+        assert_eq!(
+            send(&default_router, "POST", "/insert", json!("default"))
+                .await
+                .status(),
+            200
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            4,
+            "default mode must not add a checkpoint"
+        );
+        CHECKPOINT_HOOK.with(|value| *value.borrow_mut() = None);
+        for (n, method, path, body) in [
+            (5, "PUT", "/docs/a", json!("a")),
+            (6, "DELETE", "/docs/a", Value::Null),
+            (
+                7,
+                "POST",
+                "/batch",
+                json!([{"op":"upsert","key":"b","data":"b"}]),
+            ),
+            (8, "POST", "/custom", json!("c")),
+        ] {
+            assert_eq!(send(&keyed, method, path, body).await.status(), 200);
+            assert_eq!(calls.load(Ordering::SeqCst), n);
+        }
+        assert_eq!(
+            send(&keyed, "POST", "/reject", json!("d")).await.status(),
+            422
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 8);
+        fail.store(true, Ordering::SeqCst);
+        assert_eq!(
+            send(&keyed, "PUT", "/docs/fail", json!("f")).await.status(),
+            503
+        );
+        assert_eq!(
+            send(&keyed, "GET", "/docs/b", Value::Null).await.status(),
+            503
+        );
+        assert_eq!(
+            send(&keyed, "PUT", "/docs/later", json!("g"))
+                .await
+                .status(),
+            503
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 9);
+    }
+    #[test]
+    fn acknowledgement_waits_for_checkpoint() {
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let release = std::sync::Mutex::new(release_rx);
+        let (result_tx, result_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            CHECKPOINT_HOOK.with(|value| {
+                *value.borrow_mut() = Some(Arc::new(move || {
+                    entered_tx.send(()).unwrap();
+                    release.lock().unwrap().recv().unwrap();
+                    Ok(())
+                }))
+            });
+            let dir = tempfile::tempdir().unwrap();
+            let app = App::<String, _>::stream(dir.path(), terminal::Count::new("total"))
+                .durability(Durability::CheckpointBeforeAck)
+                .into_router();
+            tokio::runtime::Runtime::new().unwrap().block_on(async {
+                result_tx
+                    .send(send(&app, "POST", "/insert", json!("a")).await.status())
+                    .unwrap()
+            });
+        });
+        entered_rx
+            .recv_timeout(std::time::Duration::from_secs(3))
+            .unwrap();
+        assert!(result_rx.try_recv().is_err());
+        release_tx.send(()).unwrap();
+        assert_eq!(
+            result_rx
+                .recv_timeout(std::time::Duration::from_secs(3))
+                .unwrap(),
+            200
+        );
+        worker.join().unwrap();
     }
 }

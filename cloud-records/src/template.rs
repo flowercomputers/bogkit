@@ -6,18 +6,18 @@ use axum::http::{Request, StatusCode};
 use axum::middleware::{Next, from_fn};
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router};
-use bog_serve::KeyedApp;
+use bog_serve::{Durability, KeyedApp, ServedApp};
 use fold::pipeline::terminal;
 use serde_json::{Value, json};
 
 use crate::JsonDocument;
 
 pub const TEMPLATE_ID: &str = "records-v1";
-const MAX_REQUEST_BYTES: usize = 1024 * 1024;
-const MAX_BATCH_OPS: usize = 100;
-const MAX_LIST_LIMIT: usize = 1000;
-const MAX_LIST_OFFSET: usize = 10_000;
-const MAX_KEY_BYTES: usize = 256;
+pub const MAX_REQUEST_BYTES: usize = 1024 * 1024;
+pub const MAX_BATCH_OPS: usize = 100;
+pub const MAX_LIST_LIMIT: usize = 1000;
+pub const MAX_LIST_OFFSET: usize = 10_000;
+pub const MAX_KEY_BYTES: usize = 256;
 
 #[derive(Debug, thiserror::Error)]
 pub enum TemplateError {
@@ -28,17 +28,25 @@ pub enum TemplateError {
 }
 
 pub fn records_router(path: &Path) -> Result<Router, TemplateError> {
-    let app = KeyedApp::<String, JsonDocument, _>::try_stream(
+    Ok(records_service(path)?.router())
+}
+
+/// Durable records template with explicit ownership of shutdown/checkpoint.
+pub fn records_service(path: &Path) -> Result<ServedApp, TemplateError> {
+    let service = KeyedApp::<String, JsonDocument, _>::try_stream(
         path,
         (terminal::Table::new("docs"), terminal::Count::new("total")),
     )
-    .map_err(TemplateError::OpenStore)?;
-    let app = app.raw_string_keys();
-    let router = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| app.into_router()))
-        .map_err(|panic| TemplateError::Initialize(panic_message(panic)))?;
-    Ok(router
-        .layer(DefaultBodyLimit::max(MAX_REQUEST_BYTES))
-        .layer(from_fn(validate_request)))
+    .map_err(TemplateError::OpenStore)?
+    .raw_string_keys()
+    .durability(Durability::CheckpointBeforeAck)
+    .try_into_service()
+    .map_err(|e| TemplateError::Initialize(e.to_string()))?;
+    Ok(service.map_router(|router| {
+        router
+            .layer(DefaultBodyLimit::max(MAX_REQUEST_BYTES))
+            .layer(from_fn(validate_request))
+    }))
 }
 
 async fn validate_request(mut request: Request<Body>, next: Next) -> Response {
@@ -62,21 +70,8 @@ async fn validate_request(mut request: Request<Body>, next: Next) -> Response {
                 Ok(value) => value,
                 Err(error) => return bad_request(format!("invalid batch: {error}")),
             };
-            let Some(ops) = value.as_array() else {
-                return bad_request("batch must be an array");
-            };
-            if ops.len() > MAX_BATCH_OPS {
-                return bad_request(format!(
-                    "batch exceeds maximum of {MAX_BATCH_OPS} operations"
-                ));
-            }
-            for op in ops {
-                let Some(key) = op.get("key").and_then(Value::as_str) else {
-                    return bad_request("each batch operation requires a string key");
-                };
-                if let Err(message) = validate_key(key) {
-                    return bad_request(message);
-                }
+            if let Err(message) = validate_batch(&value) {
+                return bad_request(message);
             }
         }
         request = Request::from_parts(parts, Body::from(bytes));
@@ -84,7 +79,40 @@ async fn validate_request(mut request: Request<Body>, next: Next) -> Response {
     next.run(request).await
 }
 
-fn validate_key(key: &str) -> Result<(), String> {
+/// Validate the complete records-v1 batch before routing or dispatching it.
+pub fn validate_batch(value: &Value) -> Result<(), String> {
+    let ops = value.as_array().ok_or("batch must be an array")?;
+    if ops.len() > MAX_BATCH_OPS {
+        return Err(format!(
+            "batch exceeds maximum of {MAX_BATCH_OPS} operations"
+        ));
+    }
+    if value.to_string().len() > MAX_REQUEST_BYTES {
+        return Err("request body exceeds 1 MiB".into());
+    }
+    for op in ops {
+        let key = op
+            .get("key")
+            .and_then(Value::as_str)
+            .ok_or("each batch operation requires a string key")?;
+        validate_key(key)?;
+        match op.get("op").and_then(Value::as_str) {
+            Some("upsert") => {
+                let data = op.get("data").ok_or("upsert requires data")?;
+                JsonDocument::try_from_value(data.clone()).map_err(|e| e.to_string())?;
+            }
+            Some("remove") => {}
+            _ => return Err("batch operation must be upsert or remove".into()),
+        }
+    }
+    Ok(())
+}
+
+/// Validate a records-v1 primary key without interpreting it as JSON.
+pub fn validate_key(key: &str) -> Result<(), String> {
+    if key == "." || key == ".." {
+        return Err("key must not be a dot-only path segment".into());
+    }
     if key.is_empty() {
         return Err("key must not be empty".into());
     }
@@ -175,14 +203,4 @@ fn payload_too_large() -> Response {
         Json(json!({"error": "request body exceeds 1 MiB"})),
     )
         .into_response()
-}
-
-fn panic_message(panic: Box<dyn std::any::Any + Send>) -> String {
-    if let Some(message) = panic.downcast_ref::<String>() {
-        message.clone()
-    } else if let Some(message) = panic.downcast_ref::<&str>() {
-        (*message).to_string()
-    } else {
-        "records template initialization panicked".into()
-    }
 }

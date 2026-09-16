@@ -162,7 +162,12 @@ impl<D: Clone, P: Push<D>> Stream<D, P> {
     /// Commits are durable against process crashes as soon as `wtx` returns;
     /// checkpointing additionally hardens them against OS/power failure.
     pub fn checkpoint(&mut self) {
-        self.store.persist(fjall::PersistMode::SyncAll).unwrap();
+        self.try_checkpoint().unwrap();
+    }
+
+    /// Fallible fsync of all committed state. An error does not roll back commits.
+    pub fn try_checkpoint(&mut self) -> Result<(), fjall::Error> {
+        self.store.persist(fjall::PersistMode::SyncAll)
     }
 
     pub(crate) fn store(&self) -> &fjall::SingleWriterTxDatabase {

@@ -165,6 +165,11 @@ where
         })
     }
 
+    /// Fallible fsync of committed state; errors do not imply rollback.
+    pub fn try_checkpoint(&mut self) -> Result<(), fjall::Error> {
+        self.inner.try_checkpoint()
+    }
+
     /// Fsync all committed state to disk; see [`Stream::checkpoint`].
     pub fn checkpoint(&mut self) {
         self.inner.checkpoint()
