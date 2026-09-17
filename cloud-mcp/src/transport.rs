@@ -54,14 +54,13 @@ async fn authorize(State(gateway): State<Gateway>, mut request: Request, next: N
     let reject = |code, message| {
         let mut response =
             bog_cloud::http::error_response(CloudError::new(code, message), &request_id);
-        if response.status() == 401 {
-            if let Ok(v) =
+        if response.status() == 401
+            && let Ok(v) =
                 axum::http::HeaderValue::from_str(&gateway.service.authentication_challenge())
-            {
-                response
-                    .headers_mut()
-                    .insert(axum::http::header::WWW_AUTHENTICATE, v);
-            }
+        {
+            response
+                .headers_mut()
+                .insert(axum::http::header::WWW_AUTHENTICATE, v);
         }
         response
     };

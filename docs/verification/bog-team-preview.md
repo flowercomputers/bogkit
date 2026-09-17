@@ -23,3 +23,5 @@ Live host read-only check: Fly app `flower-bog-cloud`, machine `4d895395c393e8`,
 Final permission correction `67a6391` reserves invitation creation/revocation, member removal and Bog deletion for human browser sessions. Agents retain app-credential management. Seventeen focused unit/auth tests and two gateway tests passed after the correction; independent final review repeated the permission regression and both gateway tests successfully. No remaining review finding from the final scoped pass.
 
 The already-built Linux lifecycle executable also passed all six tests in a disposable container limited to one CPU and 1 GiB RAM (2.90 seconds). This covers lifecycle and admission behavior with small fixtures, not full-store performance or actual Fly host capacity. The initial attempt to run Cargo under those limits was stopped because it rebuilt dependencies; compilation resource samples were not treated as service measurements.
+
+Final strict Clippy checks passed for cloud, MCP, records and serve across all targets with dependency linting excluded. The last correction was a semantics-preserving conditional simplification in MCP challenge handling.
