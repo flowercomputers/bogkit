@@ -184,7 +184,7 @@ impl NativeAuth {
     ) -> Result<String, CloudError> {
         let client = field(&p, "client_id")?;
         let redirect = field(&p, "redirect_uri")?;
-        let (name, redirects) = if client.starts_with("https://") {
+        let metadata = if client.starts_with("https://") {
             crate::client_metadata::fetch(client).await?
         } else {
             let row: Option<(String, String)> = self
@@ -200,13 +200,17 @@ impl NativeAuth {
                 .map_err(db_error)?;
             let (name, redirects) =
                 row.ok_or_else(|| invalid("unknown or expired client; register again"))?;
-            (
+            crate::client_metadata::ClientMetadata {
                 name,
-                serde_json::from_str::<Vec<String>>(&redirects).map_err(|_| unavailable())?,
-            )
+                redirects: serde_json::from_str::<Vec<String>>(&redirects)
+                    .map_err(|_| unavailable())?,
+                native_loopback: false,
+            }
         };
-        if !redirects.iter().any(|r| r == redirect) {
-            return Err(invalid("redirect_uri must exactly match registration"));
+        if !metadata.allows_redirect(redirect) {
+            return Err(invalid(
+                "redirect_uri must match registration; native CIMD HTTP loopback redirects may vary only by port",
+            ));
         }
         if field(&p, "response_type")? != "code" || field(&p, "code_challenge_method")? != "S256" {
             return Err(invalid("response_type code and PKCE S256 required"));
@@ -239,7 +243,7 @@ impl NativeAuth {
         if state.len() > 1024 || state.chars().any(char::is_control) {
             return Err(invalid("invalid state"));
         }
-        let device = self.start_device(peer, &name)?;
+        let device = self.start_device(peer, &metadata.name)?;
         let public = device["user_code"].as_str().ok_or_else(unavailable)?;
         let mut grants = self.oauth.lock().map_err(|_| unavailable())?;
         grants.pending.retain(|_, g| g.expires > now());

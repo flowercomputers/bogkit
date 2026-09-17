@@ -19,6 +19,8 @@ fn invalid() -> CloudError {
 struct Document {
     client_id: String,
     client_name: String,
+    #[serde(default)]
+    application_type: Option<String>,
     redirect_uris: Vec<String>,
     #[serde(default)]
     token_endpoint_auth_method: Option<String>,
@@ -26,6 +28,48 @@ struct Document {
     grant_types: Option<Vec<String>>,
     #[serde(default)]
     response_types: Option<Vec<String>>,
+}
+pub(crate) struct ClientMetadata {
+    pub name: String,
+    pub redirects: Vec<String>,
+    pub native_loopback: bool,
+}
+impl ClientMetadata {
+    pub fn allows_redirect(&self, requested: &str) -> bool {
+        self.redirects.iter().any(|registered| {
+            registered == requested
+                || (self.native_loopback
+                    && loopback_parts(registered)
+                        .is_some_and(|parts| Some(parts) == loopback_parts(requested)))
+        })
+    }
+}
+// Compare the original spelling rather than normalized URLs: only the port may
+// vary. Even equivalent host spellings, path escapes and query changes differ.
+fn loopback_parts(value: &str) -> Option<(&str, &str)> {
+    if value.len() > 2048 || value.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        return None;
+    }
+    let u = reqwest::Url::parse(value).ok()?;
+    if u.fragment().is_some() || !u.username().is_empty() || u.password().is_some() {
+        return None;
+    }
+    let rest = value.strip_prefix("http://")?;
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let (authority, suffix) = rest.split_at(end);
+    for host in ["127.0.0.1", "[::1]", "localhost"] {
+        if let Some(port) = authority.strip_prefix(host)
+            && (port.is_empty()
+                || port.strip_prefix(':').is_some_and(|p| {
+                    !p.is_empty()
+                        && p.bytes().all(|c| c.is_ascii_digit())
+                        && p.parse::<u16>().is_ok_and(|p| p > 0)
+                }))
+        {
+            return Some((host, suffix));
+        }
+    }
+    None
 }
 fn url(value: &str) -> Result<reqwest::Url, CloudError> {
     let u = reqwest::Url::parse(value).map_err(|_| invalid())?;
@@ -71,15 +115,23 @@ fn validate_addresses(addresses: &[SocketAddr]) -> Result<(), CloudError> {
     }
     Ok(())
 }
-fn validate(client: &str, bytes: &[u8]) -> Result<(String, Vec<String>), CloudError> {
+fn validate(client: &str, bytes: &[u8]) -> Result<ClientMetadata, CloudError> {
     let d: Document = serde_json::from_slice(bytes).map_err(|_| invalid())?;
+    // Some native clients omit application_type. A public client whose entire
+    // redirect list is literal HTTP loopback can safely use the same port rule.
+    let native_loopback = d.application_type.as_deref() == Some("native")
+        || (d.application_type.is_none()
+            && !d.redirect_uris.is_empty()
+            && d.redirect_uris.iter().all(|r| loopback_parts(r).is_some()));
     if d.client_id != client
         || crate::agent_tokens::validate_name(&d.client_name).is_err()
         || d.redirect_uris.is_empty()
         || d.redirect_uris.len() > 8
-        || d.redirect_uris
-            .iter()
-            .any(|r| r.len() > 2048 || !super::native_oauth::redirect_valid(r))
+        || d.redirect_uris.iter().any(|r| {
+            r.len() > 2048
+                || !(super::native_oauth::redirect_valid(r)
+                    || (native_loopback && loopback_parts(r).is_some()))
+        })
         || d.token_endpoint_auth_method
             .as_deref()
             .is_some_and(|v| v != "none")
@@ -94,7 +146,11 @@ fn validate(client: &str, bytes: &[u8]) -> Result<(String, Vec<String>), CloudEr
     {
         return Err(invalid());
     }
-    Ok((d.client_name, d.redirect_uris))
+    Ok(ClientMetadata {
+        name: d.client_name,
+        redirects: d.redirect_uris,
+        native_loopback,
+    })
 }
 fn client(host: &str, addresses: &[SocketAddr]) -> Result<reqwest::Client, CloudError> {
     reqwest::Client::builder()
@@ -128,7 +184,7 @@ async fn body(mut response: reqwest::Response) -> Result<Vec<u8>, CloudError> {
     }
     Ok(bytes)
 }
-pub(crate) async fn fetch(value: &str) -> Result<(String, Vec<String>), CloudError> {
+pub(crate) async fn fetch(value: &str) -> Result<ClientMetadata, CloudError> {
     let _permit = FETCHES.try_acquire().map_err(|_| invalid())?;
     let u = url(value)?;
     tokio::time::timeout(Duration::from_secs(5), async {
@@ -222,6 +278,74 @@ mod tests {
         assert!(validate_addresses(&[good, "127.0.0.1:443".parse().unwrap()]).is_err());
         assert!(validate_addresses(&[]).is_err());
         assert!(validate_addresses(&[good; 17]).is_err());
+    }
+    #[test]
+    fn official_native_client_shapes_allow_only_loopback_port_variation() {
+        let codex = serde_json::json!({"client_id":"https://chatgpt.com/oauth/codex/client.json","client_uri":"https://chatgpt.com/codex","application_type":"native","redirect_uris":["http://127.0.0.1/callback","http://localhost/callback"],"token_endpoint_auth_method":"none","token_endpoint_auth_methods_supported":["none"],"grant_types":["authorization_code","refresh_token"],"response_types":["code"],"client_name":"Codex","logo_uri":"https://persistent.oaistatic.com/sonic/misc/openai-logo.png"});
+        let claude = serde_json::json!({"client_id":"https://claude.ai/oauth/claude-code-client-metadata","client_name":"Claude Code","client_uri":"https://claude.ai","redirect_uris":["http://localhost/callback","http://127.0.0.1/callback"],"grant_types":["authorization_code","refresh_token"],"response_types":["code"],"token_endpoint_auth_method":"none"});
+        for document in [codex, claude] {
+            let metadata = validate(
+                document["client_id"].as_str().unwrap(),
+                &serde_json::to_vec(&document).unwrap(),
+            )
+            .unwrap();
+            for callback in [
+                "http://127.0.0.1:53668/callback",
+                "http://localhost:51180/callback",
+            ] {
+                assert!(metadata.allows_redirect(callback), "{callback}");
+            }
+            for callback in [
+                "http://127.0.0.2:53668/callback",
+                "http://127.1:53668/callback",
+                "http://LOCALHOST:51180/callback",
+                "http://localhost.example:51180/callback",
+                "http://[::1]:51180/callback",
+                "http://localhost:51180/other",
+                "http://localhost:51180/callback/",
+                "http://localhost:51180/call%62ack",
+                "http://localhost:51180/callback?extra=1",
+                "http://localhost:51180/callback#fragment",
+                "http://user@localhost:51180/callback",
+                "https://localhost:51180/callback",
+                "http://localhost:0/callback",
+            ] {
+                assert!(!metadata.allows_redirect(callback), "{callback}");
+            }
+        }
+        let metadata = ClientMetadata {
+            name: "fixture".into(),
+            redirects: vec![
+                "http://[::1]/callback?key=value".into(),
+                "https://client.example:9443/callback".into(),
+            ],
+            native_loopback: true,
+        };
+        assert!(metadata.allows_redirect("http://[::1]:53668/callback?key=value"));
+        assert!(!metadata.allows_redirect("http://[::1]:53668/callback?key=changed"));
+        assert!(!metadata.allows_redirect("http://[::1]:53668/callback"));
+        assert!(!metadata.allows_redirect("https://client.example:9444/callback"));
+        assert!(metadata.allows_redirect("https://client.example:9443/callback"));
+        let dcr = ClientMetadata {
+            native_loopback: false,
+            ..metadata
+        };
+        assert!(!dcr.allows_redirect("http://[::1]:53668/callback?key=value"));
+        assert!(dcr.allows_redirect("http://[::1]/callback?key=value"));
+        let explicit_web = serde_json::json!({"client_id":"https://example.com/client.json","client_name":"Web","application_type":"web","redirect_uris":["http://127.0.0.1/callback"]});
+        let web = validate(
+            "https://example.com/client.json",
+            &serde_json::to_vec(&explicit_web).unwrap(),
+        )
+        .unwrap();
+        assert!(!web.allows_redirect("http://127.0.0.1:53668/callback"));
+        let mixed = serde_json::json!({"client_id":"https://example.com/client.json","client_name":"Mixed","redirect_uris":["http://127.0.0.1/callback","https://example.com/callback"]});
+        let mixed = validate(
+            "https://example.com/client.json",
+            &serde_json::to_vec(&mixed).unwrap(),
+        )
+        .unwrap();
+        assert!(!mixed.allows_redirect("http://127.0.0.1:53668/callback"));
     }
     #[tokio::test]
     async fn private_destinations_fail_before_fetch() {
