@@ -18,6 +18,8 @@ pub(crate) fn schema(name: &str) -> serde_json::Map<String, Value> {
     );
     let workspaces = json!({"type":"array","items":workspace});
     let body = match name {
+        "bog_metrics" => bog_cloud::contract::metrics_schema(),
+        "bog_events" => bog_cloud::contract::events_schema(),
         "create_bog" | "describe_bog" => bog.clone(),
         "list_bogs" => object(json!({"bogs":{"type":"array","items":bog}}), &["bogs"]),
         "list_workspaces" => object(json!({"workspaces":workspaces}), &["workspaces"]),
@@ -58,7 +60,7 @@ pub(crate) fn schema(name: &str) -> serde_json::Map<String, Value> {
             &["id", "token", "scope"],
         ),
         "list_tokens" => object(
-            json!({"tokens":{"type":"array","items":object(json!({"id":string,"bog_id":string,"scope":string,"label":{"type":["string","null"]},"created_at":integer,"expires_at":nullable_integer,"revoked_at":nullable_integer}), &["id","bog_id","scope","created_at","expires_at","revoked_at"])}}),
+            json!({"tokens":{"type":"array","items":object(json!({"id":string,"bog_id":string,"scope":string,"label":{"type":["string","null"]},"created_at":integer,"expires_at":nullable_integer,"revoked_at":nullable_integer,"last_used_at":{"type":["integer","null"],"description":"Last observed credential use as Unix seconds, rounded down to a whole minute; null when unknown."}}), &["id","bog_id","scope","created_at","expires_at","revoked_at","last_used_at"])}}),
             &["tokens"],
         ),
         "revoke_token" => json!({"type":"null"}),

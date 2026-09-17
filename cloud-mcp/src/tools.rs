@@ -22,6 +22,27 @@ struct Create {
 struct Describe {
     bog_id: String,
 }
+fn default_metrics_window() -> String {
+    "1h".into()
+}
+fn default_events_limit() -> usize {
+    50
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct Metrics {
+    bog_id: String,
+    #[serde(default = "default_metrics_window")]
+    window: String,
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct Events {
+    bog_id: String,
+    cursor: Option<String>,
+    #[serde(default = "default_events_limit")]
+    limit: usize,
+}
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct Record {
@@ -85,6 +106,13 @@ fn definition<T: JsonSchema>(
     {
         properties.insert("workspace_id".into(), json!({"type":"string","format":"uuid","description":"Explicit workspace selection; defaults to personal workspace for accounts or legacy workspace for legacy management credentials."}));
     }
+    if name == "bog_metrics" {
+        input["properties"]["window"] = json!({"type":"string","enum":["5m","1h"],"default":"1h"});
+    }
+    if name == "bog_events" {
+        input["properties"]["limit"] =
+            json!({"type":"integer","minimum":1,"maximum":100,"default":50});
+    }
     if name == "wait_for_change" {
         // serde aliases are accepted at runtime but omitted by schemars.
         // Advertise both spellings so strict schema clients can use the alias.
@@ -118,6 +146,20 @@ fn definition<T: JsonSchema>(
 
 pub fn definitions() -> Vec<Tool> {
     vec![
+        definition::<Metrics>(
+            "bog_metrics",
+            "Read bounded operational metrics without waking the Bog. App credentials see only their own request metrics.",
+            true,
+            false,
+            true,
+        ),
+        definition::<Events>(
+            "bog_events",
+            "Read bounded lifecycle and credential events without waking the Bog. Requires workspace management access.",
+            true,
+            false,
+            true,
+        ),
         definition::<Empty>(
             "list_templates",
             "List available template IDs and defaults before creating a Bog.",
@@ -256,6 +298,33 @@ struct Prepare {
 }
 pub(crate) fn operation(name: &str, args: Value) -> Result<Operation, ErrorData> {
     Ok(match name {
+        "bog_metrics" => {
+            let a: Metrics = parse(args)?;
+            let window = a.window;
+            if !matches!(window.as_str(), "5m" | "1h") {
+                return Err(ErrorData::invalid_params("window must be 5m or 1h", None));
+            }
+            Operation::BogMetrics {
+                bog_id: id(a.bog_id)?,
+                window,
+            }
+        }
+        "bog_events" => {
+            let a: Events = parse(args)?;
+            let limit = a.limit;
+            if !(1..=100).contains(&limit) {
+                return Err(ErrorData::invalid_params(
+                    "limit must be 1 through 100",
+                    None,
+                ));
+            }
+            Operation::BogEvents {
+                bog_id: id(a.bog_id)?,
+                cursor: a.cursor,
+                limit,
+            }
+        }
+
         "list_templates" => {
             let _: Empty = parse(args)?;
             Operation::ListTemplates
@@ -505,13 +574,20 @@ impl ServerHandler for Handler {
                 _ => None,
             };
             let result = async {
-                let mut result = self.0.execute(&principal, op).await?;
+                let mut result = self
+                    .0
+                    .execute_with_request_id(&principal, op, &request_id)
+                    .await?;
                 if let Some(bog_id) = describe
                     && result.body["status"] == "ready"
                 {
                     let schema = self
                         .0
-                        .execute(&principal, Operation::Schema { bog_id })
+                        .execute_with_request_id(
+                            &principal,
+                            Operation::Schema { bog_id },
+                            &request_id,
+                        )
                         .await?;
                     result.body["schema"] = schema.body;
                 }

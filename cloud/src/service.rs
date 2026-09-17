@@ -13,6 +13,15 @@ pub enum Operation {
         template: String,
         idempotency_key: String,
     },
+    BogMetrics {
+        bog_id: BogId,
+        window: String,
+    },
+    BogEvents {
+        bog_id: BogId,
+        cursor: Option<String>,
+        limit: usize,
+    },
     ListBogs,
     WaitForChange {
         bog_id: BogId,
@@ -77,6 +86,7 @@ pub struct OperationResult {
 }
 pub struct CloudService {
     pub(crate) app_access: crate::app_access::PendingAccess,
+    pub observability: Arc<crate::observability::Observability>,
     pub changes: crate::changes::ChangeWaiter,
     pub native_auth: Option<Arc<crate::native_auth::NativeAuth>>,
     /// Temporary preview compatibility; never permits cross-workspace operator access.
@@ -109,10 +119,16 @@ impl CloudService {
         }
         let native_auth = crate::native_auth::NativeAuth::from_env(&config.root)?;
         let registry = Arc::new(Registry::open(&config.root.join("registry.sqlite"))?);
-        let auth = Auth::new_with_legacy_limit(registry.clone(), owner_token, config.max_active)?;
+
         let public_auth = crate::gateway::PublicAuth::from_env(&config.root)?;
-        let supervisor = Arc::new(Supervisor::open(config, registry.clone())?);
+        let observability = Arc::new(crate::observability::Observability::open(&config.root)?);
+        let auth = Auth::new_with_legacy_limit(registry.clone(), owner_token, config.max_active)?
+            .with_observability(observability.clone());
+        let supervisor = Arc::new(
+            Supervisor::open(config, registry.clone())?.with_observability(observability.clone()),
+        );
         Ok(Arc::new(Self {
+            observability,
             app_access: Default::default(),
             registry,
             public_auth,
@@ -127,6 +143,51 @@ impl CloudService {
         }))
     }
     pub async fn execute(
+        &self,
+        principal: &Principal,
+        operation: Operation,
+    ) -> Result<OperationResult, CloudError> {
+        self.execute_with_request_id(principal, operation, &uuid::Uuid::new_v4().to_string())
+            .await
+    }
+    pub async fn execute_with_request_id(
+        &self,
+        principal: &Principal,
+        operation: Operation,
+        request_id: &str,
+    ) -> Result<OperationResult, CloudError> {
+        let diagnostic = matches!(
+            &operation,
+            Operation::BogMetrics { .. } | Operation::BogEvents { .. }
+        );
+        let target = operation.observation_target();
+        // Establish current target visibility before attribution; rejected foreign
+        // targets must not create observations in another customer's database.
+        let authorized = target.filter(|id| {
+            self.auth.authorize(principal, Some(*id), false).is_ok()
+                && self.registry.get(*id).is_ok()
+        });
+        let name = operation.observation_name();
+        let started = std::time::Instant::now();
+        if authorized.is_some() {
+            self.observability.touch(principal);
+        }
+        let result = self.execute_inner(principal, operation).await;
+        if let Some(id) = authorized.filter(|_| !diagnostic) {
+            if result.as_ref().is_err_and(|e| e.code == "capacity") {
+                self.observability.event(
+                    id,
+                    "capacity_rejected",
+                    None,
+                    Some("request_or_worker_capacity"),
+                );
+            }
+            self.observability
+                .record(id, principal, name, started, request_id, &result);
+        }
+        result
+    }
+    async fn execute_inner(
         &self,
         principal: &Principal,
         operation: Operation,
@@ -178,7 +239,9 @@ impl CloudService {
             CreateBog { .. } | IssueToken { .. } | PrepareAppAccess { .. } | RevokeToken { .. } => {
                 (None, true)
             }
-            DescribeBog { bog_id }
+            BogMetrics { bog_id, .. }
+            | BogEvents { bog_id, .. }
+            | DescribeBog { bog_id }
             | Usage { bog_id }
             | Schema { bog_id }
             | GetRecord { bog_id, .. }
@@ -190,6 +253,40 @@ impl CloudService {
         self.auth.authorize(principal, target, write)?;
         let result = match operation {
             WaitForChange { .. } => unreachable!(),
+            BogMetrics { bog_id, window } => {
+                let seconds = match window.as_str() {
+                    "5m" => 300,
+                    "1h" => 3600,
+                    _ => {
+                        return Err(CloudError::new(
+                            "invalid_request",
+                            "metrics window must be 5m or 1h",
+                        ));
+                    }
+                };
+                let mut value = self.observability.snapshot(bog_id, principal, seconds)?;
+                value["worker"] = self.supervisor.diagnostic_snapshot(bog_id).await?;
+                value["limits"] = serde_json::json!({"requests_per_minute":{"value":600,"scope":if principal.account_id().is_some(){"account"}else{"credential"}},"concurrent_requests":{"value":64,"scope":"service"},"active_waits":{"per_bog":8,"service":64},"resident_workers":{"value":self.supervisor.max_active(),"scope":"service"}});
+                self.auth.authorize(principal, Some(bog_id), false)?;
+                value
+            }
+            BogEvents {
+                bog_id,
+                cursor,
+                limit,
+            } => {
+                if principal.kind() == crate::PrincipalKind::App {
+                    return Err(CloudError::new(
+                        "forbidden",
+                        "operational events require workspace member credentials",
+                    ));
+                }
+                let value = self
+                    .observability
+                    .events(bog_id, cursor.as_deref(), limit)?;
+                self.auth.authorize(principal, Some(bog_id), false)?;
+                value
+            }
             CreateBog {
                 name,
                 template,
@@ -217,6 +314,8 @@ impl CloudService {
                         self.supervisor.max_active(),
                     )?
                 };
+                self.observability
+                    .event(bog.id, "bog_provision_requested", None, None);
                 let supervisor = self.supervisor.clone();
                 let registry = self.registry.clone();
                 let id = bog.id;
@@ -237,9 +336,7 @@ impl CloudService {
             ListBogs => {
                 serde_json::json!({"bogs":match principal.workspace_id() { Some(w)=>self.registry.list_scoped(w)?,None=>self.registry.list()? }})
             }
-            ListTemplates => {
-                crate::contract::templates()
-            }
+            ListTemplates => crate::contract::templates(),
             GetCurrentContext => {
                 serde_json::json!({"kind":principal.kind(),"account":principal.account_id().map(|id|serde_json::json!({"id":id})),"workspace_id":principal.workspace_id(),"platform_operator":self.auth.is_platform_operator(principal)?,"workspaces":self.auth.workspaces_for_principal(principal)?})
             }
@@ -264,6 +361,7 @@ impl CloudService {
                 if let Some(native) = &self.native_auth {
                     native.add_app_labels(&mut tokens)?;
                 }
+                self.observability.merge_activity(&mut tokens);
                 serde_json::json!({"tokens":tokens})
             }
             DescribeBog { bog_id } => serde_json::to_value(self.registry.get(bog_id)?)
@@ -432,7 +530,16 @@ impl CloudService {
             )?;
         }
         let lease = self.supervisor.lease(id).await?;
+        let is_write = method != reqwest::Method::GET;
         let (status, mut value) = lease.client.request(method, &path, body).await?;
+        if (200..300).contains(&status) {
+            if is_write && let Some(seq) = value["seq"].as_u64() {
+                self.observability.write_ack(id, lease.generation, seq);
+            }
+            if path == "/_cloud/usage" {
+                self.observability.cache_usage(id, value.clone());
+            }
+        }
         if let Some(seq) = value.get("seq").and_then(Value::as_u64) {
             let generation = lease.generation;
             value["cursor"] =
@@ -469,4 +576,54 @@ fn encode_key(key: &str) -> Result<String, CloudError> {
             }
         })
         .collect())
+}
+
+impl Operation {
+    fn observation_target(&self) -> Option<BogId> {
+        use Operation::*;
+        match self {
+            BogMetrics { bog_id, .. }
+            | BogEvents { bog_id, .. }
+            | WaitForChange { bog_id, .. }
+            | PrepareAppAccess { bog_id, .. }
+            | ListTokens { bog_id }
+            | DescribeBog { bog_id }
+            | Usage { bog_id }
+            | Schema { bog_id }
+            | GetRecord { bog_id, .. }
+            | UpsertRecord { bog_id, .. }
+            | DeleteRecord { bog_id, .. }
+            | ReadView { bog_id, .. }
+            | Batch { bog_id, .. }
+            | IssueToken { bog_id, .. }
+            | RevokeToken { bog_id, .. } => Some(*bog_id),
+            _ => None,
+        }
+    }
+    fn observation_name(&self) -> &'static str {
+        use Operation::*;
+        match self {
+            BogMetrics { .. } => "bog_metrics",
+            BogEvents { .. } => "bog_events",
+            WaitForChange { cursor: None, .. } => "initialize_cursor",
+            WaitForChange { .. } => "wait_for_change",
+            PrepareAppAccess { .. } => "prepare_app_access",
+            ListTokens { .. } => "list_tokens",
+            DescribeBog { .. } => "describe_bog",
+            Usage { .. } => "usage",
+            Schema { .. } => "schema",
+            GetRecord { .. } => "get_record",
+            UpsertRecord { .. } => "upsert_record",
+            DeleteRecord { .. } => "delete_record",
+            ReadView { .. } => "read_view",
+            Batch { .. } => "batch",
+            IssueToken { .. } => "issue_token",
+            RevokeToken { .. } => "revoke_token",
+            CreateBog { .. } => "create_bog",
+            ListBogs => "list_bogs",
+            ListWorkspaces => "list_workspaces",
+            ListTemplates => "list_templates",
+            GetCurrentContext => "get_current_context",
+        }
+    }
 }

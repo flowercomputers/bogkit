@@ -11,6 +11,8 @@ async fn sdk_initializes_and_discovers_exact_tools() {
         names,
         vec![
             "batch",
+            "bog_events",
+            "bog_metrics",
             "create_bog",
             "delete_record",
             "describe_bog",
@@ -208,7 +210,7 @@ async fn legacy_initialize_wire_discovery_and_bad_jsonrpc() {
         .json()
         .await
         .unwrap();
-    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 16);
+    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 18);
     let bad = post(json!({"jsonrpc":"bogus","id":3,"method":"tools/list"}))
         .send()
         .await
@@ -532,7 +534,7 @@ async fn newer_clients_negotiate_verified_revision_and_cannot_select_newer_inlin
         .json()
         .await
         .unwrap();
-    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 16);
+    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 18);
     assert!(list["result"].get("resultType").is_none());
     h.close().await;
 }

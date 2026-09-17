@@ -64,6 +64,22 @@
       if (!Number.isInteger(limit) || limit < 1 || limit > 20 || !Number.isInteger(offset) || offset < 0 || offset > 10000) throw new Error('Preview requires limit 1–20 and offset 0–10000, both integers.');
       return request(selected(`${bogPath(args)}/views/docs?limit=${limit}&offset=${offset}`, args.workspace_id), options);
     });
+    await read('bog_metrics', 'Inspect bounded recent request, error, worker and change-wait metrics without waking the Bog. Partial windows and sampled latencies are labelled.', {
+      bog_id: uuid, workspace_id: workspace, window: { type: 'string', enum: ['5m', '1h'], default: '1h' }
+    }, ['bog_id'], (args, options) => {
+      const window = args.window === undefined ? '1h' : args.window;
+      if (!['5m', '1h'].includes(window)) throw new Error('window must be 5m or 1h.');
+      return request(selected(`${bogPath(args)}/metrics?window=${window}`, args.workspace_id), options);
+    });
+    await read('bog_events', 'Read bounded operational history, not record changes. Requires workspace access; app credentials cannot read events. Follow next_cursor; reset means retained history was lost.', {
+      bog_id: uuid, workspace_id: workspace, cursor: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 100, default: 50 }
+    }, ['bog_id'], (args, options) => {
+      const limit = args.limit === undefined ? 50 : args.limit;
+      if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('limit must be an integer from 1 to 100.');
+      if (args.cursor !== undefined && typeof args.cursor !== 'string') throw new Error('cursor must be a string returned by bog_events.');
+      const cursor = args.cursor === undefined ? '' : `&cursor=${encodeURIComponent(args.cursor)}`;
+      return request(selected(`${bogPath(args)}/events?limit=${limit}${cursor}`, args.workspace_id), options);
+    });
     await read('bog_allowance', 'Inspect the effective Bog allowance for personal or an explicitly named shared workspace. A null bog_limit means uncapped; storage and host limits still apply.', { workspace_id: workspace }, [], async (args, options) => {
       // Other people's personal workspaces can also be shared with this account.
       const workspaceId = args.workspace_id === undefined ? (await request('/v1/me', options)).workspace_id : args.workspace_id;

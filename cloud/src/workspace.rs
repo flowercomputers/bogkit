@@ -255,7 +255,7 @@ impl Auth {
         if !active {
             return Err(forbidden());
         }
-        tx.execute("INSERT INTO memberships VALUES(?1,?2,?3) ON CONFLICT(workspace_id,account_id) DO NOTHING",params![w.to_string(),a,role]).map_err(db_error)?;
+        let membership_added=tx.execute("INSERT INTO memberships VALUES(?1,?2,?3) ON CONFLICT(workspace_id,account_id) DO NOTHING",params![w.to_string(),a,role]).map_err(db_error)?;
         tx.execute(
             "UPDATE invitations SET accepted_at=?2 WHERE id=?1",
             params![id, now()],
@@ -263,6 +263,10 @@ impl Auth {
         .map_err(db_error)?;
         audit(&tx, w, Some(a), "invitation.accepted", &id)?;
         tx.commit().map_err(db_error)?;
+        drop(db);
+        if membership_added > 0 {
+            self.membership_event(w, "member_added");
+        }
         Ok(w)
     }
     pub fn revoke_invitation(&self, p: &Principal, id: &str) -> Result<(), CloudError> {
@@ -328,7 +332,10 @@ impl Auth {
         tx.execute("UPDATE tokens SET revoked_at=?3 WHERE workspace_id=?1 AND account_id=?2 AND revoked_at IS NULL",params![w.to_string(),account,now()]).map_err(db_error)?;
         tx.execute("UPDATE invitations SET revoked_at=?3 WHERE workspace_id=?1 AND issuer_account_id=?2 AND revoked_at IS NULL",params![w.to_string(),account,now()]).map_err(db_error)?;
         audit(&tx, w, Some(a), "member.removed", account)?;
-        tx.commit().map_err(db_error)
+        tx.commit().map_err(db_error)?;
+        drop(db);
+        self.membership_event(w, "member_removed");
+        Ok(())
     }
     pub fn issue_app_token(
         &self,
@@ -352,6 +359,7 @@ impl Auth {
         tx.execute("INSERT INTO tokens(id,bog_id,secret_hash,scope,created_at,workspace_id,account_id,expires_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",params![id,bog.to_string(),hash(secret.as_bytes()),match scope{Scope::Read=>"read",Scope::Write=>"write"},now(),w.to_string(),a,now()+90*86400]).map_err(db_error)?;
         audit(&tx, w, Some(a), "token.issued", &id)?;
         tx.commit().map_err(db_error)?;
+        self.credential_event(bog, "credential_issued", &id);
         Ok(IssuedToken { id, secret })
     }
     pub fn list_tokens(&self, p: &Principal) -> Result<Vec<TokenInfo>, CloudError> {
@@ -401,8 +409,15 @@ impl Auth {
         if n == 0 {
             return Err(CloudError::new("not_found", "token not found"));
         }
+        let bog: String = tx
+            .query_row("SELECT bog_id FROM tokens WHERE id=?1", [id], |r| r.get(0))
+            .map_err(db_error)?;
         audit(&tx, w, Some(a), "token.revoked", id)?;
-        tx.commit().map_err(db_error)
+        tx.commit().map_err(db_error)?;
+        if let Ok(id_bog) = Uuid::parse_str(&bog) {
+            self.credential_event(BogId(id_bog), "credential_revoked", id);
+        }
+        Ok(())
     }
     pub fn claim_legacy(
         &self,

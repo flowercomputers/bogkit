@@ -22,6 +22,7 @@ pub struct IssuedToken {
     pub secret: String,
 }
 pub struct Auth {
+    pub(crate) observability: Option<Arc<crate::observability::Observability>>,
     pub(crate) legacy_bog_limit: usize,
     pub(crate) registry: Arc<Registry>,
     owner_hash: Vec<u8>,
@@ -52,10 +53,29 @@ impl Auth {
             ));
         }
         Ok(Self {
+            observability: None,
             legacy_bog_limit,
             registry,
             owner_hash: hash(owner.as_bytes()),
         })
+    }
+    pub fn with_observability(mut self, obs: Arc<crate::observability::Observability>) -> Self {
+        self.observability = Some(obs);
+        self
+    }
+    pub(crate) fn credential_event(&self, bog: BogId, kind: &str, id: &str) {
+        if let Some(obs) = &self.observability {
+            obs.event(bog, kind, Some(id), None);
+        }
+    }
+    pub(crate) fn membership_event(&self, workspace: crate::WorkspaceId, kind: &str) {
+        if let Some(obs) = &self.observability
+            && let Ok(bogs) = self.registry.list_scoped(workspace)
+        {
+            for bog in bogs {
+                obs.event(bog.id, kind, None, None);
+            }
+        }
     }
     pub fn authenticate(&self, secret: &str) -> Result<Principal, CloudError> {
         if secret.len() > 4096 || secret.is_empty() {
@@ -186,6 +206,7 @@ impl Auth {
         let id = Uuid::new_v4().to_string();
         let secret = format!("{id}.{}", random_secret()?);
         self.registry.connection()?.execute("INSERT INTO tokens(id,bog_id,secret_hash,scope,created_at,workspace_id,expires_at) VALUES (?1,?2,?3,?4,?5,(SELECT workspace_id FROM bogs WHERE id=?2),?6)",params![id,bog.to_string(),hash(secret.as_bytes()),match scope{Scope::Read=>"read",Scope::Write=>"write"},now(),now()+90*86400]).map_err(db_error)?;
+        self.credential_event(bog, "credential_issued", &id);
         Ok(IssuedToken { id, secret })
     }
     pub fn revoke(&self, principal: &Principal, bog: BogId, id: &str) -> Result<(), CloudError> {
@@ -207,6 +228,7 @@ impl Auth {
         if n == 0 {
             Err(CloudError::new("not_found", "token not found"))
         } else {
+            self.credential_event(bog, "credential_revoked", id);
             Ok(())
         }
     }

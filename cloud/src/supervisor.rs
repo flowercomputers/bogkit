@@ -55,6 +55,7 @@ impl Drop for WorkerLease {
 }
 pub struct Supervisor {
     pub(crate) config: Config,
+    observability: Option<Arc<crate::observability::Observability>>,
     pub(crate) registry: Arc<Registry>,
     _lock: File,
     running: AsyncMutex<HashMap<BogId, Running>>,
@@ -104,6 +105,7 @@ impl Supervisor {
         lock.try_lock()
             .map_err(|_| unavailable("another manager owns this service root"))?;
         Ok(Self {
+            observability: None,
             start_slots: Arc::new(Semaphore::new(config.max_starts)),
             active_slots: Arc::new(Semaphore::new(config.max_active)),
             starts: Mutex::new(HashMap::new()),
@@ -113,6 +115,40 @@ impl Supervisor {
             running: AsyncMutex::new(HashMap::new()),
             gates: Mutex::new(HashMap::new()),
         })
+    }
+    pub fn with_observability(mut self, obs: Arc<crate::observability::Observability>) -> Self {
+        self.observability = Some(obs);
+        self
+    }
+    fn event(&self, id: BogId, kind: &str, reason: Option<&str>) {
+        if let Some(obs) = &self.observability {
+            obs.event(id, kind, None, reason);
+        }
+    }
+    /// Read cached manager state only; never obtains a lease or touches idle time.
+    pub async fn diagnostic_snapshot(&self, id: BogId) -> Result<serde_json::Value, CloudError> {
+        let bog = self.registry.get(id)?;
+        let running = self.running.lock().await;
+        let state = if running.contains_key(&id) {
+            "running"
+        } else {
+            match bog.status {
+                ObservedState::Creating => "starting",
+                ObservedState::Failed => "failed",
+                ObservedState::Restoring => "restoring",
+                ObservedState::Maintenance => "maintenance",
+                _ => "sleeping",
+            }
+        };
+        let mut value = serde_json::json!({"state":state,"generation":bog.generation,"desired_state":bog.desired_state,"failure_code":bog.failure_code,"state_source":"manager_cached"});
+        if let Some(obs) = &self.observability
+            && let Some(fields) = obs.worker_metadata(id).as_object()
+        {
+            for (key, v) in fields {
+                value[key] = v.clone();
+            }
+        }
+        Ok(value)
     }
     pub fn max_active(&self) -> usize {
         self.config.max_active
@@ -175,6 +211,7 @@ impl Supervisor {
                     None => false,
                 };
                 if exited {
+                    self.event(id, "worker_exited", Some("process_exit"));
                     running.remove(&id);
                     None
                 } else {
@@ -330,6 +367,15 @@ impl Supervisor {
         for attempt in 0..3 {
             let nonce = random_secret()?;
             let generation = self.registry.start_generation(id, &nonce)?;
+            self.event(
+                id,
+                "worker_starting",
+                Some(if attempt == 0 {
+                    "access"
+                } else {
+                    "readiness_retry"
+                }),
+            );
             let mut command = Command::new(&self.config.worker_binary);
             command
                 .args([
@@ -396,6 +442,7 @@ impl Supervisor {
                         break;
                     }
                     self.registry.set_status(id, ObservedState::Ready, None)?;
+                    self.event(id, "worker_running", Some("readiness_passed"));
                     let running = Running {
                         generation,
                         last_use: Arc::new(Mutex::new(std::time::Instant::now())),
@@ -419,6 +466,7 @@ impl Supervisor {
         }
         self.registry
             .set_status(id, ObservedState::Failed, Some("worker_start_failed"))?;
+        self.event(id, "worker_failed", Some("worker_start_failed"));
         Err(unavailable("database worker failed readiness checks"))
     }
     async fn verify_worker(&self, id: BogId, client: &WorkerClient) -> Result<(), CloudError> {
@@ -447,7 +495,9 @@ impl Supervisor {
     }
     pub async fn stop(&self, id: BogId) -> Result<(), CloudError> {
         let _guard = self.gate(id)?.write_owned().await;
-        self.stop_locked(id, true).await
+        self.stop_locked(id, true).await?;
+        self.event(id, "worker_stopped", Some("explicit_stop"));
+        Ok(())
     }
     pub(crate) async fn stop_locked(
         &self,
@@ -710,6 +760,7 @@ impl Supervisor {
             });
             if idle {
                 self.stop_locked(id, false).await?;
+                self.event(id, "worker_sleeping", Some("idle_timeout"));
                 evicted += 1;
             }
         }

@@ -24,7 +24,7 @@ test('signed-out console does not expose authenticated tools',async()=>{
   const {tools}=await run('/console',false);assert.equal(tools.size,2);
 });
 test('creation uses explicit workspace, stable retry key and private CSRF; default is personal',async()=>{
-  const {tools,calls}=await run('/console');assert.equal(tools.size,10);
+  const {tools,calls}=await run('/console');assert.equal(tools.size,12);
   const create=tools.get('bog_create_bog');assert.equal(create.annotations.readOnlyHint,false);
   const value=await create.execute({name:'fixture',idempotency_key:'stable'});
   assert.equal(calls.at(-1).path,'/v1/bogs');assert.equal(calls.at(-1).options.headers['Idempotency-Key'],'stable');
@@ -115,4 +115,21 @@ test('in-flight cancellation propagates its signal and refreshes after an uncert
   assert.equal(events.some(e=>e.detail?.state==='cancelled'),true);
   assert.equal(events.at(-1).type,'bog-resources-changed');
   assert.equal(calls.some(c=>c.path.endsWith('/redeem')),false);
+});
+
+test('diagnostics use read-only explicit paths and reject invalid arguments',async()=>{
+  const {tools,calls,events}=await run('/console');
+  const metrics=tools.get('bog_metrics'), history=tools.get('bog_events');
+  assert.equal(metrics.annotations.readOnlyHint,true);
+  assert.equal(history.annotations.readOnlyHint,true);
+  await metrics.execute({bog_id:bog});
+  assert.equal(calls.at(-1).path,`/v1/bogs/${bog}/metrics?window=1h`);
+  await metrics.execute({bog_id:bog,workspace_id:shared,window:'5m'});
+  assert.equal(calls.at(-1).path,`/v1/bogs/${bog}/metrics?window=5m&workspace_id=${shared}`);
+  await history.execute({bog_id:bog,workspace_id:shared,cursor:'a+b=',limit:10});
+  assert.equal(calls.at(-1).path,`/v1/bogs/${bog}/events?limit=10&cursor=a%2Bb%3D&workspace_id=${shared}`);
+  for(const window of ['7d',null,300]) await assert.rejects(metrics.execute({bog_id:bog,window}),/window/);
+  for(const limit of [0,101,1.5,'5',null]) await assert.rejects(history.execute({bog_id:bog,limit}),/limit/);
+  await assert.rejects(history.execute({bog_id:bog,cursor:12}),/cursor/);
+  assert.equal(events.some(e=>e.type==='bog-resources-changed'),false);
 });

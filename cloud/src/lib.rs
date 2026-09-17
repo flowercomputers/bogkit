@@ -38,7 +38,9 @@ pub mod agent_discovery;
 
 mod site;
 
-mod native_oauth;
 mod client_metadata;
+mod native_oauth;
 
 pub mod app_access;
+
+pub mod observability;

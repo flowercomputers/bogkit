@@ -139,6 +139,7 @@ impl ChangeWaiter {
         service.auth.authorize(principal, Some(id), false)?;
         Self::validate_timeout(timeout)?;
         let _permit = self.acquire(id)?;
+        let _observation = service.observability.active_wait(id, principal);
         let snapshot = tokio::time::timeout(
             Duration::from_secs(25),
             Self::snapshot(service, principal, id),
@@ -169,6 +170,7 @@ impl ChangeWaiter {
         let previous = Cursor::decode(cursor)?;
         Self::validate_timeout(timeout)?;
         let _permit = self.acquire(id)?;
+        let _observation = service.observability.active_wait(id, principal);
         // Initial snapshot is required even for timeout=0. Each subsequent
         // probe has an absolute deadline so a stalled worker cannot extend wait.
         let deadline = tokio::time::Instant::now() + timeout;

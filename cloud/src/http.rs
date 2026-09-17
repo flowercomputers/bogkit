@@ -176,7 +176,7 @@ async fn dispatch(State(service): State<Arc<CloudService>>, request: Request) ->
     let mut authenticated_principal = None;
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(30),
-        dispatch_inner(&service, request, &mut authenticated_principal),
+        dispatch_inner(&service, request, &mut authenticated_principal, &request_id),
     )
     .await
     .unwrap_or_else(|_| Err(CloudError::new("unavailable", "request timed out")));
@@ -244,6 +244,7 @@ async fn dispatch_inner(
     service: &CloudService,
     request: Request,
     authenticated_principal: &mut Option<crate::Principal>,
+    request_id: &str,
 ) -> Result<crate::OperationResult, CloudError> {
     if request
         .headers()
@@ -504,6 +505,55 @@ async fn dispatch_inner(
         None
     };
     let op = match (method.as_str(), path.len()) {
+        ("GET", 4) if path[3] == "metrics" || path[3] == "events" => {
+            let allowed = if path[3] == "metrics" {
+                &["workspace_id", "window"][..]
+            } else {
+                &["workspace_id", "cursor", "limit"][..]
+            };
+            let url = reqwest::Url::parse(&format!("http://localhost/?{query}"))
+                .map_err(|_| bad("invalid query"))?;
+            let mut parameters = std::collections::HashMap::new();
+            for (name, value) in url.query_pairs() {
+                if !allowed.contains(&name.as_ref()) {
+                    return Err(bad("unsupported query parameter"));
+                }
+                if parameters
+                    .insert(name.into_owned(), value.into_owned())
+                    .is_some()
+                {
+                    return Err(bad("duplicate query parameter"));
+                }
+            }
+            if path[3] == "metrics" {
+                let window = parameters.remove("window").unwrap_or_else(|| "1h".into());
+                if !matches!(window.as_str(), "5m" | "1h") {
+                    return Err(bad("window must be 5m or 1h"));
+                }
+                Operation::BogMetrics {
+                    bog_id: id.unwrap(),
+                    window,
+                }
+            } else {
+                let limit = parameters
+                    .remove("limit")
+                    .map(|value| {
+                        value
+                            .parse::<usize>()
+                            .map_err(|_| bad("limit must be 1 through 100"))
+                    })
+                    .transpose()?
+                    .unwrap_or(50);
+                if !(1..=100).contains(&limit) {
+                    return Err(bad("limit must be 1 through 100"));
+                }
+                Operation::BogEvents {
+                    bog_id: id.unwrap(),
+                    cursor: parameters.remove("cursor"),
+                    limit,
+                }
+            }
+        }
         ("GET", 4) if path[3] == "changes" => Operation::WaitForChange {
             bog_id: id.unwrap(),
             cursor: url_query(&query, "cursor"),
@@ -539,6 +589,9 @@ async fn dispatch_inner(
             service
                 .auth
                 .delete_bog(&principal, id.unwrap(), confirmation)?;
+            service
+                .observability
+                .event(id.unwrap(), "bog_deleted", None, None);
             let supervisor = service.supervisor.clone();
             let bog = id.unwrap();
             tokio::spawn(async move {
@@ -641,7 +694,9 @@ async fn dispatch_inner(
         _ => {
             let known = path.len() == 2
                 || path.len() == 3
-                || path.len() == 4 && ["schema", "batch", "tokens"].contains(&path[3].as_str())
+                || path.len() == 4
+                    && ["schema", "batch", "tokens", "metrics", "events"]
+                        .contains(&path[3].as_str())
                 || path.len() == 5 && ["docs", "views", "tokens"].contains(&path[3].as_str());
             return Err(if known {
                 CloudError::new("method_not_allowed", "method not allowed")
@@ -650,7 +705,9 @@ async fn dispatch_inner(
             });
         }
     };
-    service.execute(&principal, op).await
+    service
+        .execute_with_request_id(&principal, op, request_id)
+        .await
 }
 
 pub(crate) fn header_text<'a>(h: &'a axum::http::HeaderMap, n: &str) -> &'a str {
