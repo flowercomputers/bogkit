@@ -61,3 +61,42 @@ macro_rules! string_enum {
 string_enum!(TemplateId { RecordsV1=>"records-v1" });
 string_enum!(DesiredState { Running=>"running", Stopped=>"stopped" });
 string_enum!(ObservedState { Creating=>"creating", Ready=>"ready", Stopped=>"stopped", Failed=>"failed", Restoring=>"restoring", Maintenance=>"maintenance" });
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct WorkspaceId(pub Uuid);
+impl WorkspaceId {
+    pub fn legacy() -> Self {
+        Self(Uuid::from_u128(1))
+    }
+}
+impl std::fmt::Display for WorkspaceId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+#[derive(Clone, Debug, Serialize)]
+pub struct Account {
+    pub id: String,
+}
+#[derive(Clone, Debug, Serialize)]
+pub struct Workspace {
+    pub id: WorkspaceId,
+    pub name: String,
+    pub role: String,
+}
+#[derive(Clone, Debug, Serialize)]
+pub struct Member {
+    pub account_id: String,
+    pub role: String,
+}
+#[derive(Clone, Debug, Serialize)]
+pub struct TokenInfo {
+    pub id: String,
+    pub bog_id: BogId,
+    pub account_id: Option<String>,
+    pub scope: String,
+    pub created_at: i64,
+    pub expires_at: Option<i64>,
+    pub revoked_at: Option<i64>,
+}

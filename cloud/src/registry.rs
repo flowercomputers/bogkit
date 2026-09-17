@@ -50,23 +50,39 @@ impl Registry {
             "PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;",
         )
         .map_err(db_error)?;
+        // Serialize the version check with migration so simultaneous opens cannot both rebuild v1.
+        db.execute_batch("PRAGMA foreign_keys=OFF; BEGIN IMMEDIATE;")
+            .map_err(db_error)?;
         let version: u32 = db
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .map_err(db_error)?;
-        if version > 1 {
+        if version > 2 {
             return Err(CloudError::new(
                 "incompatible_registry",
                 "registry version is newer than this server",
             ));
         }
         if version == 0 {
-            db.execute_batch(concat!(
-                "BEGIN IMMEDIATE;",
-                include_str!("../migrations/001_registry.sql"),
-                "COMMIT;"
-            ))
-            .map_err(db_error)?;
+            db.execute_batch(include_str!("../migrations/001_registry.sql"))
+                .map_err(db_error)?;
         }
+        if version < 2 {
+            db.execute_batch(include_str!("../migrations/002_workspaces.sql"))
+                .map_err(db_error)?;
+        }
+        let foreign_key_errors: i64 = db
+            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |r| {
+                r.get(0)
+            })
+            .map_err(db_error)?;
+        if foreign_key_errors != 0 {
+            return Err(CloudError::new(
+                "unavailable",
+                "registry integrity check failed",
+            ));
+        }
+        db.execute_batch("COMMIT; PRAGMA foreign_keys=ON;")
+            .map_err(db_error)?;
         Ok(Self { db: Mutex::new(db) })
     }
     pub(crate) fn connection(&self) -> Result<std::sync::MutexGuard<'_, Connection>, CloudError> {
@@ -114,6 +130,77 @@ impl Registry {
         maximum: usize,
         initial: ObservedState,
     ) -> Result<Bog, CloudError> {
+        self.create_in_workspace(
+            crate::WorkspaceId::legacy(),
+            name,
+            template,
+            request_key,
+            maximum,
+            usize::MAX,
+            initial,
+            None,
+            maximum,
+        )
+    }
+    pub fn create_scoped(
+        &self,
+        workspace: crate::WorkspaceId,
+        name: &str,
+        template: &str,
+        key: &str,
+    ) -> Result<Bog, CloudError> {
+        self.create_in_workspace(
+            workspace,
+            name,
+            template,
+            key,
+            3,
+            3,
+            ObservedState::Creating,
+            None,
+            32,
+        )
+    }
+    pub fn create_for_principal(
+        &self,
+        p: &crate::Principal,
+        name: &str,
+        template: &str,
+        key: &str,
+        global_maximum: usize,
+    ) -> Result<Bog, CloudError> {
+        if !matches!(
+            p.kind(),
+            crate::PrincipalKind::Human | crate::PrincipalKind::Agent
+        ) {
+            return Err(CloudError::new("forbidden", "workspace identity required"));
+        }
+        self.create_in_workspace(
+            p.workspace_id()
+                .ok_or_else(|| CloudError::new("forbidden", "workspace required"))?,
+            name,
+            template,
+            key,
+            3,
+            3,
+            ObservedState::Creating,
+            Some(p),
+            global_maximum.min(32),
+        )
+    }
+    #[allow(clippy::too_many_arguments)] // One transaction must cover identity, scope, limits, and initial state.
+    fn create_in_workspace(
+        &self,
+        workspace: crate::WorkspaceId,
+        name: &str,
+        template: &str,
+        request_key: &str,
+        maximum: usize,
+        retained: usize,
+        initial: ObservedState,
+        principal: Option<&crate::Principal>,
+        global_maximum: usize,
+    ) -> Result<Bog, CloudError> {
         let name = name.trim().to_lowercase();
         if name.is_empty()
             || name.len() > 128
@@ -141,10 +228,24 @@ impl Registry {
         let tx = db
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(db_error)?;
+        if let Some(p) = principal {
+            if p.expires_at
+                .is_some_and(|expiry| expiry <= now().max(0) as u64)
+            {
+                return Err(CloudError::new("unauthorized", "invalid credentials"));
+            }
+            crate::workspace::member(
+                &tx,
+                p.account_id()
+                    .ok_or_else(|| CloudError::new("forbidden", "account required"))?,
+                workspace,
+                false,
+            )?;
+        }
         let prior: Option<(Vec<u8>, String)> = tx
             .query_row(
-                "SELECT body_hash,bog_id FROM create_requests WHERE request_key=?1",
-                [request_key],
+                "SELECT body_hash,bog_id FROM create_requests WHERE request_key=?1 AND workspace_id=?2",
+                params![request_key,workspace.to_string()],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .optional()
@@ -158,14 +259,18 @@ impl Registry {
             }
             return tx
                 .query_row(
-                    &format!("SELECT {COLUMNS} FROM bogs WHERE id=?1"),
+                    &format!("SELECT {COLUMNS} FROM bogs WHERE id=?1 AND deleted_at IS NULL"),
                     [id],
                     read_bog,
                 )
                 .map_err(db_error);
         }
         if tx
-            .query_row("SELECT 1 FROM bogs WHERE name=?1", [&name], |_| Ok(()))
+            .query_row(
+                "SELECT 1 FROM bogs WHERE name=?1 AND workspace_id=?2",
+                params![name, workspace.to_string()],
+                |_| Ok(()),
+            )
             .optional()
             .map_err(db_error)?
             .is_some()
@@ -174,13 +279,30 @@ impl Registry {
         }
         let active: i64 = tx
             .query_row(
-                "SELECT COUNT(*) FROM bogs WHERE desired_state='running'",
-                [],
+                "SELECT COUNT(*) FROM bogs WHERE (desired_state='running' OR (deleted_at IS NOT NULL AND cleanup_completed_at IS NULL)) AND workspace_id=?1",
+                [workspace.to_string()],
                 |r| r.get(0),
             )
             .map_err(db_error)?;
         if active as u64 >= maximum as u64 {
             return Err(CloudError::new("capacity", "active database limit reached"));
+        }
+        let global_count:i64=tx.query_row("SELECT COUNT(*) FROM bogs WHERE deleted_at IS NULL OR cleanup_completed_at IS NULL",[],|r|r.get(0)).map_err(db_error)?;
+        if global_count as u64 >= global_maximum as u64 {
+            return Err(CloudError::new("capacity", "active database limit reached"));
+        }
+        let count: i64 = tx
+            .query_row(
+                "SELECT COUNT(*) FROM bogs WHERE workspace_id=?1 AND (deleted_at IS NULL OR cleanup_completed_at IS NULL)",
+                [workspace.to_string()],
+                |r| r.get(0),
+            )
+            .map_err(db_error)?;
+        if count as u64 >= retained as u64 {
+            return Err(CloudError::new(
+                "capacity",
+                "retained database limit reached",
+            ));
         }
         let bog = Bog {
             id: BogId(Uuid::new_v4()),
@@ -193,19 +315,42 @@ impl Registry {
             failure_code: None,
             created_at: now(),
         };
-        tx.execute("INSERT INTO bogs(id,name,template,desired_state,observed_state,created_at,template_version) VALUES (?1,?2,?3,'running',?5,?4,'records-v1')",params![bog.id.to_string(),bog.name,bog.template.as_str(),bog.created_at,initial.as_str()]).map_err(db_error)?;
+        tx.execute("INSERT INTO bogs(id,name,template,desired_state,observed_state,created_at,template_version,workspace_id) VALUES (?1,?2,?3,'running',?5,?4,'records-v1',?6)",params![bog.id.to_string(),bog.name,bog.template.as_str(),bog.created_at,initial.as_str(),workspace.to_string()]).map_err(db_error)?;
         tx.execute(
-            "INSERT INTO create_requests(request_key,body_hash,bog_id) VALUES (?1,?2,?3)",
-            params![request_key, digest, bog.id.to_string()],
+            "INSERT INTO create_requests(request_key,body_hash,bog_id,workspace_id) VALUES (?1,?2,?3,?4)",
+            params![request_key, digest, bog.id.to_string(),workspace.to_string()],
         )
         .map_err(db_error)?;
         tx.commit().map_err(db_error)?;
         Ok(bog)
     }
+    pub fn list_scoped(&self, workspace: crate::WorkspaceId) -> Result<Vec<Bog>, CloudError> {
+        let db = self.connection()?;
+        let mut stmt = db
+            .prepare(&format!(
+                "SELECT {COLUMNS} FROM bogs WHERE workspace_id=?1 AND deleted_at IS NULL ORDER BY created_at,id"
+            ))
+            .map_err(db_error)?;
+        stmt.query_map([workspace.to_string()], read_bog)
+            .map_err(db_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(db_error)
+    }
+    pub fn get_scoped(&self, workspace: crate::WorkspaceId, id: BogId) -> Result<Bog, CloudError> {
+        self.connection()?
+            .query_row(
+                &format!("SELECT {COLUMNS} FROM bogs WHERE id=?1 AND workspace_id=?2 AND deleted_at IS NULL"),
+                params![id.to_string(), workspace.to_string()],
+                read_bog,
+            )
+            .optional()
+            .map_err(db_error)?
+            .ok_or_else(|| CloudError::new("not_found", "database not found"))
+    }
     pub fn get(&self, id: BogId) -> Result<Bog, CloudError> {
         self.connection()?
             .query_row(
-                &format!("SELECT {COLUMNS} FROM bogs WHERE id=?1"),
+                &format!("SELECT {COLUMNS} FROM bogs WHERE id=?1 AND deleted_at IS NULL"),
                 [id.to_string()],
                 read_bog,
             )
@@ -217,7 +362,7 @@ impl Registry {
         let db = self.connection()?;
         let mut s = db
             .prepare(&format!(
-                "SELECT {COLUMNS} FROM bogs ORDER BY created_at,id"
+                "SELECT {COLUMNS} FROM bogs WHERE deleted_at IS NULL ORDER BY created_at,id"
             ))
             .map_err(db_error)?;
         s.query_map([], read_bog)

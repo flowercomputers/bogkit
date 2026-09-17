@@ -8,8 +8,12 @@ use uuid::Uuid;
 
 #[derive(Clone, Debug)]
 pub struct Principal {
-    token_id: Option<String>,
-    bog_id: Option<BogId>,
+    pub(crate) token_id: Option<String>,
+    pub(crate) kind: PrincipalKind,
+    pub(crate) expires_at: Option<u64>,
+    pub(crate) account_id: Option<String>,
+    pub(crate) workspace_id: Option<crate::WorkspaceId>,
+    pub(crate) bog_id: Option<BogId>,
 }
 // Deliberately no Debug or Serialize: a raw token is returned only at issuance.
 pub struct IssuedToken {
@@ -17,7 +21,7 @@ pub struct IssuedToken {
     pub secret: String,
 }
 pub struct Auth {
-    registry: Arc<Registry>,
+    pub(crate) registry: Arc<Registry>,
     owner_hash: Vec<u8>,
 }
 fn denied() -> CloudError {
@@ -51,6 +55,10 @@ impl Auth {
         if bool::from(digest.ct_eq(&self.owner_hash)) {
             return Ok(Principal {
                 token_id: None,
+                kind: PrincipalKind::Operator,
+                expires_at: None,
+                account_id: None,
+                workspace_id: None,
                 bog_id: None,
             });
         }
@@ -69,10 +77,29 @@ impl Auth {
         if !bool::from(digest.ct_eq(&stored)) {
             return Err(denied());
         }
-        Ok(Principal {
+        let (account_id, workspace, expires): (Option<String>, Option<String>, Option<i64>) = db
+            .query_row(
+                "SELECT account_id,workspace_id,expires_at FROM tokens WHERE id=?1",
+                [&token_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .map_err(db_error)?;
+        if expires.is_some_and(|v| v <= now()) {
+            return Err(denied());
+        }
+        let principal = Principal {
+            kind: PrincipalKind::App,
+            expires_at: None,
+            account_id,
+            workspace_id: workspace
+                .and_then(|v| Uuid::parse_str(&v).ok())
+                .map(crate::WorkspaceId),
             token_id: Some(token_id),
             bog_id: Some(BogId(Uuid::parse_str(&bog_id).map_err(|_| denied())?)),
-        })
+        };
+        drop(db);
+        self.authorize(&principal, principal.bog_id, false)?;
+        Ok(principal)
     }
     pub fn authorize(
         &self,
@@ -80,14 +107,36 @@ impl Auth {
         bog: Option<BogId>,
         write: bool,
     ) -> Result<(), CloudError> {
+        if principal
+            .expires_at
+            .is_some_and(|expiry| expiry <= now().max(0) as u64)
+        {
+            return Err(denied());
+        }
+        if principal.kind != PrincipalKind::Operator {
+            if let Some(account) = &principal.account_id {
+                self.check_member(account, principal.workspace_id.ok_or_else(denied)?, false)?;
+            }
+            if let Some(workspace) = principal.workspace_id {
+                let db = self.registry.connection()?;
+                let active:bool=db.query_row("SELECT suspended_at IS NULL AND deleted_at IS NULL FROM workspaces WHERE id=?1",[workspace.to_string()],|r|r.get(0)).map_err(db_error)?;
+                if !active {
+                    return Err(denied());
+                }
+                drop(db);
+                if let Some(bog) = bog {
+                    self.registry.get_scoped(workspace, bog)?;
+                }
+            }
+        }
         let Some(id) = &principal.token_id else {
             return Ok(());
         };
         let db = self.registry.connection()?;
         let scope: Option<String> = db
             .query_row(
-                "SELECT scope FROM tokens WHERE id=?1 AND revoked_at IS NULL",
-                [id],
+                "SELECT scope FROM tokens WHERE id=?1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>?2)",
+                params![id,now()],
                 |r| r.get(0),
             )
             .optional()
@@ -112,13 +161,21 @@ impl Auth {
     ) -> Result<IssuedToken, CloudError> {
         self.authorize(principal, None, true)?;
         self.registry.get(bog)?;
+        if principal.kind != PrincipalKind::Operator {
+            return self.issue_app_token(principal, bog, scope);
+        }
         let id = Uuid::new_v4().to_string();
         let secret = format!("{id}.{}", random_secret()?);
-        self.registry.connection()?.execute("INSERT INTO tokens(id,bog_id,secret_hash,scope,created_at) VALUES (?1,?2,?3,?4,?5)",params![id,bog.to_string(),hash(secret.as_bytes()),match scope{Scope::Read=>"read",Scope::Write=>"write"},now()]).map_err(db_error)?;
+        self.registry.connection()?.execute("INSERT INTO tokens(id,bog_id,secret_hash,scope,created_at,workspace_id,expires_at) VALUES (?1,?2,?3,?4,?5,(SELECT workspace_id FROM bogs WHERE id=?2),?6)",params![id,bog.to_string(),hash(secret.as_bytes()),match scope{Scope::Read=>"read",Scope::Write=>"write"},now(),now()+90*86400]).map_err(db_error)?;
         Ok(IssuedToken { id, secret })
     }
     pub fn revoke(&self, principal: &Principal, bog: BogId, id: &str) -> Result<(), CloudError> {
         self.authorize(principal, None, true)?;
+        if principal.kind != PrincipalKind::Operator {
+            self.registry
+                .get_scoped(principal.workspace_id.ok_or_else(denied)?, bog)?;
+            return self.revoke_app_token(principal, id);
+        }
         let n = self
             .registry
             .connection()?
@@ -132,5 +189,24 @@ impl Auth {
         } else {
             Ok(())
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PrincipalKind {
+    Operator,
+    Human,
+    Agent,
+    App,
+}
+impl Principal {
+    pub fn kind(&self) -> PrincipalKind {
+        self.kind
+    }
+    pub fn account_id(&self) -> Option<&str> {
+        self.account_id.as_deref()
+    }
+    pub fn workspace_id(&self) -> Option<crate::WorkspaceId> {
+        self.workspace_id
     }
 }
