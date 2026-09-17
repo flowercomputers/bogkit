@@ -303,6 +303,8 @@ impl Lifecycle {
     }
 }
 
+// Keep both router constructors explicit about their schema and durability policy.
+#[allow(clippy::too_many_arguments)]
 fn shared_from<D, P, S: Rtx>(
     mut stream: S,
     custom: &[CustomRoute<D, P, S>],
@@ -538,7 +540,11 @@ fn try_commit<S: Rtx, R>(
 
 #[allow(clippy::result_large_err)]
 fn commit<S: Rtx>(shared: &Shared<S>, f: impl FnOnce(&mut S)) -> Result<u64, Response> {
-    try_commit(shared, |stream| Ok(f(stream))).map(|(seq, ())| seq)
+    try_commit(shared, |stream| {
+        f(stream);
+        Ok(())
+    })
+    .map(|(seq, ())| seq)
 }
 async fn insert<D, P>(
     State(shared): State<Arc<Shared<Stream<D, P>>>>,
