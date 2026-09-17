@@ -88,6 +88,11 @@ $('logout').onclick = () => task($('logout'), async () => { await api('/auth/log
 $('accept-invite').onclick = () => task($('accept-invite'), async () => { await api('/v1/invitations/accept', { method: 'POST', body: JSON.stringify({ secret: invitation }) }); invitation = ''; location.reload(); });
 async function start() {
   try {
+    const service = await api('/v1');
+    if (service.authentication_configured === false) {
+      status('GitHub sign-in is not configured yet. Existing apps and agents can continue using the HTTP and MCP APIs with their bearer credentials.');
+      return;
+    }
     const session = await api('/console-session'); csrf = session.csrf_token; account = session.account?.id || session.account_id || '';
     $('app').hidden = false; $('logout').hidden = false;
     for (const item of session.workspaces || []) { const option = element('option', item.name + (item.role === 'owner' ? ' · owner' : '')); option.value = item.id; option.dataset.role = item.role; $('workspace').append(option); }

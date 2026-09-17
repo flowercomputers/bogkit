@@ -7,6 +7,8 @@ kill_timeout = 120
   dockerfile = "Dockerfile"
 
 [env]
+  # Temporary migration mode; WorkOS configuration disables public operator auth.
+  BOG_ALLOW_LEGACY_PUBLIC_OPERATOR = "true"
   BOG_CLOUD_ROOT = "/data/bog"
   BOG_WORKER_BINARY = "/usr/local/bin/bog-records-worker"
   BOG_CLOUD_BIND = "0.0.0.0:8080"
