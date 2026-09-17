@@ -35,4 +35,26 @@ Auth storage gains private additive tables; the Bog registry remains version 4. 
 - Browser preview actually discovered and called bog_templates through WebMCP. Documentation rendered in the existing Flower layout.
 - Strict Clippy and JS syntax checks passed.
 
-Deployment verification and refreshed scanner results will be recorded after release.
+## Published verification
+
+Deployed code revision **dad505c** to the existing Fly machine `4d895395c393e8` in iad, without changing machine size, volume, quotas or paid capacity. Image: `registry.fly.io/flower-bog-cloud:deployment-01M2R926T0EJ7ENEW6VD5MW5EG` (digest `sha256:c8fa177bae49fa4ab2c3f2ee117b8034dcaf990737cf3d49c94c5d1657dc7bfb`).
+
+Live checks passed for health, HTML/Markdown, OAuth metadata and challenges, the two named scopes in OpenAPI, content policy, self-serve pricing discovery, structured rate-limit headers using an existing authorized agent, all exact Flower assets, and seven shared-layout pages. A browser agent actually called the deployed `bog_templates` WebMCP tool. The legacy chat's record-data fingerprint remained unchanged. The new OAuth authorization-code happy path was tested locally over actual HTTP/MCP with a fixture GitHub provider; no new production connection was silently approved as the user.
+
+## Fresh scanner results
+
+| Scanner | Before | After | Evidence |
+| --- | --- | --- | --- |
+| [Is Agentic](https://is-agentic.com/scan/flower-bog-cloud.fly.dev) | 92/100 | **100/100** | Persisted API report: 2026-09-17T18:16:50.341Z; browser snapshot 18:16 UTC. App remains selected, now explicitly declared. All 11 essential checks pass. |
+| [Cloudflare](https://isitagentready.com/flower-bog-cloud.fly.dev) | 60/100 | **87/100, Level 5** | Fresh scan 18:16:57 UTC; 13/15 checks pass; no checks deselected. |
+
+The scores are not claims that every recommendation passed. Is Agentic's bonuses bring the aggregate to 100 while its report retains partial findings. Its stored API reports recommended checks 14/22; the browser's App view displays 12/18, both showing 16.3/20. Earlier API and browser counts also differed, so those counts should not be treated as an exact before/after denominator.
+
+Cloudflare now passes Content Signals, OAuth server discovery, Auth.md and WebMCP. Its Auth.md pass does **not** establish support for the distinct identity-assertion/anonymous-claim draft; that remains explicitly unsupported.
+
+Cloudflare's two remaining flags:
+
+1. **DNS-AID:** requires a Flower-controlled hostname. No control over the provider's `fly.dev` zone.
+2. **Protected-resource target mismatch:** the scanner checks the homepage origin against metadata whose canonical resource is `/mcp`, and labels the successful JSON response a mismatch. Both `/.well-known/oauth-protected-resource` and the path-specific `/.well-known/oauth-protected-resource/mcp` serve the correct protected MCP resource and issuer. The authorization flow binds that resource. Do not change the canonical protected-resource identity to the public homepage just to satisfy this comparison. See the [MCP authorization specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization).
+
+Is Agentic still reports search-index visibility, unauthenticated verification limits (protected API/MCP, self-serve onboarding, actual account rate limits), and partial docs/version-policy findings despite the deployed content and authenticated checks above. These are documented measurement limits, not reasons to expose private data or fabricate anonymous API results. Its old narrative agent journey is not evidence of a new authorized end-to-end app trial.
