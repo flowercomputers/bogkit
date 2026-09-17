@@ -429,12 +429,12 @@ impl NativeAuth {
         state.sources.retain(|_, (start, _)| *start + 600 > time);
         state.approvals.retain(|_, (start, _)| *start + 600 > time);
         if state.sources.len() >= 10000 && !state.sources.contains_key(&source) {
-            return Err(device_error("slow_down"));
+            return Err(device_window_limit());
         }
         let entry = state.sources.entry(source).or_insert((time, 0));
         entry.1 += 1;
         if entry.1 > 20 || state.grants.len() >= 10000 {
-            return Err(device_error("slow_down"));
+            return Err(device_window_limit());
         }
         let private = random_secret()?;
         let public = random_secret()?[..8].to_uppercase();
@@ -540,7 +540,7 @@ fn approval_limit(state: &mut DeviceState, session: &str) -> Result<(), CloudErr
     let time = now();
     state.approvals.retain(|_, (start, _)| *start + 600 > time);
     if state.approvals.len() >= 10000 {
-        return Err(device_error("slow_down"));
+        return Err(device_window_limit());
     }
     let entry = state
         .approvals
@@ -548,7 +548,7 @@ fn approval_limit(state: &mut DeviceState, session: &str) -> Result<(), CloudErr
         .or_insert((time, 0));
     entry.1 += 1;
     if entry.1 > 30 {
-        return Err(device_error("slow_down"));
+        return Err(device_window_limit());
     }
     Ok(())
 }
@@ -562,6 +562,12 @@ pub fn valid_public(s: &str) -> bool {
     s.len() == 8
         && s.bytes()
             .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_lowercase())
+}
+fn device_window_limit() -> CloudError {
+    CloudError::new(
+        "slow_down",
+        "device authorization request limit reached; wait 10 minutes before retrying; if the approval request expires, start a new device request",
+    )
 }
 fn device_error(code: &str) -> CloudError {
     let message = match code {
@@ -760,23 +766,18 @@ mod tests {
                 .start_device("127.0.0.1".parse().unwrap(), "agent")
                 .unwrap();
         }
-        assert_eq!(
-            native
-                .start_device("127.0.0.1".parse().unwrap(), "agent")
-                .unwrap_err()
-                .code,
-            "slow_down"
-        );
+        let error = native
+            .start_device("127.0.0.1".parse().unwrap(), "agent")
+            .unwrap_err();
+        assert_eq!(error.code, "slow_down");
+        assert!(error.message.contains("wait 10 minutes"));
         for _ in 0..30 {
             assert!(native.device_details(&session, "BADCODE0").is_err());
         }
-        assert_eq!(
-            native
-                .device_details(&session, "BADCODE0")
-                .unwrap_err()
-                .code,
-            "slow_down"
-        );
+        let error = native.device_details(&session, "BADCODE0").unwrap_err();
+        assert_eq!(error.code, "slow_down");
+        assert!(error.message.contains("wait 10 minutes"));
+        assert!(error.message.contains("start a new device request"));
     }
 }
 #[cfg(test)]
