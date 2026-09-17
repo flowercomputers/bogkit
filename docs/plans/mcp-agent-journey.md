@@ -18,7 +18,7 @@ Approved plan: connect, understand, and build through MCP (2026-09-17).
 ## Status
 - Phase 1: complete on165017c; actual Codex0.154.0 and Claude2.1.274 liveOAuth+operational trials passed.
 - Phase 2: complete on58900a9; both private delivery methods passed live and test credentials revoked.
-- Phase 3: in progress; WebMCP additions and fresh application trials.
+- Phase 3: implemented and deployed; both actual-client app trials passed. External second-account and signed-in WebMCP acceptance remain pending.
 
 ### Phase 1 evidence
 - Real Codex 0.145.0 registration failed before consent: requested authorization_code + refresh_token. Fix selects supported authorization_code without promising refresh.
@@ -65,3 +65,10 @@ Approved plan: connect, understand, and build through MCP (2026-09-17).
 - Review fixed default allowance selection through caller /v1/me.workspace_id, including another personal workspace first and uppercase explicit UUIDs. Scoped re-review approved. Final phase1/2 integration review found only owner-revocation wording, corrected in helper/console/Connect. Exact private configuration keys now documented after fresh-app observation.
 - Real public WebMCP discovery/templates passed in in-app browser. Signed-in WebMCP awaits GitHub login there; regular Chrome console and both MCPclients already authenticated.
 - FreshCodex created one Bog, idempotency passed, initially hit residentcapacity; on-demand read recovered afteridleeviction without expansion. Continuing liveapptrial; Claudetrial running.
+
+### Final outcome
+- 232e768 and guidance follow-up2b4cb10 deployed successfully. Existing chat fingerprint unchanged; health/discovery passed. No infrastructure expansion or registry change.
+- Actual Codex and Claude fresh app trials passed live read/write/wait/restart; parent browser messages and actual credential revocation passed. All four test app credentials revoked. Private artifact scan34files zero credential matches. Owned test app/probe processes stopped.
+- GitHub sign-in remains pending in the in-app browser for authenticated WebMCP. Actual public WebMCP calls passed; regular signed-in console390px navigation passed. Real secondaccount pending per user direction.
+- Cloudflare fresh retry87/100 at20:20:52UTC; IsAgentic displayed100 but persisted18:17:36UTC older snapshot, freshness not claimed.
+- Retained eight disposable fixtures listed in verification report; no deletion permissions broadened. Unrelated untracked docs/bog-language-cloud-architecture.md belongs to other work and is excluded.
