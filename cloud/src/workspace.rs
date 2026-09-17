@@ -176,7 +176,7 @@ impl Auth {
                 id: WorkspaceId::legacy(),
                 name: "Legacy".into(),
                 uncapped_bogs: false,
-                bog_limit: None,
+                bog_limit: Some(self.legacy_bog_limit),
                 personal: false,
                 role: "owner".into(),
             }]);
@@ -199,7 +199,9 @@ impl Auth {
                 name: r.get(1)?,
                 role: r.get(2)?,
                 uncapped_bogs: r.get(3)?,
-                bog_limit: if id == WorkspaceId::legacy().to_string() || r.get::<_, bool>(4)? {
+                bog_limit: if id == WorkspaceId::legacy().to_string() {
+                    Some(self.legacy_bog_limit)
+                } else if r.get::<_, bool>(4)? {
                     None
                 } else {
                     Some(3)
@@ -525,6 +527,27 @@ mod tests {
             token_id: None,
             bog_id: None,
         }
+    }
+    #[test]
+    fn legacy_workspace_reports_configured_finite_limit() {
+        let (_d, r, _a) = setup();
+        let a = Auth::new_with_legacy_limit(r, "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", 17).unwrap();
+        let mut operator = a.authenticate("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx").unwrap();
+        operator.workspace_id = Some(WorkspaceId::legacy());
+        let workspace = a.workspaces_for_principal(&operator).unwrap().remove(0);
+        assert_eq!(workspace.bog_limit, Some(17));
+        assert!(!workspace.uncapped_bogs);
+        let owner = person(&a, "owner");
+        a.claim_legacy_subject(&operator, "issuer", "owner", "issuer", "owner")
+            .unwrap();
+        let legacy = a
+            .workspaces_for_principal(&owner)
+            .unwrap()
+            .into_iter()
+            .find(|w| w.id == WorkspaceId::legacy())
+            .unwrap();
+        assert_eq!(legacy.bog_limit, Some(17));
+        assert!(!legacy.uncapped_bogs);
     }
     #[test]
     fn uncapped_flags_are_scoped_revocable_and_still_globally_bounded() {

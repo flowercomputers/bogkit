@@ -101,7 +101,7 @@ impl CloudService {
         }
         let native_auth = crate::native_auth::NativeAuth::from_env(&config.root)?;
         let registry = Arc::new(Registry::open(&config.root.join("registry.sqlite"))?);
-        let auth = Auth::new(registry.clone(), owner_token)?;
+        let auth = Auth::new_with_legacy_limit(registry.clone(), owner_token, config.max_active)?;
         let public_auth = crate::gateway::PublicAuth::from_env(&config.root)?;
         let supervisor = Arc::new(Supervisor::open(config, registry.clone())?);
         Ok(Arc::new(Self {

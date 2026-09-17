@@ -21,6 +21,7 @@ pub struct IssuedToken {
     pub secret: String,
 }
 pub struct Auth {
+    pub(crate) legacy_bog_limit: usize,
     pub(crate) registry: Arc<Registry>,
     owner_hash: Vec<u8>,
 }
@@ -36,6 +37,13 @@ pub fn random_secret() -> Result<String, CloudError> {
 }
 impl Auth {
     pub fn new(registry: Arc<Registry>, owner: &str) -> Result<Self, CloudError> {
+        Self::new_with_legacy_limit(registry, owner, 8)
+    }
+    pub fn new_with_legacy_limit(
+        registry: Arc<Registry>,
+        owner: &str,
+        legacy_bog_limit: usize,
+    ) -> Result<Self, CloudError> {
         if owner.len() < 32 || owner.len() > 4096 || owner.chars().any(char::is_control) {
             return Err(CloudError::new(
                 "invalid_config",
@@ -43,6 +51,7 @@ impl Auth {
             ));
         }
         Ok(Self {
+            legacy_bog_limit,
             registry,
             owner_hash: hash(owner.as_bytes()),
         })

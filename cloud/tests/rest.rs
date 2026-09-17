@@ -276,3 +276,16 @@ async fn legacy_guidance_is_truthful_without_javascript() {
         assert!(!body.contains("Your GitHub, your workspace."), "{path}");
     }
 }
+
+#[tokio::test]
+async fn legacy_workspace_reports_service_configured_limit() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut config = Config::new(tmp.path().join("service"), std::env::current_exe().unwrap());
+    config.max_active = 17;
+    let svc = CloudService::open(config, OWNER).unwrap();
+    let router = build_rest_router(svc);
+    let (status, body) = request(&router, "GET", "/v1/workspaces", Some(OWNER), None).await;
+    assert_eq!(status, 200);
+    assert_eq!(body["workspaces"][0]["bog_limit"], 17);
+    assert_eq!(body["workspaces"][0]["uncapped_bogs"], false);
+}
