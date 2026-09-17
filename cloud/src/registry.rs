@@ -83,7 +83,7 @@ impl Registry {
         let version: u32 = db
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .map_err(db_error)?;
-        if version > 3 {
+        if version > 4 {
             return Err(CloudError::new(
                 "incompatible_registry",
                 "registry version is newer than this server",
@@ -99,6 +99,10 @@ impl Registry {
         }
         if version < 3 {
             db.execute_batch(include_str!("../migrations/003_agent_tokens.sql"))
+                .map_err(db_error)?;
+        }
+        if version < 4 {
+            db.execute_batch(include_str!("../migrations/004_workspace_quotas.sql"))
                 .map_err(db_error)?;
         }
         let foreign_key_errors: i64 = db
@@ -308,32 +312,35 @@ impl Registry {
         {
             return Err(CloudError::new("conflict", "database name already exists"));
         }
-        let active: i64 = tx
+        let uncapped: bool = tx.query_row("SELECT w.uncapped_bogs OR COALESCE(a.uncapped_bogs,0) FROM workspaces w LEFT JOIN accounts a ON a.id=w.personal_account_id WHERE w.id=?1", [workspace.to_string()], |r| r.get(0)).map_err(db_error)?;
+        if !uncapped {
+            let active: i64 = tx
             .query_row(
                 "SELECT COUNT(*) FROM bogs WHERE (desired_state='running' OR (deleted_at IS NOT NULL AND cleanup_completed_at IS NULL)) AND workspace_id=?1",
                 [workspace.to_string()],
                 |r| r.get(0),
             )
             .map_err(db_error)?;
-        if active as u64 >= maximum as u64 {
-            return Err(CloudError::new("capacity", "active database limit reached"));
-        }
-        let global_count:i64=tx.query_row("SELECT COUNT(*) FROM bogs WHERE deleted_at IS NULL OR cleanup_completed_at IS NULL",[],|r|r.get(0)).map_err(db_error)?;
-        if global_count as u64 >= global_maximum as u64 {
-            return Err(CloudError::new("capacity", "active database limit reached"));
-        }
-        let count: i64 = tx
+            if active as u64 >= maximum as u64 {
+                return Err(CloudError::new("capacity", "active database limit reached"));
+            }
+            let count: i64 = tx
             .query_row(
                 "SELECT COUNT(*) FROM bogs WHERE workspace_id=?1 AND (deleted_at IS NULL OR cleanup_completed_at IS NULL)",
                 [workspace.to_string()],
                 |r| r.get(0),
             )
             .map_err(db_error)?;
-        if count as u64 >= retained as u64 {
-            return Err(CloudError::new(
-                "capacity",
-                "retained database limit reached",
-            ));
+            if count as u64 >= retained as u64 {
+                return Err(CloudError::new(
+                    "capacity",
+                    "retained database limit reached",
+                ));
+            }
+        }
+        let global_count:i64=tx.query_row("SELECT COUNT(*) FROM bogs WHERE deleted_at IS NULL OR cleanup_completed_at IS NULL",[],|r|r.get(0)).map_err(db_error)?;
+        if global_count as u64 >= global_maximum as u64 {
+            return Err(CloudError::new("capacity", "active database limit reached"));
         }
         let bog = Bog {
             id: BogId(Uuid::new_v4()),

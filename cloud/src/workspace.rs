@@ -117,12 +117,16 @@ impl Auth {
             )
             .optional()
             .map_err(db_error)?;
+        let (uncapped, effective): (bool,bool) = tx.query_row("SELECT w.uncapped_bogs,w.uncapped_bogs OR a.uncapped_bogs FROM workspaces w JOIN accounts a ON a.id=w.personal_account_id WHERE w.id=?1", [&id], |r| Ok((r.get(0)?,r.get(1)?))).map_err(db_error)?;
         tx.commit().map_err(db_error)?;
         Ok((
             Account { id: account },
             Workspace {
                 id: WorkspaceId(Uuid::parse_str(&id).map_err(|_| forbidden())?),
                 name: "Personal".into(),
+                uncapped_bogs: uncapped,
+                bog_limit: if effective { None } else { Some(3) },
+                personal: true,
                 role: role.unwrap_or_default(),
             },
         ))
@@ -171,6 +175,9 @@ impl Auth {
             return Ok(vec![Workspace {
                 id: WorkspaceId::legacy(),
                 name: "Legacy".into(),
+                uncapped_bogs: false,
+                bog_limit: None,
+                personal: false,
                 role: "owner".into(),
             }]);
         }
@@ -178,7 +185,7 @@ impl Auth {
     }
     fn workspaces_for_account(&self, account: &str) -> Result<Vec<Workspace>, CloudError> {
         let db = self.registry.connection()?;
-        let mut s=db.prepare("SELECT w.id,w.name,m.role FROM workspaces w JOIN memberships m ON m.workspace_id=w.id WHERE m.account_id=?1 AND w.suspended_at IS NULL AND w.deleted_at IS NULL").map_err(db_error)?;
+        let mut s=db.prepare("SELECT w.id,w.name,m.role,w.uncapped_bogs,w.uncapped_bogs OR COALESCE(a.uncapped_bogs,0),w.personal_account_id IS NOT NULL FROM workspaces w LEFT JOIN accounts a ON a.id=w.personal_account_id JOIN memberships m ON m.workspace_id=w.id WHERE m.account_id=?1 AND w.suspended_at IS NULL AND w.deleted_at IS NULL").map_err(db_error)?;
         s.query_map([account], |r| {
             let id: String = r.get(0)?;
             Ok(Workspace {
@@ -191,6 +198,13 @@ impl Auth {
                 })?),
                 name: r.get(1)?,
                 role: r.get(2)?,
+                uncapped_bogs: r.get(3)?,
+                bog_limit: if id == WorkspaceId::legacy().to_string() || r.get::<_, bool>(4)? {
+                    None
+                } else {
+                    Some(3)
+                },
+                personal: r.get(5)?,
             })
         })
         .map_err(db_error)?
@@ -511,6 +525,164 @@ mod tests {
             token_id: None,
             bog_id: None,
         }
+    }
+    #[test]
+    fn uncapped_flags_are_scoped_revocable_and_still_globally_bounded() {
+        let (_d, r, a) = setup();
+        let owner = person(&a, "owner");
+        let guest = person(&a, "guest");
+        let operator = a.authenticate(&"x".repeat(32)).unwrap();
+        a.set_platform_operator(&operator, owner.account_id.as_deref().unwrap(), true)
+            .unwrap();
+        assert!(a.is_platform_operator(&owner).unwrap());
+        let org = a.create_workspace(&owner, "Flower", "org").unwrap();
+        let selected = a.select_workspace(&owner, org.id).unwrap();
+        a.set_account_uncapped(&owner, owner.account_id.as_deref().unwrap(), true)
+            .unwrap();
+        for i in 0..4 {
+            r.create_for_principal(&owner, &format!("p{i}"), "records-v1", &format!("p{i}"), 32)
+                .unwrap();
+        }
+        for i in 0..3 {
+            r.create_for_principal(
+                &selected,
+                &format!("s{i}"),
+                "records-v1",
+                &format!("s{i}"),
+                32,
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            r.create_for_principal(&selected, "s3", "records-v1", "s3", 32)
+                .unwrap_err()
+                .code,
+            "capacity"
+        );
+        let invite = a.invite(&selected, "member").unwrap();
+        a.accept_invitation_for_principal(&guest, &invite.secret)
+            .unwrap();
+        let guest_org = a.select_workspace(&guest, org.id).unwrap();
+        a.set_workspace_uncapped(&owner, org.id, true).unwrap();
+        r.create_for_principal(&guest_org, "s3", "records-v1", "s3", 32)
+            .unwrap();
+        assert_eq!(
+            a.workspaces_for_principal(&guest_org)
+                .unwrap()
+                .iter()
+                .find(|w| w.id == org.id)
+                .unwrap()
+                .bog_limit,
+            None
+        );
+        a.set_workspace_uncapped(&owner, org.id, false).unwrap();
+        assert_eq!(r.list_scoped(org.id).unwrap().len(), 4);
+        assert_eq!(
+            r.create_for_principal(&guest_org, "s4", "records-v1", "s4", 32)
+                .unwrap_err()
+                .code,
+            "capacity"
+        );
+        a.set_account_uncapped(&owner, owner.account_id.as_deref().unwrap(), false)
+            .unwrap();
+        assert_eq!(r.list_scoped(owner.workspace_id.unwrap()).unwrap().len(), 4);
+        assert_eq!(
+            r.create_for_principal(&owner, "p4", "records-v1", "p4", 32)
+                .unwrap_err()
+                .code,
+            "capacity"
+        );
+        a.set_workspace_uncapped(&owner, org.id, true).unwrap();
+        for i in 8..32 {
+            r.create_for_principal(
+                &selected,
+                &format!("g{i}"),
+                "records-v1",
+                &format!("g{i}"),
+                1000,
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            r.create_for_principal(&selected, "overflow", "records-v1", "overflow", 1000)
+                .unwrap_err()
+                .code,
+            "capacity"
+        );
+        a.set_platform_operator(&operator, owner.account_id.as_deref().unwrap(), false)
+            .unwrap();
+        assert!(a.set_workspace_uncapped(&owner, org.id, false).is_err());
+    }
+    #[test]
+    fn shared_workspace_requests_are_exact_bounded_and_human_only() {
+        let (_d, r, a) = setup();
+        let owner = person(&a, "owner");
+        let operator = a.authenticate(&"x".repeat(32)).unwrap();
+        let org = a.create_workspace(&owner, "Flower", "org").unwrap();
+        assert_eq!(
+            a.create_workspace(&owner, "Flower", "org").unwrap().id,
+            org.id
+        );
+        assert_eq!(
+            a.create_workspace(&owner, "flower", "org")
+                .unwrap_err()
+                .code,
+            "conflict"
+        );
+        assert!(a.create_workspace(&owner, " Flower", "bad").is_err());
+        let bog = r
+            .create_for_principal(&owner, "app", "records-v1", "app", 32)
+            .unwrap();
+        let token = a.issue_app_token(&owner, bog.id, Scope::Write).unwrap();
+        let app = a.authenticate(&token.secret).unwrap();
+        let mut agent = owner.clone();
+        agent.kind = PrincipalKind::Agent;
+        a.set_platform_operator(&operator, owner.account_id.as_deref().unwrap(), true)
+            .unwrap();
+        for denied in [&agent, &app, &operator] {
+            assert!(a.create_workspace(denied, "Denied", "denied").is_err());
+            assert!(a.set_workspace_uncapped(denied, org.id, true).is_err());
+            assert!(
+                a.set_account_uncapped(denied, owner.account_id.as_deref().unwrap(), true)
+                    .is_err()
+            );
+            assert!(a.platform_accounts(denied).is_err());
+            assert!(a.platform_workspaces(denied).is_err());
+        }
+        let other = person(&a, "other");
+        assert!(a.set_workspace_uncapped(&other, org.id, true).is_err());
+        for i in 1..20 {
+            a.create_workspace(&owner, &format!("Org {i}"), &format!("org{i}"))
+                .unwrap();
+        }
+        assert_eq!(
+            a.create_workspace(&owner, "Overflow", "overflow")
+                .unwrap_err()
+                .code,
+            "capacity"
+        );
+        assert_eq!(
+            a.create_workspace(&owner, "Flower", "org").unwrap().id,
+            org.id
+        );
+        assert!(
+            a.bootstrap_workspace(
+                &operator,
+                other.account_id.as_deref().unwrap(),
+                "Bootstrap",
+                "boot"
+            )
+            .is_ok()
+        );
+        assert!(
+            a.bootstrap_workspace(
+                &owner,
+                other.account_id.as_deref().unwrap(),
+                "Denied",
+                "boot"
+            )
+            .is_err()
+        );
     }
     #[test]
     fn legacy_public_operator_cannot_cross_workspaces_or_manage_membership() {
@@ -1057,4 +1229,269 @@ fn invitation_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<InvitationInfo> {
         accepted_at: r.get(5)?,
         revoked_at: r.get(6)?,
     })
+}
+
+fn platform_access(db: &Connection, p: &Principal) -> Result<(), CloudError> {
+    if p.kind != PrincipalKind::Human || p.expires_at.is_some_and(|e| e <= now().max(0) as u64) {
+        return Err(forbidden());
+    }
+    let allowed: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM accounts WHERE id=?1 AND platform_operator=1 AND suspended_at IS NULL)", [p.account_id.as_deref().ok_or_else(forbidden)?], |r| r.get(0)).map_err(db_error)?;
+    if allowed { Ok(()) } else { Err(forbidden()) }
+}
+impl Auth {
+    pub fn is_platform_operator(&self, p: &Principal) -> Result<bool, CloudError> {
+        if p.kind != PrincipalKind::Human {
+            return Ok(false);
+        }
+        self.authorize(p, None, false)?;
+        let db = self.registry.connection()?;
+        Ok(platform_access(&db, p).is_ok())
+    }
+    pub fn set_platform_operator(
+        &self,
+        operator: &Principal,
+        target: &str,
+        enabled: bool,
+    ) -> Result<(), CloudError> {
+        if operator.kind != PrincipalKind::Operator {
+            return Err(forbidden());
+        }
+        self.authorize(operator, None, true)?;
+        let mut db = self.registry.connection()?;
+        let tx = db
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(db_error)?;
+        if tx
+            .execute(
+                "UPDATE accounts SET platform_operator=?2 WHERE id=?1",
+                params![target, enabled],
+            )
+            .map_err(db_error)?
+            == 0
+        {
+            return Err(CloudError::new("not_found", "account not found"));
+        }
+        audit(
+            &tx,
+            WorkspaceId::legacy(),
+            None,
+            if enabled {
+                "platform_operator.enabled"
+            } else {
+                "platform_operator.disabled"
+            },
+            target,
+        )?;
+        tx.commit().map_err(db_error)
+    }
+    pub fn set_account_uncapped(
+        &self,
+        p: &Principal,
+        target: &str,
+        enabled: bool,
+    ) -> Result<(), CloudError> {
+        self.authorize(p, None, false)?;
+        self.change_uncapped(p, target, enabled, false, false)
+    }
+    pub fn set_workspace_uncapped(
+        &self,
+        p: &Principal,
+        target: WorkspaceId,
+        enabled: bool,
+    ) -> Result<(), CloudError> {
+        self.authorize(p, None, false)?;
+        self.change_uncapped(p, &target.to_string(), enabled, true, false)
+    }
+    pub fn operator_set_account_uncapped(
+        &self,
+        p: &Principal,
+        target: &str,
+        enabled: bool,
+    ) -> Result<(), CloudError> {
+        if p.kind != PrincipalKind::Operator {
+            return Err(forbidden());
+        }
+        self.authorize(p, None, true)?;
+        self.change_uncapped(p, target, enabled, false, true)
+    }
+    pub fn operator_set_workspace_uncapped(
+        &self,
+        p: &Principal,
+        target: WorkspaceId,
+        enabled: bool,
+    ) -> Result<(), CloudError> {
+        if p.kind != PrincipalKind::Operator {
+            return Err(forbidden());
+        }
+        self.authorize(p, None, true)?;
+        self.change_uncapped(p, &target.to_string(), enabled, true, true)
+    }
+    fn change_uncapped(
+        &self,
+        p: &Principal,
+        target: &str,
+        enabled: bool,
+        workspace: bool,
+        bootstrap: bool,
+    ) -> Result<(), CloudError> {
+        if workspace && target == WorkspaceId::legacy().to_string() {
+            return Err(CloudError::new(
+                "invalid_request",
+                "legacy workspace uses the server-configured limit",
+            ));
+        }
+        let mut db = self.registry.connection()?;
+        let tx = db
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(db_error)?;
+        if !bootstrap {
+            platform_access(&tx, p)?;
+        }
+        let sql = if workspace {
+            "UPDATE workspaces SET uncapped_bogs=?2 WHERE id=?1 AND deleted_at IS NULL"
+        } else {
+            "UPDATE accounts SET uncapped_bogs=?2 WHERE id=?1"
+        };
+        if tx
+            .execute(sql, params![target, enabled])
+            .map_err(db_error)?
+            == 0
+        {
+            return Err(CloudError::new("not_found", "target not found"));
+        }
+        tx.execute("INSERT INTO audit_events(workspace_id,account_id,action,resource_id,created_at) VALUES(?1,?2,?3,?4,?5)",params![if workspace {Some(target)}else{None},p.account_id,format!("{}.uncapped_{}",if workspace{"workspace"}else{"account"},if enabled{"enabled"}else{"disabled"}),target,now()]).map_err(db_error)?;
+        tx.commit().map_err(db_error)
+    }
+    pub fn platform_accounts(&self, p: &Principal) -> Result<Vec<serde_json::Value>, CloudError> {
+        self.authorize(p, None, false)?;
+        let db = self.registry.connection()?;
+        platform_access(&db, p)?;
+        let mut s=db.prepare("SELECT id,issuer,subject,uncapped_bogs,platform_operator,suspended_at FROM accounts ORDER BY created_at,id").map_err(db_error)?;
+        s.query_map([],|r| Ok(serde_json::json!({"id":r.get::<_,String>(0)?,"issuer":r.get::<_,String>(1)?,"subject":r.get::<_,String>(2)?,"uncapped_bogs":r.get::<_,bool>(3)?,"platform_operator":r.get::<_,bool>(4)?,"suspended_at":r.get::<_,Option<i64>>(5)?}))).map_err(db_error)?.collect::<Result<Vec<_>,_>>().map_err(db_error)
+    }
+    pub fn platform_workspaces(&self, p: &Principal) -> Result<Vec<serde_json::Value>, CloudError> {
+        self.authorize(p, None, false)?;
+        let db = self.registry.connection()?;
+        platform_access(&db, p)?;
+        let mut s=db.prepare("SELECT w.id,w.name,w.personal_account_id,w.uncapped_bogs,w.uncapped_bogs OR COALESCE(a.uncapped_bogs,0),(SELECT COUNT(*) FROM bogs b WHERE b.workspace_id=w.id AND (b.deleted_at IS NULL OR b.cleanup_completed_at IS NULL)) FROM workspaces w LEFT JOIN accounts a ON a.id=w.personal_account_id WHERE w.deleted_at IS NULL AND w.id<>'00000000-0000-0000-0000-000000000001' ORDER BY w.created_at,w.id").map_err(db_error)?;
+        s.query_map([],|r| Ok(serde_json::json!({"id":r.get::<_,String>(0)?,"name":r.get::<_,String>(1)?,"personal_account_id":r.get::<_,Option<String>>(2)?,"personal":r.get::<_,Option<String>>(2)?.is_some(),"uncapped_bogs":r.get::<_,bool>(3)?,"bog_limit":if r.get::<_,bool>(4)? {None} else {Some(3)},"bog_count":r.get::<_,i64>(5)?}))).map_err(db_error)?.collect::<Result<Vec<_>,_>>().map_err(db_error)
+    }
+    pub fn bootstrap_workspace(
+        &self,
+        operator: &Principal,
+        owner_account: &str,
+        name: &str,
+        key: &str,
+    ) -> Result<Workspace, CloudError> {
+        if operator.kind != PrincipalKind::Operator {
+            return Err(forbidden());
+        }
+        self.authorize(operator, None, true)?;
+        let workspace: String=self.registry.connection()?.query_row("SELECT w.id FROM workspaces w JOIN accounts a ON a.id=w.personal_account_id WHERE a.id=?1 AND a.suspended_at IS NULL AND w.deleted_at IS NULL AND w.suspended_at IS NULL",[owner_account],|r|r.get(0)).optional().map_err(db_error)?.ok_or_else(forbidden)?;
+        let human = Principal {
+            kind: PrincipalKind::Human,
+            account_id: Some(owner_account.into()),
+            workspace_id: Some(WorkspaceId(
+                Uuid::parse_str(&workspace).map_err(|_| forbidden())?,
+            )),
+            expires_at: None,
+            token_id: None,
+            bog_id: None,
+        };
+        self.create_workspace(&human, name, key)
+    }
+    pub fn create_workspace(
+        &self,
+        p: &Principal,
+        name: &str,
+        key: &str,
+    ) -> Result<Workspace, CloudError> {
+        if p.kind != PrincipalKind::Human {
+            return Err(forbidden());
+        }
+        self.authorize(p, None, false)?;
+        if name.is_empty()
+            || name.len() > 80
+            || name.trim() != name
+            || name
+                .chars()
+                .any(|c| c.is_control() || c == '/' || c == '\\')
+            || name == "."
+            || name == ".."
+            || key.is_empty()
+            || key.len() > 128
+            || key.chars().any(char::is_control)
+        {
+            return Err(CloudError::new(
+                "invalid_request",
+                "invalid workspace name or idempotency key",
+            ));
+        }
+        let account = p.account_id.as_deref().ok_or_else(forbidden)?;
+        let mut db = self.registry.connection()?;
+        let tx = db
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(db_error)?;
+        member(&tx, account, p.workspace_id.ok_or_else(forbidden)?, false)?;
+        let prior:Option<(String,String)>=tx.query_row("SELECT request_name,workspace_id FROM workspace_create_requests WHERE account_id=?1 AND request_key=?2",params![account,key],|r|Ok((r.get(0)?,r.get(1)?))).optional().map_err(db_error)?;
+        let id = if let Some((old_name, id)) = prior {
+            if old_name != name {
+                return Err(CloudError::new(
+                    "conflict",
+                    "idempotency key was used for a different request",
+                ));
+            }
+            id
+        } else {
+            let count: i64 = tx
+                .query_row(
+                    "SELECT COUNT(*) FROM workspace_create_requests WHERE account_id=?1",
+                    [account],
+                    |r| r.get(0),
+                )
+                .map_err(db_error)?;
+            if count >= 20 {
+                return Err(CloudError::new(
+                    "capacity",
+                    "shared workspace limit reached",
+                ));
+            }
+            let id = Uuid::new_v4().to_string();
+            tx.execute(
+                "INSERT INTO workspaces(id,name,created_at) VALUES(?1,?2,?3)",
+                params![id, name, now()],
+            )
+            .map_err(db_error)?;
+            tx.execute(
+                "INSERT INTO memberships VALUES(?1,?2,'owner')",
+                params![id, account],
+            )
+            .map_err(db_error)?;
+            tx.execute(
+                "INSERT INTO workspace_create_requests VALUES(?1,?2,?3,?4)",
+                params![account, key, name, id],
+            )
+            .map_err(db_error)?;
+            audit(
+                &tx,
+                WorkspaceId(Uuid::parse_str(&id).map_err(|_| forbidden())?),
+                Some(account),
+                "workspace.created",
+                &id,
+            )?;
+            id
+        };
+        let w = WorkspaceId(Uuid::parse_str(&id).map_err(|_| forbidden())?);
+        member(&tx, account, w, false)?;
+        let (uncapped,role):(bool,String)=tx.query_row("SELECT w.uncapped_bogs,m.role FROM workspaces w JOIN memberships m ON m.workspace_id=w.id WHERE w.id=?1 AND m.account_id=?2",params![id,account],|r|Ok((r.get(0)?,r.get(1)?))).map_err(db_error)?;
+        tx.commit().map_err(db_error)?;
+        Ok(Workspace {
+            id: w,
+            name: name.into(),
+            role,
+            uncapped_bogs: uncapped,
+            bog_limit: if uncapped { None } else { Some(3) },
+            personal: false,
+        })
+    }
 }

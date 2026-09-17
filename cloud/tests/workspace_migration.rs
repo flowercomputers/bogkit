@@ -58,7 +58,7 @@ fn v1_upgrade_preserves_ids_requests_and_unexpired_legacy_tokens() {
     assert_eq!(
         db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
             .unwrap(),
-        3
+        4
     );
     assert_eq!(
         db.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |r| r
@@ -107,7 +107,7 @@ fn assert_migrated(path: &std::path::Path) {
     assert_eq!(
         db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
             .unwrap(),
-        3
+        4
     );
     assert_eq!(
         db.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |r| r
@@ -186,4 +186,51 @@ fn future_registry_version_is_rejected_without_migration() {
             .unwrap(),
         99
     );
+}
+
+#[test]
+fn v3_upgrade_preserves_memberships_and_does_not_grant_privileges() {
+    let d = tempfile::tempdir().unwrap();
+    let path = d.path().join("registry.sqlite");
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.execute_batch(include_str!("../migrations/001_registry.sql"))
+        .unwrap();
+    db.execute_batch(include_str!("../migrations/002_workspaces.sql"))
+        .unwrap();
+    db.execute_batch(include_str!("../migrations/003_agent_tokens.sql"))
+        .unwrap();
+    db.execute("INSERT INTO accounts(id,issuer,subject,created_at) VALUES('owner','issuer','owner',0),('member','issuer','member',0)",[]).unwrap();
+    db.execute(
+        "INSERT INTO memberships VALUES(?1,'owner','owner'),(?1,'member','member')",
+        [WorkspaceId::legacy().to_string()],
+    )
+    .unwrap();
+    drop(db);
+    drop(Registry::open(&path).unwrap());
+    let db = rusqlite::Connection::open(&path).unwrap();
+    let roles: String = db
+        .query_row(
+            "SELECT group_concat(role) FROM (SELECT role FROM memberships ORDER BY account_id)",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(roles, "member,owner");
+    let elevated: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM accounts WHERE uncapped_bogs OR platform_operator",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(elevated, 0);
+    let uncapped: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM workspaces WHERE uncapped_bogs",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(uncapped, 0);
+    assert_migrated(&path);
 }
