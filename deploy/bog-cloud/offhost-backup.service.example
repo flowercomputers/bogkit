@@ -1,0 +1,17 @@
+# Install only on a host with a verified stop/start orchestration service.
+# This template is NOT enabled by the repository or the Fly deployment.
+[Unit]
+Description=Encrypted closed-host Bog backup
+
+[Service]
+Type=oneshot
+User=bog
+UMask=0077
+EnvironmentFile=/etc/bog/backup.env
+# Operator-provided hooks MUST stop/reap all manager and worker processes.
+ExecStartPre=/usr/local/libexec/bog-backup-stop
+ExecStart=/usr/bin/python3 /opt/bog/scripts/cloud/offhost_backup.py backup /data/bog-cloud
+# Executed even on failure; must restart the service safely.
+ExecStopPost=/usr/local/libexec/bog-backup-start
+PrivateTmp=true
+NoNewPrivileges=true

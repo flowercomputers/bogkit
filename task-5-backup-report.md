@@ -1,0 +1,11 @@
+# Task 5 off-host recovery tooling
+
+Implemented `scripts/cloud/offhost_backup.py`, eight unit tests, `docs/bog-cloud-backups.md`, and inactive daily systemd service/timer examples under `deploy/bog-cloud/`.
+
+The script snapshots the entire registry and instance tree while holding manager, worker lifetime and Fjall locks; SQLite backup includes committed WAL state. It preserves IDs and permissions, excludes browser sessions/socket/lock files, refuses symlinks and special files, writes versioned checksummed manifests, encrypts using age and uploads privately to an existing S3-compatible bucket. Only successful uploads trigger seven-day pruning of the host-owned archive namespace. Restore verifies contents and SQLite integrity before durable same-filesystem publication to an absent destination. The drill command downloads and validates an isolated restore automatically.
+
+Validation: `python3 -m unittest discover -s scripts/cloud/tests -v` passes all eight tests. Tests cover whole-registry permissions/ID preservation, failed-upload no-prune, scoped retention, surviving worker and store lock conflicts, symlink/traversal rejection, checksum tampering and child-secret redaction. A separate compiled Rust probe confirmed `File::try_lock` fails against Python-held `flock` on this macOS host.
+
+Limits and release gates: age is not installed here (AWS CLI is present). Encryption/object-store tests use a fake executable boundary; no real encrypted S3 roundtrip, destination provisioning, credential access, production modification or active scheduling was performed. Require trusted age installation, separately stored identity, restricted private bucket credentials, verified stop/reap/restart orchestration, recovery-host schedule and alerting. The systemd examples are inactive and do not install a scheduler in the existing Fly container. An application-level isolated restored-host startup with matching binary and two-account permission tests remains required. Restored registry contains prior worker generations/nonces; normal manager restart reconciliation must handle these; browser sessions are deliberately excluded. Atomic restore assumes an operator-exclusive parent directory (documented). Local plaintext temp directories need encrypted disk/stale cleanup after abrupt termination.
+
+No Rust code changed by this subtask.

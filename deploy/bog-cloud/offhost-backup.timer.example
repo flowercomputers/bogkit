@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Bog off-host backup schedule (inactive template)
+
+[Timer]
+OnCalendar=*-*-* 04:00:00 UTC
+Persistent=true
+RandomizedDelaySec=300
+Unit=offhost-backup.service
+
+[Install]
+WantedBy=timers.target
