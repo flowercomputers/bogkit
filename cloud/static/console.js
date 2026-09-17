@@ -91,6 +91,7 @@ async function start() {
     const session = await api('/console-session'); csrf = session.csrf_token; account = session.account?.id || session.account_id || '';
     $('app').hidden = false; $('logout').hidden = false;
     for (const item of session.workspaces || []) { const option = element('option', item.name + (item.role === 'owner' ? ' · owner' : '')); option.value = item.id; option.dataset.role = item.role; $('workspace').append(option); }
+    const me = await api('/v1/me'); if (me.workspace_id) $('workspace').value = me.workspace_id;
     workspace = $('workspace').value; owner = $('workspace').selectedOptions[0]?.dataset.role === 'owner';
     await refresh(); status('Signed in. Your workspace is ready.');
     if (invitation) { const preview = await api('/v1/invitations/preview', { method: 'POST', body: JSON.stringify({ secret: invitation }) }); $('invite-description').textContent = `You have been invited to join ${preview.workspace_name || preview.name} as ${preview.role}.`; $('invitation').hidden = false; }
