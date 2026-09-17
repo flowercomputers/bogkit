@@ -1,0 +1,81 @@
+//! Operation-specific success contracts; record payloads remain arbitrary JSON objects.
+use serde_json::{Value, json};
+fn object(properties: Value, required: &[&str]) -> Value {
+    json!({"type":"object","properties":properties,"required":required,"additionalProperties":true})
+}
+pub(crate) fn schema(name: &str) -> serde_json::Map<String, Value> {
+    let string = json!({"type":"string"});
+    let integer = json!({"type":"integer"});
+    let boolean = json!({"type":"boolean"});
+    let nullable_integer = json!({"type":["integer","null"]});
+    let bog = object(
+        json!({"id":string,"name":string,"template":string,"template_version":string,"status":string,"desired_state":string,"generation":integer,"failure_code":{"type":["string","null"]},"created_at":integer,"schema":{"type":"object"},"api_url":string}),
+        &["id", "name", "template", "status", "generation"],
+    );
+    let workspace = object(
+        json!({"id":string,"name":string,"role":string,"personal":boolean,"uncapped_bogs":boolean,"bog_limit":nullable_integer}),
+        &["id", "name", "role", "personal", "bog_limit"],
+    );
+    let workspaces = json!({"type":"array","items":workspace});
+    let body = match name {
+        "create_bog" | "describe_bog" => bog.clone(),
+        "list_bogs" => object(json!({"bogs":{"type":"array","items":bog}}), &["bogs"]),
+        "list_workspaces" => object(json!({"workspaces":workspaces}), &["workspaces"]),
+        "get_current_context" => object(
+            json!({"kind":string,"account":{"type":["object","null"]},"workspace_id":{"type":["string","null"]},"platform_operator":boolean,"workspaces":workspaces}),
+            &["kind", "account", "workspace_id", "workspaces"],
+        ),
+        "list_templates" => object(
+            json!({"templates":{"type":"array","items":object(json!({"id":string,"default":boolean,"description":string}), &["id","default","description"])}}),
+            &["templates"],
+        ),
+        "get_record" => object(
+            json!({"seq":integer,"data":{"type":"object"}}),
+            &["seq", "data"],
+        ),
+        "read_view" => object(
+            json!({"seq":integer,"data":{"oneOf":[object(json!({"value":integer}), &["value"]),{"type":"array","items":object(json!({"key":string,"value":{"type":"object"}}), &["key","value"])}]}}),
+            &["seq", "data"],
+        ),
+        "upsert_record" => object(
+            json!({"seq":integer,"replaced":boolean}),
+            &["seq", "replaced"],
+        ),
+        "delete_record" => object(
+            json!({"seq":integer,"removed":boolean}),
+            &["seq", "removed"],
+        ),
+        "batch" => object(
+            json!({"seq":integer,"applied":integer}),
+            &["seq", "applied"],
+        ),
+        "wait_for_change" => object(
+            json!({"seq":integer,"changed":boolean,"reset":boolean,"cursor":string}),
+            &["seq", "changed", "reset", "cursor"],
+        ),
+        "issue_token" => object(
+            json!({"id":string,"token":string,"scope":{"enum":["read","write"]}}),
+            &["id", "token", "scope"],
+        ),
+        "list_tokens" => object(
+            json!({"tokens":{"type":"array","items":object(json!({"id":string,"bog_id":string,"scope":string,"label":{"type":["string","null"]},"created_at":integer,"expires_at":nullable_integer,"revoked_at":nullable_integer}), &["id","bog_id","scope","created_at","expires_at","revoked_at"])}}),
+            &["tokens"],
+        ),
+        "revoke_token" => json!({"type":"null"}),
+        "prepare_app_access" => object(
+            json!({"handoff_id":string,"bog_id":string,"workspace_id":string,"expires_at":integer,"scope":{"enum":["read","write"]},"label":string,"redeem_path":string,"console_path":string,"installation":string}),
+            &[
+                "handoff_id",
+                "bog_id",
+                "workspace_id",
+                "expires_at",
+                "scope",
+                "label",
+                "redeem_path",
+                "console_path",
+            ],
+        ),
+        _ => panic!("missing output schema for {name}"),
+    };
+    object(json!({"status":{"type":"integer","minimum":200,"maximum":299},"data":body,"request_id":string}), &["status","data","request_id"]).as_object().unwrap().clone()
+}

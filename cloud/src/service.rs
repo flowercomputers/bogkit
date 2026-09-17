@@ -20,6 +20,13 @@ pub enum Operation {
         timeout_seconds: u64,
     },
     ListWorkspaces,
+    ListTemplates,
+    GetCurrentContext,
+    PrepareAppAccess {
+        bog_id: BogId,
+        scope: Scope,
+        label: String,
+    },
     ListTokens {
         bog_id: BogId,
     },
@@ -69,6 +76,7 @@ pub struct OperationResult {
     pub body: Value,
 }
 pub struct CloudService {
+    pub(crate) app_access: crate::app_access::PendingAccess,
     pub changes: crate::changes::ChangeWaiter,
     pub native_auth: Option<Arc<crate::native_auth::NativeAuth>>,
     /// Temporary preview compatibility; never permits cross-workspace operator access.
@@ -105,6 +113,7 @@ impl CloudService {
         let public_auth = crate::gateway::PublicAuth::from_env(&config.root)?;
         let supervisor = Arc::new(Supervisor::open(config, registry.clone())?);
         Ok(Arc::new(Self {
+            app_access: Default::default(),
             registry,
             public_auth,
             native_auth,
@@ -163,8 +172,12 @@ impl CloudService {
         use Operation::*;
         let (target, write) = match &operation {
             WaitForChange { .. } => unreachable!(),
-            ListBogs | ListWorkspaces | ListTokens { .. } => (None, false),
-            CreateBog { .. } | IssueToken { .. } | RevokeToken { .. } => (None, true),
+            ListBogs | ListWorkspaces | ListTemplates | GetCurrentContext | ListTokens { .. } => {
+                (None, false)
+            }
+            CreateBog { .. } | IssueToken { .. } | PrepareAppAccess { .. } | RevokeToken { .. } => {
+                (None, true)
+            }
             DescribeBog { bog_id }
             | Usage { bog_id }
             | Schema { bog_id }
@@ -224,12 +237,34 @@ impl CloudService {
             ListBogs => {
                 serde_json::json!({"bogs":match principal.workspace_id() { Some(w)=>self.registry.list_scoped(w)?,None=>self.registry.list()? }})
             }
+            ListTemplates => {
+                crate::contract::templates()
+            }
+            GetCurrentContext => {
+                serde_json::json!({"kind":principal.kind(),"account":principal.account_id().map(|id|serde_json::json!({"id":id})),"workspace_id":principal.workspace_id(),"platform_operator":self.auth.is_platform_operator(principal)?,"workspaces":self.auth.workspaces_for_principal(principal)?})
+            }
+            PrepareAppAccess {
+                bog_id,
+                scope,
+                label,
+            } => self.prepare_app_access(principal, bog_id, scope, label)?,
             ListWorkspaces => {
                 serde_json::json!({"workspaces":self.auth.workspaces_for_principal(principal)?})
             }
             ListTokens { bog_id } => {
                 self.auth.authorize(principal, Some(bog_id), false)?;
-                serde_json::json!({"tokens":self.auth.list_tokens(principal)?.into_iter().filter(|t|t.bog_id==bog_id).collect::<Vec<_>>()})
+                let mut tokens = serde_json::to_value(
+                    self.auth
+                        .list_tokens(principal)?
+                        .into_iter()
+                        .filter(|t| t.bog_id == bog_id)
+                        .collect::<Vec<_>>(),
+                )
+                .map_err(|_| CloudError::new("unavailable", "cannot describe tokens"))?;
+                if let Some(native) = &self.native_auth {
+                    native.add_app_labels(&mut tokens)?;
+                }
+                serde_json::json!({"tokens":tokens})
             }
             DescribeBog { bog_id } => serde_json::to_value(self.registry.get(bog_id)?)
                 .map_err(|_| CloudError::new("unavailable", "cannot describe database"))?,

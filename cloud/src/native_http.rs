@@ -199,7 +199,7 @@ For agents, POST /auth/device with JSON {"name":"My agent"}. Keep device_code pr
 
 Alternatively, a signed-in human creates/revokes named agent credentials in /console or uses GET/POST /v1/agent-tokens and DELETE /v1/agent-tokens/{id}. Writes require the session cookie, exact Origin and x-csrf-token from /console-session. Only humans can manage account credentials. Tokens expire in 30 days; revocation and account suspension are immediate.
 
-MCP tool results, including structuredContent, may enter model context, chat transcripts or client logs. Structured output is not a private credential channel. For credential issuance, prefer HTTP and write the response directly to a private file with owner-only permissions, without printing it. Configure the client from that file privately; never paste its contents into a conversation. This applies to device-token responses, account credentials and scoped app credentials.
+MCP tool results, including structuredContent, may enter model context, chat transcripts or client logs. Structured output is not a private credential channel. For app credentials, prefer prepare_app_access and the /bog-app-access.py helper or an explicit console download. The helper writes directly to a private file with owner-only permissions, without printing it. Keep compatibility issue_token out of ordinary tool conversations. Configure the client from that file privately; never paste its contents into a conversation. This applies to device-token responses, account credentials and scoped app credentials.
 
 Use Authorization: Bearer <Bog credential> for REST and bearer-capable MCP clients at /mcp. Select workspace_id explicitly; omission selects personal. Agents can create Bogs and issue scoped app credentials, but cannot manage members, delete Bogs or mint account credentials. App credentials remain restricted to one Bog. Membership is checked on every request. GitHub access tokens are never Bog API credentials. OAuth-capable MCP clients can discover the self-hosted authorization server and request bog:read or bog:write. GitHub remains the identity provider; there is no paid authentication intermediary. See /v1 for creation requirements and /v1/templates for templates.
 
@@ -220,14 +220,19 @@ GitHub signup is open. No payment card, sales contact, organization setup or man
 fn native_llms() -> String {
     format!(
         "{}\n## When to use Bog Cloud\n\nUse Bog Cloud when an app or agent needs a hosted typed datastore with schema validation and durable storage. Use HTTP for direct API integration and private credential issuance; use MCP for a bearer-capable agent client.\n\nAuthentication: GitHub browser sign-in at /auth/login, Bog device approval at /auth/device, and Bog bearer credentials. Read /auth.md before requesting credentials. Free tier: three Bogs per ordinary workspace, 16 MiB each, no payment card. Self-serve API keys are available after GitHub approval in /console. Use a disposable Bog for testing; no separate sandbox is provided. See /connect for MCP client guidance. OAuth-capable MCP clients use /.well-known/oauth-protected-resource/mcp and /.well-known/oauth-authorization-server.\n",
-        crate::contract::llms()
+        format_args!(
+            "{}\n{}\n{}",
+            crate::contract::llms(),
+            crate::contract::AGENT_INSTRUCTIONS,
+            crate::contract::ACCESS_RULES
+        )
     )
 }
 pub fn discovery(service: &CloudService, path: &str) -> Option<Response> {
     Some(match path {
         "/auth.md" => (
             [(header::CONTENT_TYPE, "text/markdown; charset=utf-8")],
-            AUTH_MARKDOWN,
+            format!("{}\n## Agent context and private app installation\n\n{}\n\n{}\n\nDownload /bog-app-access.py and follow the installation command returned by prepare_app_access. The helper may require a separate device approval; it never reads client credential stores.\n", AUTH_MARKDOWN, crate::contract::AGENT_INSTRUCTIONS, crate::contract::ACCESS_RULES),
         )
             .into_response(),
         "/.well-known/oauth-protected-resource" => (

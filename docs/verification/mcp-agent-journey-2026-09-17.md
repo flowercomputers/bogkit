@@ -11,7 +11,7 @@ Live host: https://flower-bog-cloud.fly.dev. Existing Fly host configuration and
 | Codex CLI 0.154.0 OAuth | Official HTTPS client metadata, GitHub-backed browser approval, CLI success | Passed |
 | Codex actual MCP operations | Personal workspace, create/retry same ID, upsert/read, timeout-zero wait | Passed |
 | Claude Code 2.1.274 OAuth | Official HTTPS client metadata, GitHub-backed browser approval, CLI success | Passed |
-| Claude tool discovery | Client rejected missing cache hints after selecting a newer protocol | Pending compatibility fix and retest |
+| Claude actual MCP operations | Protocol advertisement capped through 2025-11-25; workspace discovery, create/retry, write/read/wait | Passed live on 165017c |
 | Existing chat | Record fingerprint unchanged after both deployments | Passed |
 | Connect page | Desktop and 390px mobile; no horizontal overflow, mobile menu works | Passed |
 
@@ -19,4 +19,4 @@ Codex disposable Bog: `290fe549-a7b7-4849-98dd-0a570054504d`. Sanitized request 
 
 ## Remaining gates
 
-Phase 1 is not complete until Claude succeeds on the same operational trial. Phase 2 private credential handoff and Phase 3 fresh-agent application trials remain pending. No claim is made here for two independent real accounts, browser WebMCP acceptance, or fresh scanner scores.
+Phase 1 passed. Claude disposable Bog: `71b09918-c906-43f3-80e3-0d70efd70aa4`; creation request `2aee9cc9-9689-4422-a983-ebfc0d6d3899`, retry `f591d40a-5e90-4852-b26d-c007c70de406`. Phase 2 private credential handoff is under local verification; Phase 3 fresh-agent application trials remain pending. No claim is made here for two independent real accounts, browser WebMCP acceptance, or fresh scanner scores.

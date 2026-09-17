@@ -26,7 +26,7 @@ Creation requires `name` and `idempotency_key`; `template` defaults to `records-
 
 Successful tool results preserve `status`, `data` and `request_id`. Operation failures contain an error and request ID. Invalid arguments are protocol errors with request-ID data. Missing or invalid credentials return HTTP 401. A valid OAuth connection needing write scope receives the standard HTTP insufficient-scope challenge; missing membership cannot be resolved by a scope upgrade.
 
-`issue_token` returns a secret and is retained for compatibility. Avoid invoking it in an ordinary agent transcript. Private app-access handoff is planned in phase 2 and is not yet claimed as available.
+`issue_token` returns a secret and is retained for compatibility. Avoid invoking it in an ordinary agent transcript. Use `prepare_app_access` for a ten-minute, single-use handoff bound to your account. Redeem with `/bog-app-access.py` to a private file, or explicitly download through the signed-in console. No secret is minted at preparation. The helper may require its own device approval and never reads another client’s credential storage.
 
 ## Verification commands
 

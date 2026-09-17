@@ -93,7 +93,7 @@ pub async fn homepage(State(service): State<Arc<CloudService>>, request: Request
         guide_asset(
             "text/markdown; charset=utf-8",
             format!(
-                "# Bog Cloud\n\nA working prototype by [Flower Computer](https://flowercomputer.com/) for apps and agents to store JSON records through HTTP or bearer-authenticated MCP.\n\nUse it for a small shared notebook, reading list, or script state. Keep a separate copy of important data. SQL and durable event replay are not supported.\n\n[Documentation]({base}/docs) · [Authentication]({base}/auth.md) · [API operations]({base}/v1) · [OpenAPI]({base}/openapi.json) · [Console]({base}/console)\n\nRead the authentication guide for this deployment's active mode before connecting.\n\n{}\n",
+                "# Bog Cloud\n\nA working prototype by [Flower Computer](https://flowercomputer.com/) for apps and agents to store JSON records through HTTP or bearer-authenticated MCP.\n\nUse it for a small shared notebook, reading list, or script state. Keep a separate copy of important data. SQL and durable event replay are not supported.\n\n[Connect an agent]({base}/connect) · [Documentation]({base}/docs) · [Authentication]({base}/auth.md) · [API operations]({base}/v1) · [OpenAPI]({base}/openapi.json) · [Console]({base}/console)\n\nRead the authentication guide for this deployment's active mode before connecting.\n\n{}\n",
                 pricing(&service)
             ),
         )

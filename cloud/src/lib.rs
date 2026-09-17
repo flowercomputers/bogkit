@@ -40,3 +40,5 @@ mod site;
 
 mod native_oauth;
 mod client_metadata;
+
+pub mod app_access;

@@ -184,6 +184,7 @@ impl NativeAuth {
         let db = Connection::open(path).map_err(db_error)?;
         db.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA secure_delete=ON; CREATE TABLE IF NOT EXISTS native_logins(state BLOB PRIMARY KEY,binding BLOB NOT NULL,verifier TEXT NOT NULL,target TEXT,expires INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS native_sessions(id BLOB PRIMARY KEY,csrf TEXT NOT NULL,subject TEXT NOT NULL,expires INTEGER NOT NULL);").map_err(db_error)?;
         crate::native_oauth::initialize(&db)?;
+        db.execute_batch("CREATE TABLE IF NOT EXISTS app_token_labels(token_id TEXT PRIMARY KEY,label TEXT NOT NULL)").map_err(db_error)?;
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
             .redirect(reqwest::redirect::Policy::none())

@@ -60,12 +60,6 @@ struct Batch {
     bog_id: String,
     operations: Vec<Mutation>,
 }
-#[derive(Serialize, JsonSchema)]
-struct Success {
-    status: u16,
-    data: Value,
-    request_id: String,
-}
 
 fn schema<T: JsonSchema>() -> Arc<Map<String, Value>> {
     Arc::new(
@@ -112,7 +106,7 @@ fn definition<T: JsonSchema>(
         _ => bog_cloud::contract::description(name).unwrap_or(description),
     };
     Tool::new(name, description, Arc::new(input))
-        .with_raw_output_schema(schema::<Success>())
+        .with_raw_output_schema(Arc::new(crate::output::schema(name)))
         .with_annotations(
             ToolAnnotations::new()
                 .read_only(read)
@@ -124,6 +118,27 @@ fn definition<T: JsonSchema>(
 
 pub fn definitions() -> Vec<Tool> {
     vec![
+        definition::<Empty>(
+            "list_templates",
+            "List available template IDs and defaults before creating a Bog.",
+            true,
+            false,
+            true,
+        ),
+        definition::<Empty>(
+            "get_current_context",
+            "Identify the caller, default workspace, memberships and current workspace Bog allowances. Choose shared workspaces explicitly.",
+            true,
+            false,
+            true,
+        ),
+        definition::<Prepare>(
+            "prepare_app_access",
+            "Prepare a ten-minute private installation of a single-Bog credential. Returns only a handoff reference; install through the local helper or an explicit console download. No secret is returned or minted until redemption.",
+            false,
+            false,
+            false,
+        ),
         definition::<Wait>(
             "wait_for_change",
             "Wait up to 25 seconds for a change using timeout; timeout_seconds is a legacy alias (do not supply both). Omit cursor to get current position. Reset requires refetch; no event replay.",
@@ -141,7 +156,7 @@ pub fn definitions() -> Vec<Tool> {
         ),
         definition::<Issue>(
             "issue_token",
-            "Issue a single Bog credential.",
+            "Compatibility operation: returns a secret in the tool result. Prefer prepare_app_access to install a credential privately without exposing it in the conversation.",
             false,
             false,
             false,
@@ -156,7 +171,7 @@ pub fn definitions() -> Vec<Tool> {
         ),
         definition::<Empty>(
             "list_bogs",
-            "List databases (owner only).",
+            "List Bogs in your personal workspace, or supply workspace_id explicitly for a shared workspace.",
             true,
             false,
             true,
@@ -211,10 +226,18 @@ struct Wait {
     #[serde(alias = "timeout_seconds")]
     timeout: Option<u64>,
 }
+#[derive(JsonSchema)]
+#[serde(rename_all = "lowercase")]
+#[allow(dead_code)]
+enum AppScope {
+    Read,
+    Write,
+}
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct Issue {
     bog_id: String,
+    #[schemars(with = "AppScope")]
     scope: String,
 }
 #[derive(Deserialize, JsonSchema)]
@@ -223,8 +246,42 @@ struct Revoke {
     bog_id: String,
     token_id: String,
 }
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct Prepare {
+    bog_id: String,
+    #[schemars(with = "AppScope")]
+    scope: String,
+    label: String,
+}
 pub(crate) fn operation(name: &str, args: Value) -> Result<Operation, ErrorData> {
     Ok(match name {
+        "list_templates" => {
+            let _: Empty = parse(args)?;
+            Operation::ListTemplates
+        }
+        "get_current_context" => {
+            let _: Empty = parse(args)?;
+            Operation::GetCurrentContext
+        }
+        "prepare_app_access" => {
+            let a: Prepare = parse(args)?;
+            let scope = match a.scope.as_str() {
+                "read" => bog_cloud::Scope::Read,
+                "write" => bog_cloud::Scope::Write,
+                _ => {
+                    return Err(ErrorData::invalid_params(
+                        "scope must be read or write",
+                        None,
+                    ));
+                }
+            };
+            Operation::PrepareAppAccess {
+                bog_id: id(a.bog_id)?,
+                scope,
+                label: a.label,
+            }
+        }
         "wait_for_change" => {
             let a: Wait = parse(args)?;
             Operation::WaitForChange {
@@ -331,8 +388,22 @@ pub(crate) fn operation(name: &str, args: Value) -> Result<Operation, ErrorData>
 }
 const MAX_RESULT_BYTES: usize = 1024 * 1024;
 fn tool_error(error: CloudError, request_id: &str) -> CallToolResult {
+    let next = match error.code.as_str() {
+        "forbidden" => {
+            "Check get_current_context and your workspace membership; supply workspace_id for shared Bogs. Account administration requires an owner in the console."
+        }
+        "not_found" => {
+            "Check the Bog or credential ID and select its workspace explicitly. Other workspaces remain hidden."
+        }
+        "capacity" => {
+            "Check get_current_context for allowances; retry later if the host is busy. No infrastructure expands automatically."
+        }
+        _ => {
+            "Correct the reported argument or operation requirement and retry; reuse a creation key only with the identical body."
+        }
+    };
     CallToolResult::structured_error(
-        json!({"error":{"code":error.code,"message":error.message},"request_id":request_id}),
+        json!({"error":{"code":error.code,"message":error.message,"next_action":next},"request_id":request_id}),
     )
 }
 #[derive(Clone)]
@@ -346,8 +417,43 @@ impl ServerHandler for Handler {
     }
 
     fn get_info(&self) -> ServerConfig {
-        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
-            .with_server_info(Implementation::new("bog-cloud", env!("CARGO_PKG_VERSION")))
+        ServerConfig::new(
+            ServerCapabilities::builder()
+                .enable_tools()
+                .enable_resources()
+                .build(),
+        )
+        .with_server_info(Implementation::new("bog-cloud", env!("CARGO_PKG_VERSION")))
+        .with_instructions(bog_cloud::contract::AGENT_INSTRUCTIONS)
+    }
+    async fn list_resources(
+        &self,
+        _: Option<PaginatedRequestParams>,
+        _: RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, ErrorData> {
+        Ok(ListResourcesResult::with_all_items(
+            crate::resources::definitions(),
+        ))
+    }
+    async fn read_resource(
+        &self,
+        request: ReadResourceRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResponse, ErrorData> {
+        let parts = context.extensions.get::<axum::http::request::Parts>();
+        let request_id = parts
+            .and_then(|p| p.extensions.get::<crate::transport::RequestId>())
+            .map(|id| id.0.clone())
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let principal = parts
+            .and_then(|p| p.extensions.get::<Principal>())
+            .ok_or_else(|| {
+                ErrorData::internal_error(
+                    "request authentication unavailable",
+                    Some(json!({"request_id":request_id})),
+                )
+            })?;
+        crate::resources::read(&self.0, principal, &request.uri, &request_id).await
     }
     async fn list_tools(
         &self,

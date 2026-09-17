@@ -204,7 +204,8 @@ fn scope_upgrade_required(
     };
     let target = match operation {
         Operation::CreateBog { .. } => None,
-        Operation::IssueToken { bog_id, .. }
+        Operation::PrepareAppAccess { bog_id, .. }
+        | Operation::IssueToken { bog_id, .. }
         | Operation::RevokeToken { bog_id, .. }
         | Operation::UpsertRecord { bog_id, .. }
         | Operation::DeleteRecord { bog_id, .. }

@@ -59,13 +59,32 @@ pub async fn call(
     name: &str,
     args: serde_json::Value,
 ) -> rmcp::model::CallToolResult {
-    client
+    let result = client
         .call_tool(
             rmcp::model::CallToolRequestParams::new(name.to_owned())
                 .with_arguments(args.as_object().unwrap().clone()),
         )
         .await
-        .unwrap()
+        .unwrap();
+    if result.is_error != Some(true) {
+        let definition = bog_cloud_mcp::tools::definitions()
+            .into_iter()
+            .find(|tool| tool.name == name)
+            .unwrap();
+        let input = serde_json::to_value(&definition.input_schema).unwrap();
+        assert!(
+            jsonschema::is_valid(&input, &args),
+            "{name} accepted arguments outside its advertised schema"
+        );
+        let schema = serde_json::to_value(definition.output_schema.unwrap()).unwrap();
+        let value = result
+            .structured_content
+            .as_ref()
+            .expect("structured success");
+        let validator = jsonschema::validator_for(&schema).unwrap();
+        assert!(validator.is_valid(value), "{name} output contract mismatch");
+    }
+    result
 }
 pub async fn ready(h: &Harness, id: bog_cloud::BogId) {
     h.service.supervisor.ensure_running(id).await.unwrap();

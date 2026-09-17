@@ -16,8 +16,8 @@ Approved plan: connect, understand, and build through MCP (2026-09-17).
 - Local helper may need its own device approval; it must not extract another client's tokens.
 
 ## Status
-- Phase 1: in progress; baseline clean ceed480; installed Codex 0.145.0 and Claude Code 2.1.139.
-- Phase 2: pending.
+- Phase 1: complete on165017c; actual Codex0.154.0 and Claude2.1.274 liveOAuth+operational trials passed.
+- Phase 2: in progress; backend handoff worker, parent MCP/helper/console.
 - Phase 3: pending.
 
 ### Phase 1 evidence
@@ -44,3 +44,12 @@ Approved plan: connect, understand, and build through MCP (2026-09-17).
 - Claude2.1.274 authenticated but tools discovery rejected missing ttlMs/cacheScope; actual client trial did not create any Bog. Investigating SDK protocol negotiation before phase2. Existing chat fingerprint unchanged on8a832be.
 
 - Protocol fix: SDK supportedVersions included2026 even though initialize selected2025. Bound advertisement/negotiation to known revisions through2025-11-25, preserving existing older-client support. Actual Claude local discovery/list passed. Eight protocol tests and expanded OAuth denial/exchange-binding tests passed; strictClippy passed. Independent review pending.
+
+-165017c deployed; Claude live trial PASS with disposable71b09918-c906-43f3-80e3-0d70efd70aa4. Creation2aee9cc9-9689-4422-a983-ebfc0d6d3899, retryf591d40a-5e90-4852-b26d-c007c70de406, read2dcc564c-0f55-4b54-b61d-bad6d1701052. Existingchat unchanged. Phase1 accepted.
+
+### Phase 2 local evidence
+- Account-bound ten-minute in-memory private handoffs, one redemption, rechecked permission, additive native SQLite labels, no registry migration. Backend review found member rollback failure; fixed by narrowly matched internal revocation with audit, tested with forced label-storage failure.
+- MCP now has16tools,4read-only resources, instructions, operation-specific success schemas. All14transporttests passed with actual response JSONSchema checks. Pythonhelper8tests and7console/WebMCP JS tests pass; realhelper-to-localgatewayintegration produced600 file and verifiedscopedtoken.
+- Console signed-out handoff loss fixed with validatedUUID-onlysessionStorage; independentreviewapprovedfix. No credentials stored there. Backend andclientreviews no remainingblockers. Fullfinalsuite/lints pendingcandidate.
+
+- Phase2 candidate finalchecks:116Rusttests+7JStests+8Pythonhelpertests passed; strictcloud/MCPalltargets--no-depsClippypassed. Candidate ready for deployment and liveprivate-deliverychecks.

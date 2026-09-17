@@ -2,6 +2,12 @@
 use serde_json::{Value, json};
 pub const OPERATIONS: &[(&str, &str, &str, &str)] = &[
     (
+        "prepare_app_access",
+        "POST",
+        "/v1/bogs/{bog_id}/app-access",
+        "Prepare a ten-minute account-bound private app credential handoff. Returns no secret; use the helper or an explicit console download to redeem once.",
+    ),
+    (
         "schema",
         "GET",
         "/v1/bogs/{bog_id}/schema",
@@ -71,7 +77,7 @@ pub const OPERATIONS: &[(&str, &str, &str, &str)] = &[
         "issue_token",
         "POST",
         "/v1/bogs/{bog_id}/tokens",
-        "Issue a single database read or write application credential, shown only once.",
+        "Compatibility operation: returns a secret. Prefer prepare_app_access for private installation without revealing credentials in a conversation.",
     ),
     (
         "list_tokens",
@@ -112,6 +118,9 @@ pub fn openapi() -> Value {
             }
             "upsert_record" => Some(
                 json!({"type":"object","additionalProperties":true,"example":{"message":"hello"}}),
+            ),
+            "prepare_app_access" => Some(
+                json!({"type":"object","required":["scope","label"],"additionalProperties":false,"properties":{"scope":{"type":"string","enum":["read","write"]},"label":{"type":"string","minLength":1,"maxLength":80}}}),
             ),
             "issue_token" => Some(
                 json!({"type":"object","required":["scope"],"additionalProperties":false,"properties":{"scope":{"type":"string","enum":["read","write"]}}}),
@@ -615,7 +624,13 @@ fn finish_contract(mut paths: serde_json::Map<String, Value>) -> Value {
                 if result.get("headers").is_none() {
                     result["headers"] = json!({});
                 }
-                for name in ["RateLimit-Policy", "RateLimit", "RateLimit-Limit", "RateLimit-Remaining", "RateLimit-Reset"] {
+                for name in [
+                    "RateLimit-Policy",
+                    "RateLimit",
+                    "RateLimit-Limit",
+                    "RateLimit-Remaining",
+                    "RateLimit-Reset",
+                ] {
                     result["headers"][name] =
                         json!({"$ref":format!("#/components/headers/{name}")});
                 }
@@ -740,6 +755,13 @@ pub fn guide(configured: bool, legacy_limit: usize) -> String {
         page = page.replace(&format!("{{{{{key}}}}}"), &value);
     }
     page
+}
+
+/// Common guidance for remote tools, resources, and human connection docs.
+pub const AGENT_INSTRUCTIONS: &str = "Start with get_current_context and list_templates. Omitted workspace_id means your personal workspace; always pass workspace_id for shared workspaces. Create with a name and stable idempotency_key; reuse the identical key/body on retries. Wait for ready status before using records. Read bounded pages (default 100, max 1000, offset max 10000). wait_for_change takes timeout 0–25 and an opaque cursor; refetch on changed or reset, with no event replay. Use prepare_app_access for a single-Bog app credential delivered privately by the helper or an explicit console download. Never put secrets in prompts, URLs, or logs. Agents cannot manage membership or delete Bogs.";
+pub const ACCESS_RULES: &str = "GitHub identity determines your account, and current membership determines workspace access. Personal is the default; shared workspace selection must be explicit. bog:read reads existing Bogs; bog:write also permits creation, record writes and issuing single-Bog app credentials. Broader scope cannot grant missing membership. App credentials cannot provision, mint credentials, or access another Bog. Owners manage membership and Bog deletion through the console. Removal and revocation take effect on subsequent requests. Pending private handoffs last ten minutes, require the initiating account at redemption, and expire on server restart. Private installation can require a separate device approval when the helper has no authorization. issue_token remains compatible but returns a secret in its result; prefer prepare_app_access.";
+pub fn templates() -> Value {
+    json!({"templates":overview()["templates"]})
 }
 
 #[cfg(test)]

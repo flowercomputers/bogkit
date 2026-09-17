@@ -3,6 +3,34 @@ const $ = id => document.getElementById(id);
 const createKeys = new Map();
 let csrf = '', workspace = '', owner = false, account = '', invitation = '', platformOperator = false;
 let workspaceItems = [];
+let pendingAppAccess = null;
+// This reference grants no authority. Keep only a validated UUID across the
+// same-tab sign-in redirect; credentials and handoff metadata stay in memory.
+const handoffStorageKey = 'bog.pending-app-handoff';
+const validHandoff = value => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+function rememberHandoff(id) {
+  if (!validHandoff(id)) return;
+  try { sessionStorage.setItem(handoffStorageKey, id); } catch { /* Storage can be disabled. */ }
+}
+function clearHandoffReference() {
+  try { sessionStorage.removeItem(handoffStorageKey); } catch { /* Storage can be disabled. */ }
+  const params = new URLSearchParams(location.search);
+  if (params.has('handoff')) {
+    params.delete('handoff');
+    history.replaceState(null, '', location.pathname + (params.size ? '?' + params.toString() : '') + location.hash);
+  }
+}
+function restoreHandoffReference() {
+  const params = new URLSearchParams(location.search);
+  let id = params.get('handoff');
+  if (!params.has('handoff')) {
+    try { id = sessionStorage.getItem(handoffStorageKey); } catch { /* Storage can be disabled. */ }
+  }
+  if (!validHandoff(id)) { clearHandoffReference(); return null; }
+  rememberHandoff(id);
+  return id;
+}
+const requestedHandoff = restoreHandoffReference();
 const fragment = new URLSearchParams(location.hash.slice(1));
 if (fragment.has('invite')) { invitation = fragment.get('invite'); history.replaceState(null, '', location.pathname); }
 function status(message, error = false) { $('status').textContent = message; $('status').toggleAttribute('data-error', error); }
@@ -47,7 +75,7 @@ async function refresh() {
     const tokenData = await api(selected('/v1/bogs/' + bog.id + '/tokens'));
     for (const token of tokenData.tokens || []) {
       if (token.revoked_at) continue;
-      const line = element('div', '', 'row'); line.append(element('span', `${bog.name} · ${token.scope} · ${token.id}`));
+      const line = element('div', '', 'row'); line.append(element('span', `${bog.name} · ${token.label || 'App credential'} · ${token.scope} · ${token.id}`));
       if (owner) line.append(action('Revoke', async () => { await api(selected('/v1/bogs/' + bog.id + '/tokens/' + token.id), { method: 'DELETE' }); await refresh(); status('Credential revoked.'); }));
       $('tokens').append(line);
     }
@@ -78,8 +106,8 @@ for (const id of ['create', 'issue', 'invite']) $(id).onsubmit = event => {
       const label = workspace + ':' + $('name').value; if (!createKeys.has(label)) createKeys.set(label, crypto.randomUUID());
       await api(selected('/v1/bogs'), { method: 'POST', headers: { 'Idempotency-Key': createKeys.get(label) }, body: JSON.stringify({ name: $('name').value }) }); createKeys.delete(label); $('name').value = ''; await refresh(); status('Bog created. Your app can start using it.');
     } else if (id === 'issue') {
-      const token = await api(selected('/v1/bogs/' + $('token-bog').value + '/tokens'), { method: 'POST', body: JSON.stringify({ scope: $('scope').value }) });
-      await refresh(); reveal('Save this credential now. It will not be shown again.', token.token || token.secret); status('App credential issued.');
+      const prepared = await api(selected('/v1/bogs/' + $('token-bog').value + '/app-access'), { method: 'POST', body: JSON.stringify({ scope: $('scope').value, label: $('app-label').value }) });
+      showAppHandoff(prepared); status('Private access prepared. Download explicitly within ten minutes.');
     } else {
       const invite = await api('/v1/workspaces/' + workspace + '/invitations', { method: 'POST', body: JSON.stringify({ role: $('role').value }) });
       reveal('Share this single-use invitation. It expires in seven days.', location.origin + '/console#invite=' + encodeURIComponent(invite.secret));
@@ -104,6 +132,10 @@ async function start() {
     platformOperator = me.platform_operator === true; $('platform').hidden = !platformOperator; if (platformOperator) await refreshPlatform();
     workspace = $('workspace').value; owner = $('workspace').selectedOptions[0]?.dataset.role === 'owner';
     await refresh(); status('Signed in. Your workspace is ready.');
+    if (requestedHandoff) {
+      try { showAppHandoff(await api('/v1/app-access/' + encodeURIComponent(requestedHandoff))); }
+      catch (error) { if (error.status !== 401) clearHandoffReference(); throw error; }
+    }
     if (invitation) { const preview = await api('/v1/invitations/preview', { method: 'POST', body: JSON.stringify({ secret: invitation }) }); $('invite-description').textContent = `You have been invited to join ${preview.workspace_name || preview.name} as ${preview.role}.`; $('invitation').hidden = false; }
   } catch (e) { status(e.status === 401 ? 'Sign in with GitHub to open your workspace.' : e.message, e.status !== 401); $('login').hidden = false; if (invitation) status('Sign in with GitHub, then open your invitation link again.'); }
 }
@@ -150,6 +182,29 @@ async function refreshPlatform() {
     }
   }
 }
+function showAppHandoff(prepared) {
+  rememberHandoff(prepared.handoff_id);
+  pendingAppAccess = prepared;
+  $('handoff-description').textContent = `${prepared.label} · ${prepared.scope} access to Bog ${prepared.bog_id} in workspace ${prepared.workspace_id}. Expires ${new Date(prepared.expires_at * 1000).toLocaleTimeString()}.`;
+  $('app-handoff').hidden = false;
+  $('download-app').disabled = false;
+}
+$('download-app').onclick = () => task($('download-app'), async () => {
+  const prepared = pendingAppAccess;
+  if (!prepared) { status('Prepare a new handoff before downloading.', true); return; }
+  // Consume only on this explicit human action. No secret enters the page or WebMCP result.
+  pendingAppAccess = null;
+  clearHandoffReference();
+  $('app-handoff').hidden = true;
+  try {
+    const credential = await api('/v1/app-access/' + encodeURIComponent(prepared.handoff_id) + '/redeem', {method:'POST',body:'{}'});
+    const configuration = {BOG_CLOUD_URL:location.origin,BOG_ID:credential.bog_id,BOG_CLOUD_TOKEN:credential.token,credential_id:credential.id};
+    const url = URL.createObjectURL(new Blob([JSON.stringify(configuration) + '\n'], {type:'application/json'}));
+    const link = document.createElement('a'); link.href = url; link.download = 'bog-app-' + credential.id + '.json';
+    document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+    await refresh(); status('Private configuration downloaded. Keep it outside source control; if delivery failed, revoke the listed credential and prepare a new handoff.');
+  } catch (error) { await refresh(); throw new Error('Download did not complete. Prepare a new handoff and revoke any unused issued credential. ' + error.message); }
+});
 start();
 
 document.addEventListener('bog-resources-changed', () => { if (workspace) refresh().catch(error => status(error.message, true)); });

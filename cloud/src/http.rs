@@ -14,6 +14,7 @@ use uuid::Uuid;
 
 pub fn build_rest_router(service: Arc<CloudService>) -> Router {
     Router::new()
+        .route("/bog-app-access.py", get(|| async { guide_asset("text/x-python; charset=utf-8", include_str!("../../scripts/cloud/bog_app_access.py")) }))
         .route("/flower-site.css", get(|| async { guide_asset("text/css; charset=utf-8", include_str!("../static/flower-site.css")) }))
         .route("/flower-header.css", get(|| async { guide_asset("text/css; charset=utf-8", include_str!("../static/flower-header.css")) }))
         .route("/flower-footer.css", get(|| async { guide_asset("text/css; charset=utf-8", include_str!("../static/flower-footer.css")) }))
@@ -123,7 +124,11 @@ pub fn build_rest_router(service: Arc<CloudService>) -> Router {
 
 pub(crate) fn guide_asset(content_type: &'static str, body: impl Into<String>) -> Response {
     let body = body.into();
-    let body = if content_type.starts_with("text/html") { crate::site::shell(body) } else { body };
+    let body = if content_type.starts_with("text/html") {
+        crate::site::shell(body)
+    } else {
+        body
+    };
     ([
         (header::CONTENT_TYPE, content_type),
         (header::CONTENT_SECURITY_POLICY, "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"),
@@ -350,6 +355,15 @@ async fn dispatch_inner(
     if path[1] != "bogs" {
         service.rate_limit(&principal)?;
         let ok = |body| Ok(crate::OperationResult { status: 200, body });
+        if path[1] == "app-access" {
+            return match (method.as_str(), path.len()) {
+                ("GET", 3) => ok(service.describe_app_access(&principal, &path[2])?),
+                ("POST", 4) if path[3] == "redeem" => {
+                    ok(service.redeem_app_access(&principal, &path[2])?)
+                }
+                _ => Err(CloudError::new("not_found", "route not found")),
+            };
+        }
         if path[1] == "agent-tokens" && service.native_auth.is_some() {
             return match (method.as_str(), path.len()) {
                 ("GET", 2) => ok(json!({"tokens":service.auth.list_agent_tokens(&principal)?})),
@@ -551,6 +565,21 @@ async fn dispatch_inner(
             bog_id: id.unwrap(),
             operations: parse()?,
         },
+        ("POST", 4) if path[3] == "app-access" => {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Prepare {
+                scope: Scope,
+                label: String,
+            }
+            let body: Prepare =
+                serde_json::from_value(parse()?).map_err(|_| bad("expected scope and label"))?;
+            Operation::PrepareAppAccess {
+                bog_id: id.unwrap(),
+                scope: body.scope,
+                label: body.label,
+            }
+        }
         ("POST", 4) if path[3] == "tokens" => {
             #[derive(Deserialize)]
             #[serde(deny_unknown_fields)]
