@@ -97,6 +97,18 @@ async fn changes_wake_timeout_reset_revoke_and_cancel() {
             .code,
         "capacity"
     );
+    assert_eq!(
+        waiter.read_cursor(&svc, &owner, id).await.unwrap_err().code,
+        "capacity"
+    );
+    assert_eq!(
+        waiter
+            .initialize(&svc, &owner, id, Duration::from_secs(26))
+            .await
+            .unwrap_err()
+            .code,
+        "invalid_request"
+    );
     for wait in waits {
         wait.abort();
         let _ = wait.await;
@@ -106,6 +118,21 @@ async fn changes_wake_timeout_reset_revoke_and_cancel() {
             .wait(&svc, &owner, id, &reset.cursor, Duration::ZERO)
             .await
             .is_ok()
+    );
+    assert_eq!(
+        svc.execute(
+            &owner,
+            Operation::WaitForChange {
+                bog_id: id,
+                cursor: None,
+                timeout_seconds: 26
+            }
+        )
+        .await
+        .err()
+        .unwrap()
+        .code,
+        "invalid_request"
     );
     svc.supervisor.shutdown().await.unwrap();
 }

@@ -100,7 +100,7 @@ impl ChangeWaiter {
     ) -> Result<Cursor, CloudError> {
         service.auth.authorize(principal, Some(id), false)?;
         let lease = service.supervisor.lease(id).await?;
-        let before = service.registry.get(id)?.generation;
+        let before = lease.generation;
         let (status, body) = lease
             .client
             .request(reqwest::Method::GET, "/views/total", None)
@@ -126,7 +126,36 @@ impl ChangeWaiter {
         principal: &Principal,
         id: BogId,
     ) -> Result<ChangeResult, CloudError> {
-        Ok(Self::snapshot(service, principal, id).await?.result(None))
+        self.initialize(service, principal, id, Duration::from_secs(25))
+            .await
+    }
+    pub async fn initialize(
+        &self,
+        service: &CloudService,
+        principal: &Principal,
+        id: BogId,
+        timeout: Duration,
+    ) -> Result<ChangeResult, CloudError> {
+        service.auth.authorize(principal, Some(id), false)?;
+        Self::validate_timeout(timeout)?;
+        let _permit = self.acquire(id)?;
+        let snapshot = tokio::time::timeout(
+            Duration::from_secs(25),
+            Self::snapshot(service, principal, id),
+        )
+        .await
+        .map_err(|_| CloudError::new("unavailable", "change state deadline exceeded"))??;
+        service.auth.authorize(principal, Some(id), false)?;
+        Ok(snapshot.result(None))
+    }
+    fn validate_timeout(timeout: Duration) -> Result<(), CloudError> {
+        if timeout > Duration::from_secs(25) {
+            return Err(CloudError::new(
+                "invalid_request",
+                "change wait timeout must not exceed 25 seconds",
+            ));
+        }
+        Ok(())
     }
     pub async fn wait(
         &self,
@@ -138,12 +167,7 @@ impl ChangeWaiter {
     ) -> Result<ChangeResult, CloudError> {
         service.auth.authorize(principal, Some(id), false)?;
         let previous = Cursor::decode(cursor)?;
-        if timeout > Duration::from_secs(25) {
-            return Err(CloudError::new(
-                "invalid_request",
-                "change wait timeout must not exceed 25 seconds",
-            ));
-        }
+        Self::validate_timeout(timeout)?;
         let _permit = self.acquire(id)?;
         // Initial snapshot is required even for timeout=0. Each subsequent
         // probe has an absolute deadline so a stalled worker cannot extend wait.
@@ -180,6 +204,32 @@ impl ChangeWaiter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn cursorless_initialization_obeys_global_capacity() {
+        let tmp = tempfile::tempdir().unwrap();
+        let owner_secret = "bounded-cursor-owner-thirty-two-bytes";
+        let service = CloudService::open(
+            crate::config::Config::new(tmp.path().join("r"), tmp.path().join("missing-worker")),
+            owner_secret,
+        )
+        .unwrap();
+        let owner = service.auth.authenticate(owner_secret).unwrap();
+        let id = service.registry.create("a", "records-v1", "a").unwrap().id;
+        let waiter = ChangeWaiter::new();
+        let permits: Vec<_> = (0..64)
+            .map(|_| waiter.acquire(BogId(uuid::Uuid::new_v4())).unwrap())
+            .collect();
+        assert_eq!(
+            waiter
+                .initialize(&service, &owner, id, Duration::ZERO)
+                .await
+                .unwrap_err()
+                .code,
+            "capacity"
+        );
+        drop(permits);
+        assert!(waiter.active.lock().unwrap().is_empty());
+    }
     #[test]
     fn cursors_and_capacity_are_bounded_and_scoped() {
         let id = BogId(uuid::Uuid::new_v4());
