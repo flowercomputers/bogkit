@@ -68,12 +68,12 @@ struct Permit<'a> {
 }
 impl Drop for Permit<'_> {
     fn drop(&mut self) {
-        if let Ok(mut active) = self.waiter.active.lock() {
-            if let Some(count) = active.get_mut(&self.id) {
-                *count -= 1;
-                if *count == 0 {
-                    active.remove(&self.id);
-                }
+        if let Ok(mut active) = self.waiter.active.lock()
+            && let Some(count) = active.get_mut(&self.id)
+        {
+            *count -= 1;
+            if *count == 0 {
+                active.remove(&self.id);
             }
         }
     }
