@@ -130,7 +130,7 @@ $('create-workspace').onsubmit = event => {
     createKeys.delete(label); $('workspace-name').value = '';
     await loadWorkspaces(result.workspace.id); await refresh();
     if (platformOperator) await refreshPlatform();
-    status('Organization created. Invite your team below.');
+    status('Organization created. Invite your team through People.');
   });
 };
 async function refreshPlatform() {
