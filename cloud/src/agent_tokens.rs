@@ -14,7 +14,7 @@ pub(crate) fn validate_name(name: &str) -> Result<(), CloudError> {
     if name.trim().is_empty() || name.len() > 80 || name.chars().any(char::is_control) {
         return Err(CloudError::new(
             "invalid_request",
-            "credential name must contain 1 to 80 bytes without controls",
+            "credential name must contain 1 to 80 bytes without control characters",
         ));
     }
     Ok(())

@@ -182,6 +182,13 @@ async fn account_tokens_are_human_only_revocable_and_stored_hashed() {
             .authorize(&app_principal, Some(personal.id), false)
             .is_err()
     );
+    let error = svc
+        .auth
+        .issue_agent_token(&human, "agent\nname")
+        .err()
+        .unwrap();
+    assert_eq!(error.code, "invalid_request");
+    assert!(error.message.contains("without control characters"));
     let token = svc.auth.issue_agent_token(&human, "test agent").unwrap();
     assert!(token.secret.starts_with("bog_agent_"));
     let agent = svc
@@ -219,6 +226,41 @@ async fn native_http_device_and_discovery() {
     .unwrap();
     std::sync::Arc::get_mut(&mut svc).unwrap().native_auth = Some(native);
     let app = bog_cloud::build_rest_router(svc);
+    for (path, required) in [
+        (
+            "/llms.txt",
+            vec![
+                "hosted typed datastore",
+                "GitHub browser sign-in",
+                "MCP OAuth login are not supported",
+            ],
+        ),
+        (
+            "/auth.md",
+            vec![
+                "including structuredContent",
+                "may enter model context, chat transcripts or client logs",
+                "private file with owner-only permissions, without printing it",
+            ],
+        ),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let body = to_bytes(response.into_body(), 100000).await.unwrap();
+        let text = std::str::from_utf8(&body).unwrap();
+        for phrase in required {
+            assert!(text.contains(phrase), "{path}: missing {phrase}");
+        }
+        if path == "/llms.txt" {
+            assert!(text.contains(&bog_cloud::contract::llms()));
+            assert!(!text.contains("WorkOS"));
+        }
+    }
+
     let response = app
         .clone()
         .oneshot(Request::builder().uri("/v1").body(Body::empty()).unwrap())

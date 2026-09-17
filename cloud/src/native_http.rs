@@ -199,15 +199,41 @@ For agents, POST /auth/device with JSON {"name":"My agent"}. Keep device_code pr
 
 Alternatively, a signed-in human creates/revokes named agent credentials in /console or uses GET/POST /v1/agent-tokens and DELETE /v1/agent-tokens/{id}. Writes require the session cookie, exact Origin and x-csrf-token from /console-session. Only humans can manage account credentials. Tokens expire in 30 days; revocation and account suspension are immediate.
 
+MCP tool results, including structuredContent, may enter model context, chat transcripts or client logs. Structured output is not a private credential channel. For credential issuance, prefer HTTP and write the response directly to a private file with owner-only permissions, without printing it. Configure the client from that file privately; never paste its contents into a conversation. This applies to device-token responses, account credentials and scoped app credentials.
+
 Use Authorization: Bearer <Bog credential> for REST and bearer-capable MCP clients at /mcp. Select workspace_id explicitly; omission selects personal. Agents can create Bogs and issue scoped app credentials, but cannot manage members, delete Bogs or mint account credentials. App credentials remain restricted to one Bog. Membership is checked on every request. GitHub access tokens are never Bog API credentials. Bog does not currently implement an MCP OAuth authorization server or advertise OAuth discovery. See /v1 for creation requirements and /v1/templates for templates.
 "#;
+fn native_llms() -> String {
+    format!(
+        "{}\nUse Bog Cloud when an app or agent needs a hosted typed datastore with schema validation and durable storage. Use HTTP for direct API integration and private credential issuance; use MCP for a bearer-capable agent client.\n\nAuthentication: GitHub browser sign-in at /auth/login, Bog device approval at /auth/device, and Bog bearer credentials. Read /auth.md before requesting credentials. OAuth authorization-server discovery and MCP OAuth login are not supported.\n",
+        crate::contract::llms()
+    )
+}
 pub fn discovery(service: &CloudService, path: &str) -> Option<Response> {
-    Some(match path{
-    "/auth.md"=>([(header::CONTENT_TYPE,"text/markdown; charset=utf-8")],AUTH_MARKDOWN).into_response(),
-    "/.well-known/oauth-protected-resource"=>StatusCode::NOT_FOUND.into_response(),
-    "/llms.txt"=>([(header::CONTENT_TYPE,"text/plain; charset=utf-8")],"Bog Cloud: GitHub browser sign-in, Bog device approval and bearer credentials. REST /v1; MCP /mcp with bearer credentials. Read /auth.md. OAuth authorization-server discovery is not supported.").into_response(),
-    "/v1"=>{let mut v=crate::contract::overview();v["authentication_configured"]=json!(service.authentication_configured());v["authentication_mode"]=json!("github_native");v["authentication"]=json!({"browser_login":"/auth/login","device_start":"/auth/device","device_token":"/auth/device/token","device_approval":"/auth/device/approve","agent_tokens":"/v1/agent-tokens","account":"/v1/me","session":"/console-session","mcp":"bearer","oauth_authorization_server":false});v["next_step"]=json!("Sign in with GitHub at /auth/login or request human approval via /auth/device. Read /auth.md.");Json(v).into_response()},
-    _=>return None})
+    Some(match path {
+        "/auth.md" => (
+            [(header::CONTENT_TYPE, "text/markdown; charset=utf-8")],
+            AUTH_MARKDOWN,
+        )
+            .into_response(),
+        "/.well-known/oauth-protected-resource" => StatusCode::NOT_FOUND.into_response(),
+        "/llms.txt" => (
+            [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+            native_llms(),
+        )
+            .into_response(),
+        "/v1" => {
+            let mut v = crate::contract::overview();
+            v["authentication_configured"] = json!(service.authentication_configured());
+            v["authentication_mode"] = json!("github_native");
+            v["authentication"] = json!({"browser_login":"/auth/login","device_start":"/auth/device","device_token":"/auth/device/token","device_approval":"/auth/device/approve","agent_tokens":"/v1/agent-tokens","account":"/v1/me","session":"/console-session","mcp":"bearer","oauth_authorization_server":false});
+            v["next_step"] = json!(
+                "Sign in with GitHub at /auth/login or request human approval via /auth/device. Read /auth.md."
+            );
+            Json(v).into_response()
+        }
+        _ => return None,
+    })
 }
 pub fn guide(service: &CloudService) -> String {
     if service.native_auth.is_none() {

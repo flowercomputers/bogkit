@@ -564,7 +564,20 @@ pub fn valid_public(s: &str) -> bool {
             .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_lowercase())
 }
 fn device_error(code: &str) -> CloudError {
-    CloudError::new(code, "device authorization is not available")
+    let message = match code {
+        "authorization_pending" => {
+            "device authorization is awaiting human approval; keep polling at intervals of at least 5 seconds"
+        }
+        "expired_token" => {
+            "device authorization expired or is no longer available; start a new device request"
+        }
+        "access_denied" => "device authorization was denied; stop polling",
+        "slow_down" => {
+            "too many device authorization requests; wait at least 5 seconds before retrying"
+        }
+        _ => "device authorization is not available",
+    };
+    CloudError::new(code, message)
 }
 
 #[cfg(test)]
@@ -604,6 +617,21 @@ mod tests {
             )
             .unwrap();
         (dir, native, auth, p, session)
+    }
+    #[test]
+    fn device_errors_explain_the_next_step_without_codes_or_credentials() {
+        for (code, guidance) in [
+            ("authorization_pending", "awaiting human approval"),
+            ("expired_token", "start a new device request"),
+            ("access_denied", "stop polling"),
+            ("slow_down", "wait at least 5 seconds"),
+        ] {
+            let error = device_error(code);
+            assert_eq!(error.code, code);
+            assert!(error.message.contains(guidance));
+            assert!(!error.message.contains("device_code"));
+            assert!(!error.message.contains("user_code"));
+        }
     }
     #[test]
     fn device_denial_expiry_slowdown_suspension_and_single_issuance() {
