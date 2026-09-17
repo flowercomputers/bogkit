@@ -1,7 +1,8 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const createKeys = new Map();
-let csrf = '', workspace = '', owner = false, account = '', invitation = '';
+let csrf = '', workspace = '', owner = false, account = '', invitation = '', platformOperator = false;
+let workspaceItems = [];
 const fragment = new URLSearchParams(location.hash.slice(1));
 if (fragment.has('invite')) { invitation = fragment.get('invite'); history.replaceState(null, '', location.pathname); }
 function status(message, error = false) { $('status').textContent = message; $('status').toggleAttribute('data-error', error); }
@@ -28,7 +29,9 @@ async function refresh() {
   $('hide-secret').click();
   const [bogData, memberData] = await Promise.all([api(selected('/v1/bogs')), api('/v1/workspaces/' + workspace + '/members')]);
   const bogs = bogData.bogs || []; $('bogs').replaceChildren(); $('token-bog').replaceChildren(); $('tokens').replaceChildren();
-  $('allowance').textContent = `${bogs.length} ${bogs.length === 1 ? "Bog" : "Bogs"} · allowance: 3 per workspace, 16 MiB of JSON records each`;
+  const current = workspaceItems.find(item => item.id === workspace);
+  const allowance = current?.bog_limit === null ? 'Uncapped Bogs (host capacity still applies)' : `${current?.bog_limit ?? 3} Bogs allowed`;
+  $('allowance').textContent = `${bogs.length} ${bogs.length === 1 ? 'Bog' : 'Bogs'} · ${allowance} · 16 MiB of JSON records each`;
   if (!bogs.length) $('bogs').append(element('p', 'Your first project can start here. Create a Bog above.'));
   for (const bog of bogs) {
     const row = element('div', '', 'row'), info = element('div', bog.name);
@@ -96,8 +99,9 @@ async function start() {
     const session = await api('/console-session'); csrf = session.csrf_token; account = session.account?.id || session.account_id || '';
     if (session.authentication_mode === 'github_native') { $('agent-access').hidden = false; await refreshAgents(); }
     $('app').hidden = false; $('logout').hidden = false;
-    for (const item of session.workspaces || []) { const option = element('option', item.name + (item.role === 'owner' ? ' · owner' : '')); option.value = item.id; option.dataset.role = item.role; $('workspace').append(option); }
+    await loadWorkspaces();
     const me = await api('/v1/me'); if (me.workspace_id) $('workspace').value = me.workspace_id;
+    platformOperator = me.platform_operator === true; $('platform').hidden = !platformOperator; if (platformOperator) await refreshPlatform();
     workspace = $('workspace').value; owner = $('workspace').selectedOptions[0]?.dataset.role === 'owner';
     await refresh(); status('Signed in. Your workspace is ready.');
     if (invitation) { const preview = await api('/v1/invitations/preview', { method: 'POST', body: JSON.stringify({ secret: invitation }) }); $('invite-description').textContent = `You have been invited to join ${preview.workspace_name || preview.name} as ${preview.role}.`; $('invitation').hidden = false; }
@@ -108,4 +112,42 @@ async function refreshAgents() {
   for (const token of data.tokens || []) { if (token.revoked_at) continue; const row=element('div','','row'); row.append(element('span', `${token.name} · expires ${new Date(token.expires_at*1000).toLocaleDateString()}`)); row.append(action('Revoke',async()=>{await api('/v1/agent-tokens/'+token.id,{method:'DELETE'});await refreshAgents();status('Agent credential revoked.');}));$('agent-tokens').append(row); }
 }
 $('agent-issue').onsubmit = event => { event.preventDefault();task(event.submitter,async()=>{const token=await api('/v1/agent-tokens',{method:'POST',body:JSON.stringify({name:$('agent-name').value})});await refreshAgents();$('agent-name').value='';reveal('Save this agent credential in a secret store. It is shown once and expires in 30 days.',token.token);status('Agent credential created.');}); };
+async function loadWorkspaces(preferred = workspace) {
+  const data = await api('/v1/workspaces'); workspaceItems = data.workspaces || [];
+  $('workspace').replaceChildren();
+  for (const item of workspaceItems) {
+    const option = element('option', item.name + (item.personal ? ' · personal' : ' · organization') + (item.bog_limit === null ? ' · uncapped' : ''));
+    option.value = item.id; option.dataset.role = item.role; $('workspace').append(option);
+  }
+  if (workspaceItems.some(item => item.id === preferred)) $('workspace').value = preferred;
+  workspace = $('workspace').value; owner = $('workspace').selectedOptions[0]?.dataset.role === 'owner';
+}
+$('create-workspace').onsubmit = event => {
+  event.preventDefault(); task(event.submitter, async () => {
+    const name = $('workspace-name').value, label = 'workspace:' + name;
+    if (!createKeys.has(label)) createKeys.set(label, crypto.randomUUID());
+    const result = await api('/v1/workspaces', {method:'POST', headers:{'Idempotency-Key':createKeys.get(label)}, body:JSON.stringify({name})});
+    createKeys.delete(label); $('workspace-name').value = '';
+    await loadWorkspaces(result.workspace.id); await refresh();
+    if (platformOperator) await refreshPlatform();
+    status('Organization created. Invite your team below.');
+  });
+};
+async function refreshPlatform() {
+  const data = await api('/v1/platform');
+  for (const kind of ['accounts', 'workspaces']) {
+    const container = $('platform-' + kind); container.replaceChildren();
+    for (const item of data[kind] || []) {
+      const row = element('div', '', 'row');
+      const label = kind === 'accounts' ? `${item.issuer === 'https://github.com' ? 'GitHub ID' : item.issuer} ${item.subject} · account ${item.id}` : `${item.name} · ${item.id}`;
+      const info = element('div', label);
+      info.append(element('small', item.uncapped_bogs ? 'Uncapped flag enabled' : (kind === 'workspaces' && item.bog_limit === null ? 'Uncapped through account flag' : 'Standard allowance')));
+      row.append(info, action(item.uncapped_bogs ? 'Use standard allowance' : 'Enable uncapped Bogs', async () => {
+        await api('/v1/platform/' + kind + '/' + encodeURIComponent(item.id) + '/quota', {method:'PUT', body:JSON.stringify({uncapped_bogs:!item.uncapped_bogs})});
+        await loadWorkspaces(); await refresh(); await refreshPlatform(); status('Allowance updated. Existing records are unchanged.');
+      }));
+      container.append(row);
+    }
+  }
+}
 start();

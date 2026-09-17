@@ -351,8 +351,62 @@ async fn dispatch_inner(
         match (method.as_str(), path[1].as_str(), path.len()) {
             ("GET", "me", 2) => {
                 return ok(
-                    json!({"kind":principal.kind(),"account":principal.account_id().map(|id|json!({"id":id})),"workspace_id":principal.workspace_id()}),
+                    json!({"kind":principal.kind(),"account":principal.account_id().map(|id|json!({"id":id})),"workspace_id":principal.workspace_id(),"platform_operator":service.auth.is_platform_operator(&principal)?}),
                 );
+            }
+            ("POST", "workspaces", 2) => {
+                #[derive(Deserialize)]
+                #[serde(deny_unknown_fields)]
+                struct CreateWorkspace {
+                    name: String,
+                }
+                let body: CreateWorkspace = serde_json::from_slice(&bytes)
+                    .map_err(|_| bad("expected name as a string; no other fields are accepted"))?;
+                let workspace = service.auth.create_workspace(
+                    &principal,
+                    &body.name,
+                    key.as_deref()
+                        .ok_or_else(|| bad("Idempotency-Key header required"))?,
+                )?;
+                return ok(json!({"workspace":workspace}));
+            }
+            ("GET", "platform", 2) => {
+                return ok(
+                    json!({"accounts":service.auth.platform_accounts(&principal)?,
+                    "workspaces":service.auth.platform_workspaces(&principal)?}),
+                );
+            }
+            ("PUT", "platform", 5) if path[4] == "quota" => {
+                if !service.auth.is_platform_operator(&principal)? {
+                    return Err(CloudError::new(
+                        "forbidden",
+                        "human platform operator required",
+                    ));
+                }
+                #[derive(Deserialize)]
+                #[serde(deny_unknown_fields)]
+                struct Quota {
+                    uncapped_bogs: bool,
+                }
+                let body: Quota = serde_json::from_slice(&bytes).map_err(|_| {
+                    bad("expected uncapped_bogs as a boolean; no other fields are accepted")
+                })?;
+                match path[2].as_str() {
+                    "accounts" => service.auth.set_account_uncapped(
+                        &principal,
+                        &path[3],
+                        body.uncapped_bogs,
+                    )?,
+                    "workspaces" => service.auth.set_workspace_uncapped(
+                        &principal,
+                        crate::WorkspaceId(
+                            Uuid::parse_str(&path[3]).map_err(|_| bad("invalid workspace ID"))?,
+                        ),
+                        body.uncapped_bogs,
+                    )?,
+                    _ => return Err(CloudError::new("not_found", "route not found")),
+                }
+                return ok(json!({"uncapped_bogs":body.uncapped_bogs}));
             }
             ("GET", "workspaces", 2) => {
                 return ok(

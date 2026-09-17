@@ -65,7 +65,7 @@ fn linked(mut r: Response, base: &str) -> Response {
 }
 fn pricing(service: &CloudService) -> String {
     if service.authentication_configured() {
-        "This prototype is free to use. Each account workspace allows three Bogs, with 16 MiB of logical JSON record storage per Bog.".into()
+        "This prototype is free to use. Each account workspace defaults to three Bogs, with 16 MiB of logical JSON record storage per Bog.".into()
     } else {
         format!(
             "This prototype is free to use. This operator-only deployment allows up to {} Bogs, with 16 MiB of logical JSON record storage per Bog. Public signup is unavailable.",

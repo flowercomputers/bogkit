@@ -10,6 +10,18 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let root = std::env::var("BOG_CLOUD_ROOT")?;
     let token = std::env::var("BOG_CLOUD_OWNER_TOKEN")?;
     let (path, body) = match args.as_slice() {
+        [command, account, enabled]
+            if command == "platform-operator" && matches!(enabled.as_str(), "true" | "false") =>
+        {
+            (
+                "/platform/operator".into(),
+                serde_json::json!({"account_id":uuid::Uuid::parse_str(account)?.to_string(),"enabled":enabled=="true"}),
+            )
+        }
+        [command, account, name, key] if command == "bootstrap-workspace" => (
+            "/platform/bootstrap-workspace".into(),
+            serde_json::json!({"account_id":uuid::Uuid::parse_str(account)?.to_string(),"name":name,"idempotency_key":key,"uncapped_bogs":true}),
+        ),
         [command, id] if command == "backup" => (
             format!("/backup/{}", uuid::Uuid::parse_str(id)?),
             serde_json::json!({}),
@@ -20,7 +32,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         ),
         _ => {
             return Err(
-                "usage: bog-cloud-admin backup <bog-id> | restore <archive-id> --name <name>"
+                "usage: bog-cloud-admin backup <bog-id> | restore <archive-id> --name <name> | platform-operator <account-id> <true|false> | bootstrap-workspace <account-id> <name> <idempotency-key>"
                     .into(),
             );
         }

@@ -239,7 +239,7 @@ fn finish_contract(mut paths: serde_json::Map<String, Value>) -> Value {
     let nullable_integer = json!({"type":["integer","null"]});
     let record = json!({"type":"object","additionalProperties":true});
     let workspace = object(
-        json!({"id":string,"name":string,"role":string}),
+        json!({"id":string,"name":string,"role":string,"personal":boolean,"uncapped_bogs":boolean,"bog_limit":{"type":["integer","null"],"description":"Effective workspace Bog allowance; null means uncapped. Host and storage limits still apply."}}),
         &["id", "name", "role"],
     );
     let invitation = object(
@@ -549,6 +549,61 @@ fn finish_contract(mut paths: serde_json::Map<String, Value>) -> Value {
         }
         paths.entry(path).or_insert_with(|| json!({}))[method] = op;
     }
+    for (path, method, id, description, body, result) in [
+        (
+            "/v1/workspaces",
+            "post",
+            "create_workspace",
+            "Human session creates a shared organization, separate from its personal workspace. Idempotency-Key required. Twenty owned shared workspaces maximum per account. New workspaces have the standard three-Bog allowance.",
+            Some(object(json!({"name":string}), &["name"])),
+            object(json!({"workspace":reference("Workspace")}), &["workspace"]),
+        ),
+        (
+            "/v1/platform",
+            "get",
+            "platform_allowances",
+            "Human platform operators only: list verified accounts and workspaces to manage uncapped flags. Ordinary humans, delegated agents and app credentials are denied.",
+            None,
+            object(
+                json!({"accounts":array(record.clone()),"workspaces":array(record.clone())}),
+                &["accounts", "workspaces"],
+            ),
+        ),
+        (
+            "/v1/platform/accounts/{account_id}/quota",
+            "put",
+            "set_account_allowance",
+            "Human platform operators only. Account flag uncaps only its personal workspace, not other workspaces it joins or owns. Disabling preserves existing Bogs; global host and per-Bog storage limits remain.",
+            Some(object(json!({"uncapped_bogs":boolean}), &["uncapped_bogs"])),
+            object(json!({"uncapped_bogs":boolean}), &["uncapped_bogs"]),
+        ),
+        (
+            "/v1/platform/workspaces/{workspace_id}/quota",
+            "put",
+            "set_workspace_allowance",
+            "Human platform operators only. Workspace flag uncaps its Bog allowance for all current members. Does not grant access, operator status, or additional storage/host capacity.",
+            Some(object(json!({"uncapped_bogs":boolean}), &["uncapped_bogs"])),
+            object(json!({"uncapped_bogs":boolean}), &["uncapped_bogs"]),
+        ),
+    ] {
+        let mut op = json!({"operationId":id,"description":description,"security":[{"browserSession":[]}],"parameters":[],"responses":{"200":response(result),"400":response(reference("Error")),"401":response(reference("Error")),"403":response(reference("Error")),"404":response(reference("Error")),"409":response(reference("Error")),"429":response(reference("Error")),"503":response(reference("Error"))}});
+        if path == "/v1/workspaces" {
+            op["parameters"] =
+                json!([{"name":"Idempotency-Key","in":"header","required":true,"schema":string}]);
+        } else if path.contains("{account_id}") {
+            op["parameters"] =
+                json!([{"name":"account_id","in":"path","required":true,"schema":string}]);
+        } else if path.contains("{workspace_id}") {
+            op["parameters"] =
+                json!([{"name":"workspace_id","in":"path","required":true,"schema":string}]);
+        }
+        if let Some(mut schema) = body {
+            schema["additionalProperties"] = json!(false);
+            op["requestBody"] =
+                json!({"required":true,"content":{"application/json":{"schema":schema}}});
+        }
+        paths.entry(path).or_insert_with(|| json!({}))[method] = op;
+    }
     // Dispatch attaches these only after authentication and once a bucket exists.
     // Public discovery and native device endpoints use different request paths.
     for (path, methods) in &mut paths {
@@ -581,7 +636,7 @@ fn finish_contract(mut paths: serde_json::Map<String, Value>) -> Value {
 }
 pub fn llms() -> String {
     format!(
-        "# Bog Cloud\n\nA working prototype for small apps, scripts, and agent-owned JSON records with maintained views. Use a separate copy of important data. Account workspaces allow three Bogs and each Bog has a 16 MiB logical-storage limit; legacy operator limits may differ. No guaranteed deprecation notice period.\n\nAuthentication: /auth.md\nAPI schema: /openapi.json\nTemplates: /v1/templates\nMCP: /mcp\n\n{}\n\nNever put credentials in URLs. Workspace defaults to personal; pass workspace_id explicitly for teams. Application credentials only access their one Bog and cannot provision or mint credentials.\n",
+        "# Bog Cloud\n\nA working prototype for small apps, scripts, and agent-owned JSON records with maintained views. Use a separate copy of important data. Account workspaces default to three Bogs; platform operators can uncap personal accounts or shared organizations. Each Bog retains its 16 MiB logical-storage limit and global host capacity still applies. Read GET /v1/workspaces for the effective bog_limit (null means uncapped); legacy operator limits may differ. No guaranteed deprecation notice period.\n\nAuthentication: /auth.md\nAPI schema: /openapi.json\nTemplates: /v1/templates\nMCP: /mcp\n\n{}\n\nNever put credentials in URLs. Workspace defaults to personal; pass workspace_id explicitly for teams. Application credentials only access their one Bog and cannot provision or mint credentials.\n",
         OPERATIONS
             .iter()
             .map(|(n, m, p, d)| format!("- {n}: {m} {p}. {d}"))

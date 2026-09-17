@@ -35,6 +35,83 @@ struct ClaimLegacy {
     access_token: Option<String>,
     session_token: Option<String>,
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PlatformOperator {
+    account_id: String,
+    enabled: bool,
+}
+async fn platform_operator(
+    State(service): State<Arc<CloudService>>,
+    headers: HeaderMap,
+    Json(body): Json<PlatformOperator>,
+) -> Response {
+    let result = (|| {
+        authorize(&service, &headers)?;
+        let operator = service.auth.authenticate(
+            headers
+                .get("authorization")
+                .and_then(|h| h.to_str().ok())
+                .and_then(|h| h.strip_prefix("Bearer "))
+                .unwrap_or_default(),
+        )?;
+        service
+            .auth
+            .set_platform_operator(&operator, &body.account_id, body.enabled)?;
+        Ok::<_, CloudError>(json!({"account_id":body.account_id,"platform_operator":body.enabled}))
+    })();
+    match result {
+        Ok(value) => Json(value).into_response(),
+        Err(e) => error_response(e, &uuid::Uuid::new_v4().to_string()),
+    }
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BootstrapWorkspace {
+    account_id: String,
+    name: String,
+    idempotency_key: String,
+    uncapped_bogs: bool,
+}
+async fn bootstrap_workspace(
+    State(service): State<Arc<CloudService>>,
+    headers: HeaderMap,
+    Json(body): Json<BootstrapWorkspace>,
+) -> Response {
+    let result = (|| {
+        authorize(&service, &headers)?;
+        let operator = service.auth.authenticate(
+            headers
+                .get("authorization")
+                .and_then(|h| h.to_str().ok())
+                .and_then(|h| h.strip_prefix("Bearer "))
+                .unwrap_or_default(),
+        )?;
+        let workspace = service.auth.bootstrap_workspace(
+            &operator,
+            &body.account_id,
+            &body.name,
+            &body.idempotency_key,
+        )?;
+        service.auth.operator_set_workspace_uncapped(
+            &operator,
+            workspace.id,
+            body.uncapped_bogs,
+        )?;
+        service.auth.operator_set_account_uncapped(
+            &operator,
+            &body.account_id,
+            body.uncapped_bogs,
+        )?;
+        Ok::<_, CloudError>(
+            json!({"workspace_id":workspace.id,"account_id":body.account_id,"uncapped_bogs":body.uncapped_bogs}),
+        )
+    })();
+    match result {
+        Ok(value) => Json(value).into_response(),
+        Err(e) => error_response(e, &uuid::Uuid::new_v4().to_string()),
+    }
+}
 async fn claim_legacy(
     State(service): State<Arc<CloudService>>,
     headers: HeaderMap,
@@ -196,6 +273,8 @@ pub async fn bind(service: Arc<CloudService>, path: PathBuf) -> Result<AdminServ
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).map_err(|_| fail())?;
     std::fs::write(&marker, format!("{}:{}", meta.dev(), meta.ino())).map_err(|_| fail())?;
     let router = Router::new()
+        .route("/platform/operator", post(platform_operator))
+        .route("/platform/bootstrap-workspace", post(bootstrap_workspace))
         .route("/claim-legacy", post(claim_legacy))
         .route("/backup/{id}", post(backup))
         .route("/restore/{id}", post(restore))
