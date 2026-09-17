@@ -628,10 +628,10 @@ async fn browser_inner(service: &CloudService, request: Request) -> Result<Respo
     Ok(response)
 }
 async fn discovery(State(service): State<Arc<CloudService>>, request: Request) -> Response {
-    if service.native_auth.is_some() {
-        if let Some(response) = crate::native_http::discovery(&service, request.uri().path()) {
-            return response;
-        }
+    if service.native_auth.is_some()
+        && let Some(response) = crate::native_http::discovery(&service, request.uri().path())
+    {
+        return response;
     }
     match request.uri().path() {
         "/auth.md" => (
