@@ -202,9 +202,19 @@ $('download-app').onclick = () => task($('download-app'), async () => {
     const url = URL.createObjectURL(new Blob([JSON.stringify(configuration) + '\n'], {type:'application/json'}));
     const link = document.createElement('a'); link.href = url; link.download = 'bog-app-' + credential.id + '.json';
     document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
-    await refresh(); status('Private configuration downloaded. Keep it outside source control; if delivery failed, revoke the listed credential and prepare a new handoff.');
-  } catch (error) { await refresh(); throw new Error('Download did not complete. Prepare a new handoff and revoke any unused issued credential. ' + error.message); }
+    await refresh(); status('Private configuration downloaded. Keep it outside source control; if delivery failed, revoke the listed credential as a workspace owner, or ask an owner to revoke it, then prepare a new handoff.');
+  } catch (error) { await refresh(); throw new Error('Download did not complete. Prepare a new handoff; revoke any unused issued credential as a workspace owner, or ask an owner to revoke it. ' + error.message); }
 });
 start();
 
-document.addEventListener('bog-resources-changed', () => { if (workspace) refresh().catch(error => status(error.message, true)); });
+document.addEventListener('bog-resources-changed', () => {
+  if (workspace) loadWorkspaces().then(() => refresh()).catch(error => status(error.message, true));
+});
+document.addEventListener('bog-tool-status', async event => {
+  const detail = event.detail || {};
+  status(detail.message || 'Browser tool completed.', detail.state === 'error');
+  if (detail.state === 'success' && validHandoff(detail.handoff_id)) {
+    try { showAppHandoff(await api('/v1/app-access/' + encodeURIComponent(detail.handoff_id))); }
+    catch (error) { status(error.message, true); }
+  }
+});

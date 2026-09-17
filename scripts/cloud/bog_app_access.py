@@ -178,5 +178,5 @@ if __name__ == '__main__':
         sys.exit(1)
     except (OSError, KeyError, TypeError, KeyboardInterrupt):
         # Known failures are deliberately generic: never serialize arbitrary server responses.
-        print('Installation could not complete. Check the selected paths, approval and handoff expiry; after a redemption attempt, prepare a new handoff and revoke any unused issued credential.', file=sys.stderr)
+        print('Installation could not complete. Check the selected paths, approval and handoff expiry; after a redemption attempt, prepare a new handoff; revoke any unused issued credential as a workspace owner, or ask an owner to revoke it.', file=sys.stderr)
         sys.exit(1)

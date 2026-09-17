@@ -17,8 +17,8 @@ Approved plan: connect, understand, and build through MCP (2026-09-17).
 
 ## Status
 - Phase 1: complete on165017c; actual Codex0.154.0 and Claude2.1.274 liveOAuth+operational trials passed.
-- Phase 2: in progress; backend handoff worker, parent MCP/helper/console.
-- Phase 3: pending.
+- Phase 2: complete on58900a9; both private delivery methods passed live and test credentials revoked.
+- Phase 3: in progress; WebMCP additions and fresh application trials.
 
 ### Phase 1 evidence
 - Real Codex 0.145.0 registration failed before consent: requested authorization_code + refresh_token. Fix selects supported authorization_code without promising refresh.
@@ -53,3 +53,15 @@ Approved plan: connect, understand, and build through MCP (2026-09-17).
 - Console signed-out handoff loss fixed with validatedUUID-onlysessionStorage; independentreviewapprovedfix. No credentials stored there. Backend andclientreviews no remainingblockers. Fullfinalsuite/lints pendingcandidate.
 
 - Phase2 candidate finalchecks:116Rusttests+7JStests+8Pythonhelpertests passed; strictcloud/MCPalltargets--no-depsClippypassed. Candidate ready for deployment and liveprivate-deliverychecks.
+
+- User explicitly chose to leave real second-GitHub-account sharing acceptance pending. Local two-account isolation remains tested; do not claim independent real-account verification. Continue remainingclient/browser/appchecks.
+
+### Phase 2 live gate
+- User approved private installer and console test download. Both redeemed same-account handoffs on58900a9. Helper saved mode600; browser default644, guidance already tells users to restrict downloaded-file permissions; test download restricted600 afterward. Read/write/wait and read-only enforcement passed; provisioning/mint/other-Bog access denied. Both credential revocations returned204 and subsequent reads401.
+- Revocation request IDs3c165537-124e-484b-bb10-39622e5c09df and8591ac2d-0365-480b-8b66-f85d07bbc062. Test harness filename variable fixed; no service defect. Phase2 accepted.
+
+### Phase 3 candidate
+- Added schema, bounded previews (default5/max20), allowance and private-preparation WebMCP tools; current-session checks, cancellation/status and console refresh.14JS+8helper+116Rusttests passed; strict packageClippy passed.
+- Review fixed default allowance selection through caller /v1/me.workspace_id, including another personal workspace first and uppercase explicit UUIDs. Scoped re-review approved. Final phase1/2 integration review found only owner-revocation wording, corrected in helper/console/Connect. Exact private configuration keys now documented after fresh-app observation.
+- Real public WebMCP discovery/templates passed in in-app browser. Signed-in WebMCP awaits GitHub login there; regular Chrome console and both MCPclients already authenticated.
+- FreshCodex created one Bog, idempotency passed, initially hit residentcapacity; on-demand read recovered afteridleeviction without expansion. Continuing liveapptrial; Claudetrial running.

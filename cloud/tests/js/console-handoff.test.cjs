@@ -6,13 +6,13 @@ const code = fs.readFileSync('cloud/static/console.js', 'utf8');
 const id = '12345678-1234-4123-8123-123456789abc';
 const key = 'bog.pending-app-handoff';
 async function page(storage, search = '', signedIn = true, handoffStatus = 200) {
-  const calls = [], nodes = new Map();
+  const calls = [], nodes = new Map(), listeners = new Map();
   const node = () => ({hidden:true, value:'workspace', dataset:{}, selectedOptions:[{dataset:{role:'owner'}}], append(){}, replaceChildren(){}, toggleAttribute(){}, scrollIntoView(){}, remove(){}, click(){return this.onclick?.();}});
   const get = name => {if (!nodes.has(name)) nodes.set(name,node()); return nodes.get(name);};
   const location = {search,pathname:'/console',hash:'',origin:'https://example.test'};
   const context = vm.createContext({URLSearchParams, location, sessionStorage:{getItem:k=>storage.get(k),setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)},
     history:{replaceState:(_,__,path)=>{location.search=path.includes('?')?'?'+path.split('?')[1]:'';}},
-    document:{getElementById:get,createElement:node,body:node(),addEventListener(){}},
+    document:{getElementById:get,createElement:node,body:node(),addEventListener(name,fn){listeners.set(name,fn);}},
     URL:{createObjectURL:()=> 'blob:private-download',revokeObjectURL(){}},Blob, setTimeout:fn=>fn(),
     fetch:async(path,options={})=>{
       calls.push({path,options});
@@ -27,7 +27,7 @@ async function page(storage, search = '', signedIn = true, handoffStatus = 200) 
   vm.runInContext(code,context);
   // Let the real startup chain complete, including workspace and metadata loads.
   for(let i=0;i<5;i++) await new Promise(setImmediate);
-  return {calls,get,location};
+  return {calls,get,location,listeners};
 }
 test('signed-out handoff survives same-tab login callback and waits for explicit download',async()=>{
   const storage=new Map();
@@ -58,4 +58,20 @@ test('expired, consumed, or unavailable handoffs clear the stored reference and 
     assert.equal(result.location.search,'');
     assert.equal(result.calls.some(c=>c.path.endsWith('/redeem')),false);
   }
+});
+
+test('browser preparation shows review panel and refreshes data without downloading',async()=>{
+  const result=await page(new Map());
+  const before=result.calls.filter(c=>c.path==='/v1/workspaces').length;
+  result.listeners.get('bog-resources-changed')();
+  await result.listeners.get('bog-tool-status')({detail:{state:'success',message:'Private access prepared.',handoff_id:id}});
+  for(let i=0;i<5;i++) await new Promise(setImmediate);
+  assert.equal(result.calls.filter(c=>c.path==='/v1/workspaces').length,before+1);
+  assert.equal(result.get('app-handoff').hidden,false);
+  assert.equal(result.get('status').textContent,'Private access prepared.');
+  assert.equal(result.calls.some(c=>c.path.endsWith('/redeem')),false);
+  await result.listeners.get('bog-tool-status')({detail:{state:'cancelled',message:'Browser action cancelled.'}});
+  assert.equal(result.get('status').textContent,'Browser action cancelled.');
+  await result.listeners.get('bog-tool-status')({detail:{state:'error',message:'Please sign in.'}});
+  assert.equal(result.get('status').textContent,'Please sign in.');
 });
