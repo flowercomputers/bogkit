@@ -242,6 +242,43 @@ async fn pkce_consent_scopes_replay_revocation_and_restart_over_real_rest_and_mc
                 .header("origin", &base)
                 .header("x-csrf-token", &session.csrf_token)
         };
+        if scope == "bog:read" {
+            let denied_auth = http
+                .get(format!("{base}/oauth/authorize"))
+                .query(&params)
+                .send()
+                .await
+                .unwrap();
+            let denied_public = denied_auth.headers()["location"]
+                .to_str()
+                .unwrap()
+                .split("user_code=")
+                .nth(1)
+                .unwrap();
+            let denial: Value = approve()
+                .json(&json!({"user_code":denied_public,"approve":false}))
+                .send()
+                .await
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            let callback = reqwest::Url::parse(denial["redirect_uri"].as_str().unwrap()).unwrap();
+            let query: std::collections::HashMap<_, _> =
+                callback.query_pairs().into_owned().collect();
+            assert_eq!(query["error"], "access_denied");
+            assert_eq!(query["state"], "fixture-state");
+            assert!(!query.contains_key("code"));
+            assert_eq!(
+                approve()
+                    .json(&json!({"user_code":denied_public,"approve":true}))
+                    .send()
+                    .await
+                    .unwrap()
+                    .status(),
+                400
+            );
+        }
         let details: Value = approve()
             .json(&json!({"user_code":public}))
             .send()
@@ -293,6 +330,25 @@ async fn pkce_consent_scopes_replay_revocation_and_restart_over_real_rest_and_mc
                 .status(),
             400
         );
+        // A valid code cannot be exchanged by another client, at another
+        // callback, or for another service. Failed attempts do not consume it.
+        for (index, value) in [
+            (1, "other-client"),
+            (2, "http://127.0.0.1:9998/callback"),
+            (3, "https://another.example/mcp"),
+        ] {
+            let mut wrong = form.to_vec();
+            wrong[index].1 = value;
+            let response = http
+                .post(format!("{base}/oauth/token"))
+                .form(&wrong)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), 400);
+            let error: Value = response.json().await.unwrap();
+            assert_eq!(error["error"], "invalid_grant");
+        }
         let token: Value = http
             .post(format!("{base}/oauth/token"))
             .form(&form)

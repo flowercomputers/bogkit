@@ -33,3 +33,14 @@ Approved plan: connect, understand, and build through MCP (2026-09-17).
 - Local /connect visual check passed in existing Flower shell; candidate Fly build in progress.
 
 - Candidate7e7cb78 deployed successfully; both actual clients now select CIMD. Both official documents use loopback callbacks without fixed ports. Ruling: apply OAuth native loopback port exception only to native public metadata, or omitted application_type with exclusively loopback redirects; preserve literal host/path/query and exact DCR callbacks. This is needed for real native-client interoperability, not an arbitrary redirect wildcard.
+
+- Native callback fix committed8a832be;5 metadata tests, OAuth transport regression and strictClippy pass; independent scoped review approved.
+- Current installed clients after userlogin/update: Codex0.154.0 and ClaudeCode2.1.274. Earlier0.145.0 Codex exercised DCR; current clients exercise CIMD.
+- Mobile check via Chrome device emulation390x844: page scrollWidth==390, navigation opened withConnect/Docs/Console links. Emulation cleared afterward.
+
+-8a832be live. Both realclients reached correct consent through official HTTPS CIMD: Codex atchatgpt.com/oauth/codex/client.json, Claude atclaude.ai/oauth/claude-code-client-metadata. Both request bog:write, correctloopbackcallback. Awaiting explicit userconfirmation atbrowser permission step; do not approve before response.
+
+- User approved both 30-day bog:write test connections. Both real CLIs confirmed successful OAuth login. Codex0.154.0 passed workspace discovery, one disposable Bog creation/retry, write/read, and timeout0 change wait. Fixture290fe549-a7b7-4849-98dd-0a570054504d; creation request2852a2c9-ecd8-45fc-96c5-a2330a0dc4ec; retryfb5756cf-32b6-4bf4-a0df-6d997251cd61.
+- Claude2.1.274 authenticated but tools discovery rejected missing ttlMs/cacheScope; actual client trial did not create any Bog. Investigating SDK protocol negotiation before phase2. Existing chat fingerprint unchanged on8a832be.
+
+- Protocol fix: SDK supportedVersions included2026 even though initialize selected2025. Bound advertisement/negotiation to known revisions through2025-11-25, preserving existing older-client support. Actual Claude local discovery/list passed. Eight protocol tests and expanded OAuth denial/exchange-binding tests passed; strictClippy passed. Independent review pending.

@@ -338,6 +338,13 @@ fn tool_error(error: CloudError, request_id: &str) -> CallToolResult {
 #[derive(Clone)]
 pub(crate) struct Handler(pub Arc<CloudService>);
 impl ServerHandler for Handler {
+    // The SDK knows newer inline-discovery revisions, but this service's
+    // verified protocol contract ends at 2025-11-25. Bound both advertisement
+    // and negotiation rather than inheriting every SDK-known revision.
+    fn supported_protocol_versions(&self) -> std::borrow::Cow<'static, [ProtocolVersion]> {
+        std::borrow::Cow::Borrowed(ProtocolVersion::known_up_to(&ProtocolVersion::V_2025_11_25))
+    }
+
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("bog-cloud", env!("CARGO_PKG_VERSION")))

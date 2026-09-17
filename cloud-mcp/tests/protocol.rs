@@ -468,3 +468,68 @@ async fn repair_timeout_alias_and_errors_correlate_with_http_headers() {
     }
     h.close().await;
 }
+
+#[tokio::test]
+async fn newer_clients_negotiate_verified_revision_and_cannot_select_newer_inline_protocol() {
+    let h = Harness::new().await;
+    let http = reqwest::Client::new();
+    let post = |version: &str, method: &str, params: Value| {
+        http.post(format!("{}/mcp", h.url))
+            .bearer_auth(OWNER)
+            .header("accept", "application/json, text/event-stream")
+            .header("mcp-protocol-version", version)
+            .header("mcp-method", method)
+            .json(&json!({"jsonrpc":"2.0","id":81,"method":method,"params":params}))
+    };
+    let init: Value = post("2026-07-28", "initialize", json!({"protocolVersion":"2026-07-28","capabilities":{},"clientInfo":{"name":"new-client","version":"1"}}))
+        .send().await.unwrap().json().await.unwrap();
+    assert_eq!(init["result"]["protocolVersion"], "2025-11-25");
+    let meta = |version: &str| json!({"io.modelcontextprotocol/protocolVersion":version,"io.modelcontextprotocol/clientInfo":{"name":"new-client","version":"1"},"io.modelcontextprotocol/clientCapabilities":{}});
+    let discovery: Value = post(
+        "2025-11-25",
+        "server/discover",
+        json!({"_meta":meta("2025-11-25")}),
+    )
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(
+        discovery["result"]["supportedVersions"],
+        json!(["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"])
+    );
+    for method in ["server/discover", "tools/list"] {
+        let response: Value = post("2026-07-28", method, json!({"_meta":meta("2026-07-28")}))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert!(response.get("error").is_some(), "{response}");
+        assert!(response.get("result").is_none());
+    }
+    let unsupported_header: Value = post("2026-07-28", "tools/list", json!({}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        unsupported_header.get("error").is_some(),
+        "{unsupported_header}"
+    );
+    let list: Value = post("2025-11-25", "tools/list", json!({}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 13);
+    assert!(list["result"].get("resultType").is_none());
+    h.close().await;
+}
