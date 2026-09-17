@@ -312,3 +312,152 @@ async fn large_view_is_rejected_before_materializing_an_unbounded_page() {
         StatusCode::OK
     );
 }
+
+#[tokio::test]
+async fn logical_quota_boundary_batch_rollback_and_restart() {
+    use bog_cloud_records::records_service_with_limit;
+    let dir = tempfile::tempdir().unwrap();
+    {
+        let service = records_service_with_limit(dir.path(), 10).unwrap();
+        let app = service.router();
+        // JSON key "a" = 3 bytes, value {"n":1} = 7 bytes.
+        assert_eq!(
+            send(&app, "PUT", "/docs/a", Some(json!({"n":1}))).await.0,
+            200
+        );
+        assert_eq!(
+            send(&app, "PUT", "/docs/a", Some(json!({"n":12}))).await.0,
+            413
+        );
+        assert_eq!(
+            send(&app, "GET", "/docs/a", None).await.1["data"],
+            json!({"n":1})
+        );
+        assert_eq!(
+            send(
+                &app,
+                "POST",
+                "/batch",
+                Some(json!([
+                    {"op":"remove","key":"a"}, {"op":"upsert","key":"b","data":{"n":12}}
+                ]))
+            )
+            .await
+            .0,
+            413
+        );
+        assert_eq!(send(&app, "GET", "/docs/a", None).await.0, 200);
+        // Only final state counts, including repeated keys and temporary excess.
+        assert_eq!(
+            send(
+                &app,
+                "POST",
+                "/batch",
+                Some(json!([
+                    {"op":"upsert","key":"a","data":{"n":123456}},
+                    {"op":"upsert","key":"a","data":{}},
+                    {"op":"upsert","key":"b","data":{}}
+                ]))
+            )
+            .await
+            .0,
+            200
+        );
+        assert_eq!(
+            send(&app, "GET", "/_cloud/usage", None).await.1["data"]["logical_bytes"],
+            10
+        );
+        service.shutdown().unwrap();
+    }
+    {
+        let service = records_service_with_limit(dir.path(), 4).unwrap();
+        let app = service.router();
+        assert_eq!(
+            send(&app, "GET", "/_cloud/usage", None).await.1["data"]["logical_bytes"],
+            10
+        );
+        assert_eq!(send(&app, "GET", "/docs/a", None).await.0, 200);
+        assert_eq!(send(&app, "PUT", "/docs/c", Some(json!({}))).await.0, 413);
+        assert_eq!(send(&app, "DELETE", "/docs/a", None).await.0, 200);
+        assert_eq!(
+            send(&app, "GET", "/_cloud/usage", None).await.1["data"]["logical_bytes"],
+            5
+        );
+        assert_eq!(send(&app, "PUT", "/docs/b", Some(json!({}))).await.0, 200);
+        assert_eq!(
+            send(&app, "PUT", "/docs/b", Some(json!({"n":1}))).await.0,
+            413
+        );
+        assert_eq!(send(&app, "DELETE", "/docs/b", None).await.0, 200);
+        assert_eq!(
+            send(&app, "GET", "/_cloud/usage", None).await.1["data"]["logical_bytes"],
+            0
+        );
+        service.shutdown().unwrap();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn quota_concurrent_writers_cannot_oversubscribe() {
+    let dir = tempfile::tempdir().unwrap();
+    let service = bog_cloud_records::records_service_with_limit(dir.path(), 5).unwrap();
+    let app = service.router();
+    let mut tasks = Vec::new();
+    for key in ['a', 'b', 'c', 'd'] {
+        let app = app.clone();
+        tasks.push(tokio::spawn(async move {
+            send(&app, "PUT", &format!("/docs/{key}"), Some(json!({})))
+                .await
+                .0
+        }));
+    }
+    let mut accepted = 0;
+    for task in tasks {
+        match task.await.unwrap().as_u16() {
+            200 => accepted += 1,
+            413 => (),
+            other => panic!("unexpected {other}"),
+        }
+    }
+    assert_eq!(accepted, 1);
+    assert_eq!(
+        send(&app, "GET", "/_cloud/usage", None).await.1["data"]["logical_bytes"],
+        5
+    );
+    service.shutdown().unwrap();
+}
+
+#[tokio::test]
+async fn custom_transactions_obey_quota_and_failed_handler_rolls_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let service =
+        bog_serve::KeyedApp::<String, String, _>::stream(dir.path(), terminal::Table::new("docs"))
+            .post("/custom", |tx, value: String| {
+                tx.upsert(&"a".to_string(), &value);
+                if value == "fail" {
+                    return Err((400, "rejected".into()));
+                }
+                Ok(true)
+            })
+            .logical_quota(3, |tx| {
+                tx.rtx(|docs| docs.iter().map(|(_, value)| value.len() as u64).sum())
+            })
+            .durability(bog_serve::Durability::CheckpointBeforeAck)
+            .try_into_service()
+            .unwrap();
+    let app = service.router();
+    assert_eq!(
+        send(&app, "POST", "/custom", Some(json!("abc"))).await.0,
+        200
+    );
+    assert_eq!(
+        send(&app, "POST", "/custom", Some(json!("abcd"))).await.0,
+        413
+    );
+    assert_eq!(
+        send(&app, "POST", "/custom", Some(json!("fail"))).await.0,
+        400
+    );
+    assert_eq!(send(&app, "GET", "/docs/a", None).await.1["data"], "abc");
+    service.shutdown().unwrap();
+}

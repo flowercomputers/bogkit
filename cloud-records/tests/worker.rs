@@ -14,6 +14,9 @@ impl Drop for Worker {
     }
 }
 fn start(data: &Path, socket: &Path) -> Worker {
+    start_with_limit(data, socket, 16 * 1024 * 1024)
+}
+fn start_with_limit(data: &Path, socket: &Path, limit: u64) -> Worker {
     Worker(
         Command::new(env!("CARGO_BIN_EXE_bog-records-worker"))
             .args([
@@ -24,6 +27,7 @@ fn start(data: &Path, socket: &Path) -> Worker {
                 "--template-version",
                 "records-v1",
             ])
+            .env("BOG_RECORDS_MAX_LOGICAL_BYTES", limit.to_string())
             .env("BOG_INSTANCE_ID", "test-instance")
             .env("BOG_STARTUP_NONCE", "private-test-nonce")
             .stdout(Stdio::null())
@@ -324,4 +328,24 @@ fn unfinished_request_cannot_hold_worker_beyond_shutdown_deadline() {
         assert!(Instant::now() < deadline, "shutdown exceeded hard deadline");
         std::thread::sleep(Duration::from_millis(20));
     }
+}
+
+#[test]
+fn worker_operator_limit_survives_kill_and_reopen() {
+    let (_dir, data, socket) = paths();
+    let mut worker = start_with_limit(&data, &socket, 5);
+    ready(&mut worker, &socket);
+    assert_eq!(request(&socket, "PUT", "/docs/a", json!({})).0, 200);
+    assert_eq!(request(&socket, "PUT", "/docs/b", json!({})).0, 413);
+    worker.0.kill().unwrap();
+    worker.0.wait().unwrap();
+    let mut worker = start_with_limit(&data, &socket, 4);
+    ready(&mut worker, &socket);
+    assert_eq!(
+        request(&socket, "GET", "/_cloud/usage", Value::Null).1["data"]["logical_bytes"],
+        5
+    );
+    assert_eq!(request(&socket, "GET", "/docs/a", Value::Null).0, 200);
+    assert_eq!(request(&socket, "PUT", "/docs/b", json!({})).0, 413);
+    assert_eq!(request(&socket, "DELETE", "/docs/a", Value::Null).0, 200);
 }

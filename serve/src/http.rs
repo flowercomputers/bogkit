@@ -446,6 +446,7 @@ where
 }
 
 pub(crate) fn router_keyed<K, V, P>(
+    quota: crate::QuotaConfig<K, V, P>,
     stream: KeyedStream<K, V, P>,
     custom: Vec<KeyedCustom<K, V, P>>,
     db_path: &std::path::Path,
@@ -481,6 +482,7 @@ where
                 .get(get_doc::<K, V, P>),
         )
         .route("/batch", post(batch_keyed::<K, V, P>))
+        .layer(axum::Extension(quota))
         .with_state(shared.clone());
     let lifecycle = Lifecycle::new(shared.clone(), fingerprint);
     let guard = shared.clone();
@@ -538,14 +540,6 @@ fn try_commit<S: Rtx, R>(
 fn commit<S: Rtx>(shared: &Shared<S>, f: impl FnOnce(&mut S)) -> Result<u64, Response> {
     try_commit(shared, |stream| Ok(f(stream))).map(|(seq, ())| seq)
 }
-#[allow(clippy::result_large_err)]
-fn commit_with<S: Rtx, R>(
-    shared: &Shared<S>,
-    f: impl FnOnce(&mut S) -> R,
-) -> Result<(u64, R), Response> {
-    try_commit(shared, |stream| Ok(f(stream)))
-}
-
 async fn insert<D, P>(
     State(shared): State<Arc<Shared<Stream<D, P>>>>,
     body: Result<Json<D>, JsonRejection>,
@@ -623,7 +617,32 @@ where
     Json(json!({ "seq": seq, "applied": applied })).into_response()
 }
 
+pub(crate) fn quota_wtx<K, V, P, R>(
+    stream: &mut KeyedStream<K, V, P>,
+    quota: &crate::QuotaConfig<K, V, P>,
+    action: impl FnOnce(&mut fold::stream::KeyedTx<'_, '_, '_, K, V, P>) -> Result<R, (u16, String)>,
+) -> Result<R, (u16, String)>
+where
+    K: Clone + Serialize,
+    V: Clone + Serialize + DeserializeOwned,
+    P: Push<Keyed<K, V>>,
+{
+    let quota = quota.read().unwrap();
+    stream.try_wtx(|tx| {
+        let before = quota.as_ref().map(|(_, measure)| measure(tx));
+        let result = action(tx)?;
+        if let Some((limit, measure)) = quota.as_ref() {
+            let after = measure(tx);
+            if after > *limit && after > before.unwrap() {
+                return Err((413, "logical storage quota exceeded".into()));
+            }
+        }
+        Ok(result)
+    })
+}
+
 async fn put_doc<K, V, P>(
+    axum::Extension(quota): axum::Extension<crate::QuotaConfig<K, V, P>>,
     State(shared): State<Arc<Shared<KeyedStream<K, V, P>>>>,
     Path(raw): Path<String>,
     body: Result<Json<V>, JsonRejection>,
@@ -641,7 +660,9 @@ where
     let Some(key) = parse_key_mode::<K>(&raw, shared.raw_string_keys) else {
         return error(StatusCode::BAD_REQUEST, key_parse_msg(&raw));
     };
-    let (seq, old) = match commit_with(&shared, |stream| stream.wtx(|tx| tx.upsert(&key, &data))) {
+    let (seq, old) = match try_commit(&shared, |stream| {
+        quota_wtx(stream, &quota, |tx| Ok(tx.upsert(&key, &data)))
+    }) {
         Ok(value) => value,
         Err(response) => return response,
     };
@@ -649,6 +670,7 @@ where
 }
 
 async fn delete_doc<K, V, P>(
+    axum::Extension(quota): axum::Extension<crate::QuotaConfig<K, V, P>>,
     State(shared): State<Arc<Shared<KeyedStream<K, V, P>>>>,
     Path(raw): Path<String>,
 ) -> Response
@@ -661,7 +683,9 @@ where
     let Some(key) = parse_key_mode::<K>(&raw, shared.raw_string_keys) else {
         return error(StatusCode::BAD_REQUEST, key_parse_msg(&raw));
     };
-    let (seq, old) = match commit_with(&shared, |stream| stream.wtx(|tx| tx.remove(&key))) {
+    let (seq, old) = match try_commit(&shared, |stream| {
+        quota_wtx(stream, &quota, |tx| Ok(tx.remove(&key)))
+    }) {
         Ok(value) => value,
         Err(response) => return response,
     };
@@ -699,6 +723,7 @@ enum KeyedOp<K, V> {
 }
 
 async fn batch_keyed<K, V, P>(
+    axum::Extension(quota): axum::Extension<crate::QuotaConfig<K, V, P>>,
     State(shared): State<Arc<Shared<KeyedStream<K, V, P>>>>,
     body: Result<Json<Vec<KeyedOp<K, V>>>, JsonRejection>,
 ) -> Response
@@ -713,8 +738,8 @@ where
         Err(resp) => return resp,
     };
     let applied = ops.len();
-    let (seq, ()) = match commit_with(&shared, |stream| {
-        stream.wtx(|tx| {
+    let (seq, ()) = match try_commit(&shared, |stream| {
+        quota_wtx(stream, &quota, |tx| {
             for op in &ops {
                 match op {
                     KeyedOp::Upsert { key, data } => {
@@ -725,6 +750,7 @@ where
                     }
                 }
             }
+            Ok(())
         })
     }) {
         Ok(value) => value,

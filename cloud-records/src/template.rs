@@ -12,6 +12,8 @@ use serde_json::{Value, json};
 
 use crate::JsonDocument;
 
+pub const DEFAULT_LOGICAL_BYTES: u64 = 16 * 1024 * 1024;
+
 pub const TEMPLATE_ID: &str = "records-v1";
 pub const MAX_REQUEST_BYTES: usize = 1024 * 1024;
 pub const MAX_BATCH_OPS: usize = 100;
@@ -39,12 +41,40 @@ pub fn records_router(path: &Path) -> Result<Router, TemplateError> {
 
 /// Durable records template with explicit ownership of shutdown/checkpoint.
 pub fn records_service(path: &Path) -> Result<ServedApp, TemplateError> {
+    records_service_with_limit(path, DEFAULT_LOGICAL_BYTES)
+}
+
+/// Logical bytes sum compact JSON encodings of each primary key and value.
+/// Key quotes/escapes and UTF-8 bytes count; separators, indexes and disk overhead do not.
+/// Object keys use serde_json's stable sorted map encoding. State is measured from
+/// the durable table on every transaction, including the first after reopening.
+pub fn records_service_with_limit(path: &Path, limit: u64) -> Result<ServedApp, TemplateError> {
     let service = KeyedApp::<String, JsonDocument, _>::try_stream(
         path,
         (terminal::Table::new("docs"), terminal::Count::new("total")),
     )
     .map_err(TemplateError::OpenStore)?
     .raw_string_keys()
+    .logical_quota(limit, |tx| {
+        tx.rtx(|(docs, _)| {
+            docs.iter()
+                .map(|(key, value)| {
+                    serde_json::to_vec(&key).unwrap().len() as u64
+                        + serde_json::to_vec(&value).unwrap().len() as u64
+                })
+                .sum()
+        })
+    })
+    .get("/_cloud/usage", move |(docs, _), _: RecordPage| {
+        let used: u64 = docs
+            .iter()
+            .map(|(key, value)| {
+                serde_json::to_vec(&key).unwrap().len() as u64
+                    + serde_json::to_vec(&value).unwrap().len() as u64
+            })
+            .sum();
+        Ok(json!({"logical_bytes":used,"limit_bytes":limit,"over_limit":used > limit}))
+    })
     .get("/views/docs", |(docs, _total), page: RecordPage| {
         let mut bytes = 0usize;
         let mut items = Vec::new();

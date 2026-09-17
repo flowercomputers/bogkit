@@ -330,10 +330,19 @@ where
     }
 }
 
+/// Optional transaction-boundary quota. The measurement must count the complete
+/// logical state through the transaction reader, including pending writes.
+pub(crate) type QuotaHook<K, V, P> = std::sync::Arc<
+    dyn for<'a, 'g, 'tx> Fn(&mut fold::stream::KeyedTx<'a, 'g, 'tx, K, V, P>) -> u64 + Send + Sync,
+>;
+pub(crate) type QuotaConfig<K, V, P> =
+    std::sync::Arc<std::sync::RwLock<Option<(u64, QuotaHook<K, V, P>)>>>;
+
 /// A fold [`KeyedStream`] wrapped in a generated HTTP server: writes are
 /// upsert/remove by primary key, and replacing or deleting a record
 /// retracts the old one from every view automatically.
 pub struct KeyedApp<K: Clone, V: Clone, P: Push<Keyed<K, V>>> {
+    quota: QuotaConfig<K, V, P>,
     stream: KeyedStream<K, V, P>,
     custom: Vec<KeyedCustom<K, V, P>>,
     db_path: std::path::PathBuf,
@@ -360,11 +369,26 @@ where
         pipeline: P,
     ) -> Result<Self, fold::fjall::Error> {
         Ok(KeyedApp {
+            quota: Default::default(),
             stream: KeyedStream::try_new(&path, pipeline)?,
             custom: Vec::new(),
             db_path: path.as_ref().to_path_buf(),
             opts: ServeOpts::default(),
         })
+    }
+
+    /// Enforce a logical byte limit atomically on every keyed transaction.
+    /// Existing oversized stores may stay equal or shrink, but cannot grow.
+    /// The hook is evaluated before and after mutation; rejected writes roll back.
+    pub fn logical_quota<F>(self, limit: u64, measure: F) -> Self
+    where
+        F: for<'a, 'g, 'tx> Fn(&mut fold::stream::KeyedTx<'a, 'g, 'tx, K, V, P>) -> u64
+            + Send
+            + Sync
+            + 'static,
+    {
+        *self.quota.write().unwrap() = Some((limit, std::sync::Arc::new(measure)));
+        self
     }
 
     /// Set write acknowledgement policy; the default is [`Durability::Journal`].
@@ -430,10 +454,12 @@ where
             + Sync
             + 'static,
     {
-        self.custom.push(http::custom_write(
-            path.into(),
-            move |stream: &mut KeyedStream<K, V, P>, body| stream.try_wtx(|tx| handler(tx, body)),
-        ));
+        self.custom.push(http::custom_write(path.into(), {
+            let quota = self.quota.clone();
+            move |stream: &mut KeyedStream<K, V, P>, body| {
+                http::quota_wtx(stream, &quota, |tx| handler(tx, body))
+            }
+        }));
         self
     }
 
@@ -451,6 +477,7 @@ where
 
     fn into_service_result(self) -> Result<ServedApp, ServeError> {
         let (router, lifecycle) = http::router_keyed(
+            self.quota,
             self.stream,
             self.custom,
             &self.db_path,
@@ -466,6 +493,7 @@ where
         let opts = std::mem::take(&mut self.opts);
         let db_path = self.db_path.clone();
         let (router, lifecycle) = http::router_keyed(
+            self.quota,
             self.stream,
             self.custom,
             &self.db_path,

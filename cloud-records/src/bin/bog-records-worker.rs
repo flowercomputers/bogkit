@@ -4,7 +4,7 @@ use axum::{
     http::StatusCode,
     routing::{get, post},
 };
-use bog_cloud_records::{TEMPLATE_ID, records_service};
+use bog_cloud_records::{DEFAULT_LOGICAL_BYTES, TEMPLATE_ID, records_service_with_limit};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
@@ -141,7 +141,12 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Err("missing identity".into());
     }
     // Acquire store lock before touching any old socket. A competing worker cannot unlink it.
-    let service = records_service(&data)?;
+    let limit = match std::env::var("BOG_RECORDS_MAX_LOGICAL_BYTES") {
+        Ok(value) => value.parse::<u64>()?,
+        Err(std::env::VarError::NotPresent) => DEFAULT_LOGICAL_BYTES,
+        Err(error) => return Err(error.into()),
+    };
+    let service = records_service_with_limit(&data, limit)?;
     let data = std::fs::canonicalize(data)?;
     let (listener, mut socket_guard) = bind_socket(&socket, &data, &instance_id)?;
     let (stop_tx, mut stop_rx) = tokio::sync::watch::channel(false);
