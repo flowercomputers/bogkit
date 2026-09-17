@@ -23,6 +23,36 @@ pub(crate) fn now() -> i64 {
 pub(crate) fn hash(value: &[u8]) -> Vec<u8> {
     Sha256::digest(value).to_vec()
 }
+// Changing journal mode can return SQLITE_BUSY immediately without invoking SQLite's
+// busy handler. Retry only lock contention, with a shared deadline across attempts.
+// SQLite coordinates these locks across processes; a process-local mutex would not.
+fn initialize_connection(db: &Connection) -> rusqlite::Result<()> {
+    use std::time::{Duration, Instant};
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        db.busy_timeout(
+            deadline
+                .saturating_duration_since(Instant::now())
+                .min(Duration::from_millis(100)),
+        )?;
+        match db.execute_batch(
+            "PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;",
+        ) {
+            Ok(()) => return Ok(()),
+            Err(error) => {
+                let contention = matches!(
+                    error.sqlite_error_code(),
+                    Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked)
+                );
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if !contention || remaining.is_zero() {
+                    return Err(error);
+                }
+                std::thread::sleep(remaining.min(Duration::from_millis(10)));
+            }
+        }
+    }
+}
 fn read_bog(row: &rusqlite::Row<'_>) -> rusqlite::Result<Bog> {
     let raw: String = row.get(0)?;
     let id = Uuid::parse_str(&raw).map_err(|e| {
@@ -44,12 +74,9 @@ const COLUMNS: &str = "id,name,template,desired_state,observed_state,generation,
 impl Registry {
     pub fn open(path: &Path) -> Result<Self, CloudError> {
         let db = Connection::open(path).map_err(db_error)?;
+        initialize_connection(&db).map_err(db_error)?;
         db.busy_timeout(std::time::Duration::from_secs(5))
             .map_err(db_error)?;
-        db.execute_batch(
-            "PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;",
-        )
-        .map_err(db_error)?;
         // Serialize the version check with migration so simultaneous opens cannot both rebuild v1.
         db.execute_batch("PRAGMA foreign_keys=OFF; BEGIN IMMEDIATE;")
             .map_err(db_error)?;

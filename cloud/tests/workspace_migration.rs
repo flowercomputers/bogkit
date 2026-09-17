@@ -76,19 +76,114 @@ fn v1_upgrade_preserves_ids_requests_and_unexpired_legacy_tokens() {
 
 #[test]
 fn concurrent_v1_open_serializes_migration() {
+    for round in 0..20 {
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("registry.sqlite");
+        let db = rusqlite::Connection::open(&path).unwrap();
+        db.execute_batch(include_str!("../migrations/001_registry.sql"))
+            .unwrap();
+        drop(db);
+        let barrier = Arc::new(std::sync::Barrier::new(8));
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                let path = path.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    let registry =
+                        Registry::open(&path).unwrap_or_else(|e| panic!("round {round}: {e}"));
+                    assert!(registry.list().unwrap().is_empty());
+                    assert_migrated(&path);
+                })
+            })
+            .collect();
+        for thread in threads {
+            thread.join().unwrap();
+        }
+    }
+}
+fn assert_migrated(path: &std::path::Path) {
+    let db = rusqlite::Connection::open(path).unwrap();
+    assert_eq!(
+        db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        db.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |r| r
+            .get::<_, i64>(
+            0
+        ))
+        .unwrap(),
+        0
+    );
+}
+#[test]
+fn migration_child_process() {
+    let Some(path) = std::env::var_os("BOG_TEST_MIGRATION_PATH") else {
+        return;
+    };
+    let path = std::path::PathBuf::from(path);
+    let ready = std::path::PathBuf::from(std::env::var_os("BOG_TEST_MIGRATION_START").unwrap());
+    let start = std::time::Instant::now();
+    while !ready.exists() {
+        assert!(start.elapsed() < std::time::Duration::from_secs(10));
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    let registry = Registry::open(&path).unwrap();
+    assert!(registry.list().unwrap().is_empty());
+    assert_migrated(&path);
+}
+#[test]
+fn concurrent_processes_migrate_v1_twenty_times() {
+    for round in 0..20 {
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("registry.sqlite");
+        let ready = d.path().join("start");
+        let db = rusqlite::Connection::open(&path).unwrap();
+        db.execute_batch(include_str!("../migrations/001_registry.sql"))
+            .unwrap();
+        drop(db);
+        let children: Vec<_> = (0..4)
+            .map(|_| {
+                std::process::Command::new(std::env::current_exe().unwrap())
+                    .args(["--exact", "migration_child_process", "--nocapture"])
+                    .env("BOG_TEST_MIGRATION_PATH", &path)
+                    .env("BOG_TEST_MIGRATION_START", &ready)
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .spawn()
+                    .unwrap()
+            })
+            .collect();
+        std::fs::write(&ready, b"start").unwrap();
+        for child in children {
+            let output = child.wait_with_output().unwrap();
+            assert!(
+                output.status.success(),
+                "round {round}: {} {}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        assert_migrated(&path);
+    }
+}
+#[test]
+fn future_registry_version_is_rejected_without_migration() {
     let d = tempfile::tempdir().unwrap();
     let path = d.path().join("registry.sqlite");
     let db = rusqlite::Connection::open(&path).unwrap();
-    db.execute_batch(include_str!("../migrations/001_registry.sql"))
-        .unwrap();
+    db.execute_batch("PRAGMA user_version=99;").unwrap();
     drop(db);
-    let threads: Vec<_> = (0..4)
-        .map(|_| {
-            let path = path.clone();
-            std::thread::spawn(move || Registry::open(&path).unwrap().list().unwrap())
-        })
-        .collect();
-    for t in threads {
-        assert!(t.join().unwrap().is_empty());
-    }
+    assert_eq!(
+        Registry::open(&path).err().unwrap().code,
+        "incompatible_registry"
+    );
+    let db = rusqlite::Connection::open(&path).unwrap();
+    assert_eq!(
+        db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        99
+    );
 }
