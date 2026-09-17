@@ -15,9 +15,14 @@ async fn sdk_initializes_and_discovers_exact_tools() {
             "delete_record",
             "describe_bog",
             "get_record",
+            "issue_token",
             "list_bogs",
+            "list_tokens",
+            "list_workspaces",
             "read_view",
-            "upsert_record"
+            "revoke_token",
+            "upsert_record",
+            "wait_for_change"
         ]
     );
     for tool in &list {
@@ -200,7 +205,7 @@ async fn legacy_initialize_wire_discovery_and_bad_jsonrpc() {
         .json()
         .await
         .unwrap();
-    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 8);
+    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 13);
     let bad = post(json!({"jsonrpc":"bogus","id":3,"method":"tools/list"}))
         .send()
         .await
@@ -258,6 +263,63 @@ async fn results_and_request_bodies_are_bounded() {
         .await
         .unwrap();
     assert_eq!(response.status(), 413);
+    client.cancel().await.unwrap();
+    h.close().await;
+}
+
+#[tokio::test]
+async fn mcp_and_rest_share_change_cursors() {
+    let h = Harness::new().await;
+    let client = h.client(OWNER).await;
+    let b = h
+        .service
+        .registry
+        .create("changes", "records-v1", "changes")
+        .unwrap();
+    ready(&h, b.id).await;
+    let initial = data(
+        call(
+            &client,
+            "wait_for_change",
+            json!({"bog_id":b.id,"timeout_seconds":0}),
+        )
+        .await,
+    );
+    assert_eq!(initial["changed"], false);
+    data(
+        call(
+            &client,
+            "upsert_record",
+            json!({"bog_id":b.id,"key":"one","data":{"value":1}}),
+        )
+        .await,
+    );
+    let response = reqwest::Client::new()
+        .get(format!(
+            "{}/v1/bogs/{}/changes?cursor={}&timeout=0",
+            h.url,
+            b.id,
+            initial["cursor"].as_str().unwrap()
+        ))
+        .bearer_auth(OWNER)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let changed: Value = response.json().await.unwrap();
+    assert_eq!(changed["changed"], true);
+    assert_eq!(changed["reset"], false);
+    let read = data(call(&client, "read_view", json!({"bog_id":b.id,"view":"total"})).await);
+    assert_eq!(read["cursor"], changed["cursor"]);
+    let timeout = data(
+        call(
+            &client,
+            "wait_for_change",
+            json!({"bog_id":b.id,"cursor":read["cursor"],"timeout_seconds":0}),
+        )
+        .await,
+    );
+    assert_eq!(timeout["changed"], false);
     client.cancel().await.unwrap();
     h.close().await;
 }

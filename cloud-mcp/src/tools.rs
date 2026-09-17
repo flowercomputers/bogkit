@@ -12,9 +12,9 @@ struct Empty {}
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct Create {
-    name: String,
-    template: String,
-    idempotency_key: String,
+    name: Option<String>,
+    template: Option<String>,
+    idempotency_key: Option<String>,
 }
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -81,7 +81,11 @@ fn definition<T: JsonSchema>(
     destructive: bool,
     idempotent: bool,
 ) -> Tool {
-    Tool::new(name, description, schema::<T>())
+    {
+    let mut input=(*schema::<T>()).clone();
+    if let Some(properties)=input.get_mut("properties").and_then(Value::as_object_mut){ properties.insert("workspace_id".into(),json!({"type":"string","format":"uuid","description":"Explicit workspace selection; defaults to personal workspace."})); }
+    Tool::new(name, bog_cloud::contract::description(name).unwrap_or(description), Arc::new(input))
+    }
         .with_raw_output_schema(schema::<Success>())
         .with_annotations(
             ToolAnnotations::new()
@@ -93,6 +97,29 @@ fn definition<T: JsonSchema>(
 }
 pub fn definitions() -> Vec<Tool> {
     vec![
+        definition::<Wait>(
+            "wait_for_change",
+            "Wait up to 25 seconds for a change; omit cursor to get current position. Reset requires refetch; no event replay.",
+            true,
+            false,
+            true,
+        ),
+        definition::<Empty>("list_workspaces", "List workspaces.", true, false, true),
+        definition::<Describe>(
+            "list_tokens",
+            "List credential metadata.",
+            true,
+            false,
+            true,
+        ),
+        definition::<Issue>(
+            "issue_token",
+            "Issue a single Bog credential.",
+            false,
+            false,
+            false,
+        ),
+        definition::<Revoke>("revoke_token", "Revoke a credential.", false, true, true),
         definition::<Create>(
             "create_bog",
             "Create records-v1 database; reuse the same required idempotency key and body to retry safely.",
@@ -148,14 +175,93 @@ fn id(value: String) -> Result<BogId, ErrorData> {
         .map(BogId)
         .map_err(|_| ErrorData::invalid_params("bog_id must be a UUID", None))
 }
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct Wait {
+    bog_id: String,
+    cursor: Option<String>,
+    timeout_seconds: Option<u64>,
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct Issue {
+    bog_id: String,
+    scope: String,
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct Revoke {
+    bog_id: String,
+    token_id: String,
+}
 fn operation(name: &str, args: Value) -> Result<Operation, ErrorData> {
     Ok(match name {
+        "wait_for_change" => {
+            let a: Wait = parse(args)?;
+            Operation::WaitForChange {
+                bog_id: id(a.bog_id)?,
+                cursor: a.cursor,
+                timeout_seconds: a.timeout_seconds.unwrap_or(25),
+            }
+        }
+        "list_workspaces" => {
+            let _: Empty = parse(args)?;
+            Operation::ListWorkspaces
+        }
+        "list_tokens" => {
+            let a: Describe = parse(args)?;
+            Operation::ListTokens {
+                bog_id: id(a.bog_id)?,
+            }
+        }
+        "issue_token" => {
+            let a: Issue = parse(args)?;
+            Operation::IssueToken {
+                bog_id: id(a.bog_id)?,
+                scope: match a.scope.as_str() {
+                    "read" => bog_cloud::Scope::Read,
+                    "write" => bog_cloud::Scope::Write,
+                    _ => {
+                        return Err(ErrorData::invalid_params(
+                            "scope must be read or write",
+                            None,
+                        ));
+                    }
+                },
+            }
+        }
+        "revoke_token" => {
+            let a: Revoke = parse(args)?;
+            Operation::RevokeToken {
+                bog_id: id(a.bog_id)?,
+                token_id: a.token_id,
+            }
+        }
         "create_bog" => {
             let a: Create = parse(args)?;
+            let mut missing = vec![];
+            if a.name.as_deref().is_none_or(|v| v.trim().is_empty()) {
+                missing.push("name")
+            }
+            if a.idempotency_key
+                .as_deref()
+                .is_none_or(|v| v.trim().is_empty())
+            {
+                missing.push("idempotency_key")
+            }
+            if !missing.is_empty() {
+                return Err(ErrorData::invalid_params(
+                    format!(
+                        "Missing required fields: {}. Template defaults to records-v1.",
+                        missing.join(", ")
+                    ),
+                    None,
+                ));
+            }
             Operation::CreateBog {
-                name: a.name,
-                template: a.template,
-                idempotency_key: a.idempotency_key,
+                name: a.name.unwrap(),
+                template: a.template.unwrap_or_else(|| "records-v1".into()),
+                idempotency_key: a.idempotency_key.unwrap(),
             }
         }
         "list_bogs" => {
@@ -234,22 +340,33 @@ impl ServerHandler for Handler {
             .get::<axum::http::request::Parts>()
             .and_then(|p| p.extensions.get::<Principal>())
             .ok_or_else(|| ErrorData::internal_error("request authentication unavailable", None))?;
-        let op = operation(
-            &request.name,
-            Value::Object(request.arguments.unwrap_or_default()),
-        )?;
+        let mut args = request.arguments.unwrap_or_default();
+        let principal = if let Some(workspace) = args.remove("workspace_id") {
+            let workspace = workspace
+                .as_str()
+                .and_then(|w| uuid::Uuid::parse_str(w).ok())
+                .map(bog_cloud::WorkspaceId)
+                .ok_or_else(|| ErrorData::invalid_params("workspace_id must be a UUID", None))?;
+            match self.0.auth.select_workspace(principal, workspace) {
+                Ok(p) => p,
+                Err(e) => return Ok(tool_error(e).into()),
+            }
+        } else {
+            principal.clone()
+        };
+        let op = operation(&request.name, Value::Object(args))?;
         let describe = match &op {
             Operation::DescribeBog { bog_id } => Some(*bog_id),
             _ => None,
         };
         let result = async {
-            let mut result = self.0.execute(principal, op).await?;
+            let mut result = self.0.execute(&principal, op).await?;
             if let Some(bog_id) = describe
                 && result.body["status"] == "ready"
             {
                 let schema = self
                     .0
-                    .execute(principal, Operation::Schema { bog_id })
+                    .execute(&principal, Operation::Schema { bog_id })
                     .await?;
                 result.body["schema"] = schema.body;
             }

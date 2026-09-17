@@ -52,7 +52,18 @@ pub fn build_mcp_router_with_options(service: Arc<CloudService>, options: McpOpt
 async fn authorize(State(gateway): State<Gateway>, mut request: Request, next: Next) -> Response {
     let request_id = uuid::Uuid::new_v4().to_string();
     let reject = |code, message| {
-        bog_cloud::http::error_response(CloudError::new(code, message), &request_id)
+        let mut response =
+            bog_cloud::http::error_response(CloudError::new(code, message), &request_id);
+        if response.status() == 401 {
+            if let Ok(v) =
+                axum::http::HeaderValue::from_str(&gateway.service.authentication_challenge())
+            {
+                response
+                    .headers_mut()
+                    .insert(axum::http::header::WWW_AUTHENTICATE, v);
+            }
+        }
+        response
     };
     let headers = request.headers();
     let auth = headers
@@ -69,9 +80,9 @@ async fn authorize(State(gateway): State<Gateway>, mut request: Request, next: N
     else {
         return reject("unauthorized", "bearer credential required");
     };
-    let principal = match gateway.service.auth.authenticate(token) {
+    let principal = match gateway.service.authenticate_bearer(token, None).await {
         Ok(p) => p,
-        Err(e) => return bog_cloud::http::error_response(e, &request_id),
+        Err(e) => return reject(&e.code, &e.message),
     };
     let origins = headers
         .get_all(axum::http::header::ORIGIN)
