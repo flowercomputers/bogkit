@@ -145,16 +145,22 @@ async fn public_discovery_over_real_http_preserves_auth_boundaries() {
     );
     let sitemap = r.text().await.unwrap();
     assert!(sitemap.contains("http://www.sitemaps.org/schemas/sitemap/0.9"));
-    assert_eq!(sitemap.matches("<loc>").count(), 5);
+    assert_eq!(sitemap.matches("<loc>").count(), 6);
     assert!(!sitemap.contains("/console"));
     assert!(!sitemap.contains("/v1"));
     assert!(sitemap.contains("<lastmod>2026-09-17</lastmod>"));
-    for path in ["/docs", "/about", "/contact", "/privacy", "/og.svg"] {
+    for path in [
+        "/docs", "/connect", "/about", "/contact", "/privacy", "/og.svg",
+    ] {
         let r = client.get(format!("{base}{path}")).send().await.unwrap();
         assert_eq!(r.status(), 200, "{path}");
         let body = r.text().await.unwrap();
         if path != "/og.svg" {
             assert!(body.contains("href=\"/\""));
+        }
+        if path == "/connect" {
+            assert!(body.contains("GitHub agent connection is unavailable"));
+            assert!(!body.contains("undergoing end-to-end verification"));
         }
         if path == "/docs" {
             assert!(body.contains("This prototype is free to use."));
@@ -286,8 +292,30 @@ async fn native_documents_redirect_and_actual_rate_limit_headers() {
         ("/.well-known/openid-configuration", 404),
         ("/.well-known/oauth-protected-resource", 200),
     ] {
-        assert_eq!(client.get(format!("{base}{path}")).send().await.unwrap().status(), status);
+        assert_eq!(
+            client
+                .get(format!("{base}{path}"))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            status
+        );
     }
+    let connect = client.get(format!("{base}/connect")).send().await.unwrap();
+    assert_eq!(connect.status(), 200);
+    let connect = connect.text().await.unwrap();
+    for needle in [
+        "Connect an agent",
+        "2025-11-25",
+        "/.well-known/oauth-protected-resource/mcp",
+        "class=\"site-header\"",
+        "after 30 days",
+    ] {
+        assert!(connect.contains(needle), "missing {needle}");
+    }
+    assert!(!connect.contains("{{origin}}"));
+    assert!(!connect.contains("GitHub agent connection is unavailable"));
     server.abort();
     let service = CloudService::open(
         Config::new(tmp.path().join("legacy"), std::env::current_exe().unwrap()),

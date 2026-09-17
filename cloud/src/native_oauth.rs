@@ -52,7 +52,7 @@ fn unavailable() -> CloudError {
 pub(crate) fn initialize(db: &Connection) -> Result<(), CloudError> {
     db.execute_batch("CREATE TABLE IF NOT EXISTS oauth_clients(id TEXT PRIMARY KEY,name TEXT NOT NULL,redirects TEXT NOT NULL,expires INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS oauth_access(secret_hash BLOB PRIMARY KEY,agent_id TEXT NOT NULL,scope TEXT NOT NULL,resource TEXT NOT NULL,client_id TEXT NOT NULL,expires INTEGER NOT NULL);").map_err(db_error)
 }
-fn redirect_valid(value: &str) -> bool {
+pub(crate) fn redirect_valid(value: &str) -> bool {
     reqwest::Url::parse(value).is_ok_and(|u| {
         u.fragment().is_none()
             && u.username().is_empty()
@@ -89,7 +89,7 @@ impl NativeAuth {
     }
     pub(crate) fn oauth_metadata(&self) -> Value {
         let b = self.config.origin();
-        json!({"issuer":b,"authorization_endpoint":format!("{b}/oauth/authorize"),"token_endpoint":format!("{b}/oauth/token"),"registration_endpoint":format!("{b}/oauth/register"),"revocation_endpoint":format!("{b}/oauth/revoke"),"response_types_supported":["code"],"grant_types_supported":["authorization_code"],"token_endpoint_auth_methods_supported":["none"],"revocation_endpoint_auth_methods_supported":["none"],"code_challenge_methods_supported":["S256"],"scopes_supported":[READ,WRITE],"authorization_response_iss_parameter_supported":true,"client_id_metadata_document_supported":false,"service_documentation":format!("{b}/auth.md")})
+        json!({"issuer":b,"authorization_endpoint":format!("{b}/oauth/authorize"),"token_endpoint":format!("{b}/oauth/token"),"registration_endpoint":format!("{b}/oauth/register"),"revocation_endpoint":format!("{b}/oauth/revoke"),"response_types_supported":["code"],"grant_types_supported":["authorization_code"],"token_endpoint_auth_methods_supported":["none"],"revocation_endpoint_auth_methods_supported":["none"],"code_challenge_methods_supported":["S256"],"scopes_supported":[READ,WRITE],"authorization_response_iss_parameter_supported":true,"client_id_metadata_document_supported":true,"service_documentation":format!("{b}/auth.md")})
     }
     pub(crate) fn resource_metadata(&self) -> Value {
         json!({"resource":self.resource(),"resource_name":"Bog Cloud HTTP and MCP API","authorization_servers":[self.config.origin()],"scopes_supported":[READ,WRITE],"bearer_methods_supported":["header"],"resource_documentation":format!("{}/docs",self.config.origin())})
@@ -105,18 +105,24 @@ impl NativeAuth {
                 "public clients use token_endpoint_auth_method none",
             ));
         }
-        for (key, allowed) in [
-            ("grant_types", "authorization_code"),
-            ("response_types", "code"),
-        ] {
-            if body
-                .get(key)
-                .is_some_and(|v| v.as_array().is_none_or(|a| a.len() != 1 || a[0] != allowed))
-            {
-                return Err(invalid(
-                    "only authorization_code and response_type code are supported",
-                ));
-            }
+        // Clients such as Codex request refresh_token optimistically. Register
+        // the supported authorization_code subset, advertised in our response;
+        // this does not issue refresh tokens or enable the refresh grant.
+        if body.get("grant_types").is_some_and(|v| {
+            v.as_array().is_none_or(|a| {
+                !a.iter().any(|v| v == "authorization_code")
+                    || a.len() > 2
+                    || a.iter()
+                        .any(|v| v != "authorization_code" && v != "refresh_token")
+                    || (a.len() == 2 && a[0] == a[1])
+            })
+        }) || body
+            .get("response_types")
+            .is_some_and(|v| v.as_array().is_none_or(|a| a.len() != 1 || a[0] != "code"))
+        {
+            return Err(invalid(
+                "authorization_code and response_type code are required",
+            ));
         }
         let redirects = body["redirect_uris"]
             .as_array()
@@ -171,27 +177,34 @@ impl NativeAuth {
             json!({"client_id":id,"client_name":name,"redirect_uris":redirects,"token_endpoint_auth_method":"none","grant_types":["authorization_code"],"response_types":["code"],"scope":format!("{READ} {WRITE}"),"client_id_issued_at":now()}),
         )
     }
-    fn authorize_client(
+    async fn authorize_client(
         &self,
         peer: IpAddr,
         p: HashMap<String, String>,
     ) -> Result<String, CloudError> {
         let client = field(&p, "client_id")?;
         let redirect = field(&p, "redirect_uri")?;
-        let row: Option<(String, String)> = self
-            .db
-            .lock()
-            .map_err(|_| unavailable())?
-            .query_row(
-                "SELECT name,redirects FROM oauth_clients WHERE id=?1 AND expires>?2",
-                params![client, now()],
-                |r| Ok((r.get(0)?, r.get(1)?)),
+        let (name, redirects) = if client.starts_with("https://") {
+            crate::client_metadata::fetch(client).await?
+        } else {
+            let row: Option<(String, String)> = self
+                .db
+                .lock()
+                .map_err(|_| unavailable())?
+                .query_row(
+                    "SELECT name,redirects FROM oauth_clients WHERE id=?1 AND expires>?2",
+                    params![client, now()],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()
+                .map_err(db_error)?;
+            let (name, redirects) =
+                row.ok_or_else(|| invalid("unknown or expired client; register again"))?;
+            (
+                name,
+                serde_json::from_str::<Vec<String>>(&redirects).map_err(|_| unavailable())?,
             )
-            .optional()
-            .map_err(db_error)?;
-        let (name, redirects) =
-            row.ok_or_else(|| invalid("unknown or expired client; register again"))?;
-        let redirects: Vec<String> = serde_json::from_str(&redirects).map_err(|_| unavailable())?;
+        };
         if !redirects.iter().any(|r| r == redirect) {
             return Err(invalid("redirect_uri must exactly match registration"));
         }
@@ -462,10 +475,12 @@ async fn inner(service: &CloudService, request: Request) -> Result<Response, Clo
         .get::<ConnectInfo<SocketAddr>>()
         .map(|p| p.0.ip());
     if path == "/oauth/authorize" {
-        let target = native.authorize_client(
-            peer.ok_or_else(unavailable)?,
-            parameters(request.uri().query().unwrap_or("").as_bytes())?,
-        )?;
+        let target = native
+            .authorize_client(
+                peer.ok_or_else(unavailable)?,
+                parameters(request.uri().query().unwrap_or("").as_bytes())?,
+            )
+            .await?;
         return Ok((StatusCode::SEE_OTHER, [(header::LOCATION, target)]).into_response());
     }
     let content_type = crate::http::header_text(request.headers(), "content-type")

@@ -223,7 +223,7 @@ struct Revoke {
     bog_id: String,
     token_id: String,
 }
-fn operation(name: &str, args: Value) -> Result<Operation, ErrorData> {
+pub(crate) fn operation(name: &str, args: Value) -> Result<Operation, ErrorData> {
     Ok(match name {
         "wait_for_change" => {
             let a: Wait = parse(args)?;

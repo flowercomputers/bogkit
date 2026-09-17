@@ -76,6 +76,7 @@ pub fn build_rest_router(service: Arc<CloudService>) -> Router {
         .route("/sitemap.xml", get(crate::public_discovery::document))
         .route("/.well-known/api-catalog", get(crate::public_discovery::document))
         .route("/docs", get(crate::public_discovery::document))
+        .route("/connect", get(crate::public_discovery::document))
         .route("/about", get(crate::public_discovery::document))
         .route("/contact", get(crate::public_discovery::document))
         .route("/privacy", get(crate::public_discovery::document))

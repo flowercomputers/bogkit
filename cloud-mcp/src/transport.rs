@@ -52,6 +52,7 @@ pub fn build_mcp_router_with_options(service: Arc<CloudService>, options: McpOpt
 #[derive(Clone)]
 pub(crate) struct RequestId(pub String);
 async fn authorize(State(gateway): State<Gateway>, mut request: Request, next: Next) -> Response {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
     let request_id = uuid::Uuid::new_v4().to_string();
     let reject = |code, message| {
         let mut response =
@@ -88,6 +89,7 @@ async fn authorize(State(gateway): State<Gateway>, mut request: Request, next: N
     else {
         return reject("unauthorized", "bearer credential required");
     };
+    let native_oauth = token.starts_with("bog_oauth_");
     let principal = match gateway.service.authenticate_bearer(token, None).await {
         Ok(p) => p,
         Err(e) => return reject(&e.code, &e.message),
@@ -117,11 +119,38 @@ async fn authorize(State(gateway): State<Gateway>, mut request: Request, next: N
             "sessions are not supported; authenticate every request",
         );
     }
+    // Only native OAuth scope failures become HTTP challenges. Parse using the
+    // same SDK envelope and tool validator as the handler; malformed requests
+    // and workspace/record denials keep their existing protocol errors.
+    if native_oauth
+        && request.method() == axum::http::Method::POST
+        && let Some(challenge) = gateway.service.oauth_write_challenge(&principal)
+    {
+        let (parts, body) = request.into_parts();
+        let bytes = match tokio::time::timeout_at(deadline, axum::body::to_bytes(body, 1024 * 1024))
+            .await
+        {
+            Ok(Ok(bytes)) => bytes,
+            Ok(Err(_)) => return reject("payload_too_large", "request exceeds 1 MiB"),
+            Err(_) => return reject("unavailable", "request timed out"),
+        };
+        let upgrade = scope_upgrade_required(&gateway.service, &principal, &bytes);
+        request = Request::from_parts(parts, axum::body::Body::from(bytes));
+        if upgrade {
+            let mut response = reject("forbidden", "bog:write scope required");
+            if let Ok(value) = axum::http::HeaderValue::from_str(&challenge) {
+                response
+                    .headers_mut()
+                    .insert(axum::http::header::WWW_AUTHENTICATE, value);
+            }
+            return response;
+        }
+    }
     request.extensions_mut().insert(principal);
     request
         .extensions_mut()
         .insert(RequestId(request_id.clone()));
-    match tokio::time::timeout(std::time::Duration::from_secs(30), next.run(request)).await {
+    match tokio::time::timeout_at(deadline, next.run(request)).await {
         Ok(mut response) => {
             response
                 .headers_mut()
@@ -134,4 +163,53 @@ async fn authorize(State(gateway): State<Gateway>, mut request: Request, next: N
         }
         Err(_) => reject("unavailable", "request timed out"),
     }
+}
+
+fn scope_upgrade_required(
+    service: &CloudService,
+    principal: &bog_cloud::Principal,
+    bytes: &[u8],
+) -> bool {
+    use bog_cloud::Operation;
+    use rmcp::model::{ClientJsonRpcMessage, ClientRequest};
+    let Ok(ClientJsonRpcMessage::Request(message)) =
+        serde_json::from_slice::<ClientJsonRpcMessage>(bytes)
+    else {
+        return false;
+    };
+    let ClientRequest::CallToolRequest(call) = message.request else {
+        return false;
+    };
+    let mut args = call.params.arguments.unwrap_or_default();
+    let principal = if let Some(workspace) = args.remove("workspace_id") {
+        let Some(workspace) = workspace
+            .as_str()
+            .and_then(|w| uuid::Uuid::parse_str(w).ok())
+        else {
+            return false;
+        };
+        let Ok(principal) = service
+            .auth
+            .select_workspace(principal, bog_cloud::WorkspaceId(workspace))
+        else {
+            return false;
+        };
+        principal
+    } else {
+        principal.clone()
+    };
+    let Ok(operation) = crate::tools::operation(&call.params.name, serde_json::Value::Object(args))
+    else {
+        return false;
+    };
+    let target = match operation {
+        Operation::CreateBog { .. } => None,
+        Operation::IssueToken { bog_id, .. }
+        | Operation::RevokeToken { bog_id, .. }
+        | Operation::UpsertRecord { bog_id, .. }
+        | Operation::DeleteRecord { bog_id, .. }
+        | Operation::Batch { bog_id, .. } => Some(bog_id),
+        _ => return false,
+    };
+    service.auth.authorize(&principal, target, false).is_ok()
 }

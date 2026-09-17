@@ -93,6 +93,46 @@ async fn pkce_consent_scopes_replay_revocation_and_restart_over_real_rest_and_mc
             .unwrap()
             .contains("resource_metadata=")
     );
+    assert_eq!(metadata["client_id_metadata_document_supported"], true);
+    assert_eq!(
+        challenge.headers()["www-authenticate"],
+        format!(
+            "Bearer resource_metadata=\"{base}/.well-known/oauth-protected-resource/mcp\", scope=\"bog:read\""
+        )
+    );
+    for path in [
+        "/.well-known/oauth-protected-resource",
+        "/.well-known/oauth-protected-resource/mcp",
+    ] {
+        let resource: Value = http
+            .get(format!("{base}{path}"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(resource["resource"], format!("{base}/mcp"));
+    }
+    // Invalid CIMD locations fail closed over the authorization transport.
+    for client_id in [
+        "https://127.0.0.1/client.json",
+        "https://localhost/client.json",
+        "https://client.example/a#fragment",
+    ] {
+        assert_eq!(
+            http.get(format!("{base}/oauth/authorize"))
+                .query(&[
+                    ("client_id", client_id),
+                    ("redirect_uri", "http://127.0.0.1/cb")
+                ])
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            400
+        );
+    }
     let redirect = "http://127.0.0.1:9999/callback";
     for bad in [
         "https://example.com/cb#fragment",
@@ -109,7 +149,23 @@ async fn pkce_consent_scopes_replay_revocation_and_restart_over_real_rest_and_mc
             400
         );
     }
-    let registered:Value=http.post(format!("{base}/oauth/register")).json(&json!({"client_name":"OAuth test client","redirect_uris":[redirect],"token_endpoint_auth_method":"none"})).send().await.unwrap().json().await.unwrap();
+    for grants in [
+        json!(["refresh_token"]),
+        json!(["client_credentials"]),
+        json!(["authorization_code", "authorization_code"]),
+    ] {
+        assert_eq!(
+            http.post(format!("{base}/oauth/register"))
+                .json(&json!({"redirect_uris":[redirect],"grant_types":grants}))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            400
+        );
+    }
+    let registered:Value=http.post(format!("{base}/oauth/register")).json(&json!({"client_name":"Codex","redirect_uris":[redirect],"token_endpoint_auth_method":"none","grant_types":["authorization_code","refresh_token"],"response_types":["code"]})).send().await.unwrap().json().await.unwrap();
+    assert_eq!(registered["grant_types"], json!(["authorization_code"]));
     let client = registered["client_id"].as_str().unwrap();
     let login = native.begin_login(None).unwrap();
     let state = reqwest::Url::parse(&login.authorization_url)
@@ -300,13 +356,56 @@ async fn pkce_consent_scopes_replay_revocation_and_restart_over_real_rest_and_mc
                 .is_error
                 .unwrap_or(false)
         );
-        let created = common::call(
-            &sdk,
-            "create_bog",
-            json!({"name":"oauth-test","idempotency_key":"oauth-create"}),
-        )
-        .await;
-        assert_eq!(created.is_error.unwrap_or(false), scope == "bog:read");
+        if scope == "bog:read" {
+            let call = |name: &str, arguments: Value| {
+                http.post(format!("{base}/mcp"))
+                .bearer_auth(&secret).header("accept", "application/json, text/event-stream")
+                .header("mcp-protocol-version", "2025-11-25")
+                .json(&json!({"jsonrpc":"2.0","id":99,"method":"tools/call","params":{"name":name,"arguments":arguments}}))
+            };
+            let denied = call(
+                "create_bog",
+                json!({"name":"oauth-test","idempotency_key":"oauth-create"}),
+            )
+            .send()
+            .await
+            .unwrap();
+            assert_eq!(denied.status(), 403);
+            assert_eq!(
+                denied.headers()["www-authenticate"],
+                format!(
+                    "Bearer error=\"insufficient_scope\", scope=\"bog:write\", resource_metadata=\"{base}/.well-known/oauth-protected-resource/mcp\""
+                )
+            );
+            let list: Value = http
+                .get(format!("{base}/v1/bogs"))
+                .bearer_auth(&secret)
+                .send()
+                .await
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            assert_eq!(list["bogs"], json!([]));
+            for args in [
+                json!({"name":"missing-key"}),
+                json!({"name":"valid","idempotency_key":"foreign","workspace_id":uuid::Uuid::new_v4().to_string()}),
+            ] {
+                let response = call("create_bog", args).send().await.unwrap();
+                assert_eq!(response.status(), 200);
+                assert!(response.headers().get("www-authenticate").is_none());
+                let value: Value = response.json().await.unwrap();
+                assert!(value.get("error").is_some() || value["result"]["isError"] == true);
+            }
+        } else {
+            let created = common::call(
+                &sdk,
+                "create_bog",
+                json!({"name":"oauth-test","idempotency_key":"oauth-create"}),
+            )
+            .await;
+            assert!(!created.is_error.unwrap_or(false));
+        }
         sdk.cancel().await.unwrap();
         issued.push(secret);
     }
@@ -325,6 +424,95 @@ async fn pkce_consent_scopes_replay_revocation_and_restart_over_real_rest_and_mc
         .ensure_running(bog_cloud::BogId(uuid::Uuid::parse_str(bog).unwrap()))
         .await
         .unwrap();
+    assert_eq!(
+        http.put(format!("{base}/v1/bogs/{bog}/docs/blocked"))
+            .bearer_auth(&issued[1])
+            .json(&json!({"original":true}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+    let existing: Value = http
+        .get(format!("{base}/v1/bogs/{bog}/docs/blocked"))
+        .bearer_auth(&issued[1])
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let app_token: Value = http
+        .post(format!("{base}/v1/bogs/{bog}/tokens"))
+        .bearer_auth(&issued[1])
+        .json(&json!({"scope":"read"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    // All native OAuth write tools are challenged before any worker or token mutation.
+    for (name, args) in [
+        (
+            "upsert_record",
+            json!({"bog_id":bog,"key":"blocked","data":{"bad":true}}),
+        ),
+        ("delete_record", json!({"bog_id":bog,"key":"blocked"})),
+        (
+            "batch",
+            json!({"bog_id":bog,"operations":[{"op":"upsert","key":"blocked","data":{"bad":true}}]}),
+        ),
+        ("issue_token", json!({"bog_id":bog,"scope":"write"})),
+        (
+            "revoke_token",
+            json!({"bog_id":bog,"token_id":app_token["id"]}),
+        ),
+    ] {
+        let response = http.post(format!("{base}/mcp")).bearer_auth(&issued[0])
+            .header("accept","application/json, text/event-stream").header("mcp-protocol-version","2025-11-25")
+            .json(&json!({"jsonrpc":"2.0","id":100,"method":"tools/call","params":{"name":name,"arguments":args}}))
+            .send().await.unwrap();
+        assert_eq!(response.status(), 403, "{name}");
+        assert!(
+            response.headers()["www-authenticate"]
+                .to_str()
+                .unwrap()
+                .contains("insufficient_scope")
+        );
+    }
+    let unchanged: Value = http
+        .get(format!("{base}/v1/bogs/{bog}/docs/blocked"))
+        .bearer_auth(&issued[1])
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(unchanged["data"], existing["data"]);
+    assert_eq!(unchanged["seq"], existing["seq"]);
+    assert_eq!(unchanged["cursor"], existing["cursor"]);
+    assert_eq!(
+        http.get(format!("{base}/v1/bogs/{bog}/docs/blocked"))
+            .bearer_auth(app_token["token"].as_str().unwrap())
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+    let tokens: Value = http
+        .get(format!("{base}/v1/bogs/{bog}/tokens"))
+        .bearer_auth(&issued[1])
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(tokens["tokens"].as_array().unwrap().len(), 1);
     for (token, expected) in [(&issued[0], 403), (&issued[1], 200)] {
         assert_eq!(
             http.put(format!("{base}/v1/bogs/{bog}/docs/item"))

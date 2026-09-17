@@ -39,3 +39,4 @@ pub mod agent_discovery;
 mod site;
 
 mod native_oauth;
+mod client_metadata;

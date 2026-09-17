@@ -146,13 +146,14 @@ pub async fn document(State(service): State<Arc<CloudService>>, request: Request
         },
         "/sitemap.xml" => {
             // Dates describe the checked-in public content, never the request time.
-            let entries=["/","/docs","/about","/contact","/privacy"].map(|p|format!("<url><loc>{}</loc><lastmod>2026-09-17</lastmod></url>",escape(&format!("{base}{p}")))).join("");
+            let entries=["/","/docs","/connect","/about","/contact","/privacy"].map(|p|format!("<url><loc>{}</loc><lastmod>2026-09-17</lastmod></url>",escape(&format!("{base}{p}")))).join("");
             guide_asset("application/xml; charset=utf-8",format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?><urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">{entries}</urlset>"))
         },
         "/.well-known/api-catalog" => linked(guide_asset("application/linkset+json; profile=\"https://www.rfc-editor.org/info/rfc9727\"",json!({"linkset":[{"anchor":format!("{base}/.well-known/api-catalog"),"item":[{"href":format!("{base}/v1"),"type":"application/json"}]},{"anchor":format!("{base}/v1"),"service-doc":[{"href":format!("{base}/docs"),"type":"text/html"}],"service-desc":[{"href":format!("{base}/openapi.json"),"type":"application/json"}]}]}).to_string()),&base),
         "/og.svg"=>guide_asset("image/svg+xml",include_str!("../static/og.svg")),
         _ => {
             let (title,body)= match path {
+                "/connect"=>("Connect an agent", if service.native_auth.is_some() { include_str!("../static/connect.html").replace("{{origin}}", &escape(&base)) } else { "<p>GitHub agent connection is unavailable on this deployment. An operator must supply an appropriate credential privately. App credentials access one existing Bog; provisioning requires management access.</p><p><a href=\"/auth.md\">Read the active authentication instructions</a></p>".into() }),
                 "/docs"=>("Documentation",include_str!("../static/public-docs.html").replace("{{pricing}}", &escape(&pricing(&service)))),
                 "/about"=>("About Bog Cloud",include_str!("../static/about.html").into()),
                 "/contact"=>("Contact Bog Cloud",include_str!("../static/contact.html").into()),

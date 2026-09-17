@@ -44,7 +44,7 @@ impl CloudService {
     pub fn authentication_challenge(&self) -> String {
         if let Some(native) = &self.native_auth {
             return format!(
-                "Bearer resource_metadata=\"{}/.well-known/oauth-protected-resource\", scope=\"bog:read\"",
+                "Bearer resource_metadata=\"{}/.well-known/oauth-protected-resource/mcp\", scope=\"bog:read\"",
                 native.config.origin()
             );
         }
@@ -58,6 +58,16 @@ impl CloudService {
                 )
             })
             .unwrap_or_else(|| "Bearer".into())
+    }
+    /// The transport calls this only after authenticating a native OAuth bearer.
+    pub fn oauth_write_challenge(&self, principal: &Principal) -> Option<String> {
+        if !principal.read_only {
+            return None;
+        }
+        self.native_auth.as_ref().map(|native| format!(
+            "Bearer error=\"insufficient_scope\", scope=\"bog:write\", resource_metadata=\"{}/.well-known/oauth-protected-resource/mcp\"",
+            native.config.origin()
+        ))
     }
     pub async fn authenticate_bearer(
         &self,
