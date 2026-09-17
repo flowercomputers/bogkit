@@ -360,6 +360,22 @@ async fn repair_schema_and_request_identifiers() {
     assert_eq!(create.input_schema["properties"]["name"]["type"], "string");
     let wait = list.iter().find(|t| t.name == "wait_for_change").unwrap();
     assert!(wait.input_schema["properties"]["timeout"].is_object());
+    let alias = &wait.input_schema["properties"]["timeout_seconds"];
+    assert_eq!(alias["type"], "integer");
+    assert_eq!(alias["deprecated"], true);
+    assert_eq!(alias["maximum"], 25);
+    assert_eq!(wait.input_schema["properties"]["timeout"]["maximum"], 25);
+    assert_eq!(
+        wait.input_schema["not"]["required"],
+        json!(["timeout", "timeout_seconds"])
+    );
+    assert!(
+        !wait.input_schema["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("timeout_seconds"))
+    );
+
     let listing = list.iter().find(|t| t.name == "list_bogs").unwrap();
     assert_eq!(
         listing.input_schema["properties"]["workspace_id"]["type"],

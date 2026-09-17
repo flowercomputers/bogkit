@@ -91,6 +91,19 @@ fn definition<T: JsonSchema>(
     {
         properties.insert("workspace_id".into(), json!({"type":"string","format":"uuid","description":"Explicit workspace selection; defaults to personal workspace for accounts or legacy workspace for legacy management credentials."}));
     }
+    if name == "wait_for_change" {
+        // serde aliases are accepted at runtime but omitted by schemars.
+        // Advertise both spellings so strict schema clients can use the alias.
+        let properties = input["properties"]
+            .as_object_mut()
+            .expect("object properties");
+        properties.insert("timeout".into(),json!({"type":"integer","minimum":0,"maximum":25,"default":25,"description":"Maximum seconds to wait; omit for 25 seconds."}));
+        properties.insert("timeout_seconds".into(),json!({"type":"integer","minimum":0,"maximum":25,"deprecated":true,"description":"Legacy alias for timeout. Do not supply both spellings."}));
+        input.insert(
+            "not".into(),
+            json!({"required":["timeout","timeout_seconds"]}),
+        );
+    }
     let description = match name {
         "create_bog" => {
             "Create a workspace database. name and idempotency_key are required strings; template defaults to records-v1."
