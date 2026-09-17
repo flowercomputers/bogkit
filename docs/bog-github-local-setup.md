@@ -23,4 +23,4 @@ Give the following instructions to an agent on the Mac you can access directly. 
 
 ## Handoff status
 
-The local agent reports that the organization-owned app has been created at https://github.com/organizations/flowercomputers/settings/applications/3864757. The callback and flags match these instructions. Its private credential file remains on the originating Mac; the SSH hostname did not resolve, so transfer is pending. Do not create another app or send the secret through chat.
+The local agent reports that the organization-owned app has been created at https://github.com/organizations/flowercomputers/settings/applications/3864757. The callback and flags match these instructions. The owner subsequently supplied the configuration, which was saved privately and installed through Fly Secrets. Real GitHub sign-in and device approval now pass. Do not create another app; this handoff is complete.

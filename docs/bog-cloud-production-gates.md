@@ -1,12 +1,14 @@
-# Native GitHub activation gates
+# Future production safeguards
 
-Native authentication is a separate, undeployed followup to the repaired token-access runtime. Do not activate it until every cutover gate below passes. Mock-provider tests do not establish production GitHub interoperability.
+> Prototype scope amendment, 2026-09-17: the owner explicitly requested a usable demo first. This checklist no longer gates the prototype. The preview uses a verified recovery copy and upgrade rehearsal; scheduled cloud backups, full capacity certification, two-person acceptance and owner rotation are deferred. `BOG_PREVIEW_LEGACY_OPERATOR=true` temporarily preserves the existing chat credential, restricted to legacy resources. Native GitHub users remain isolated. The default native mode still denies public operator access.
+
+These are the remaining safeguards before describing the service as production infrastructure. They are not requirements for the explicitly authorized prototype. Mock-provider tests do not establish real GitHub interoperability.
 
 ## Authentication configuration
 
 Use a dedicated organization-owned GitHub OAuth app with exact callback `https://flower-bog-cloud.fly.dev/auth/callback`. Configure `BOG_GITHUB_CLIENT_ID`, `BOG_GITHUB_CLIENT_SECRET`, and `BOG_GITHUB_REDIRECT_URI` together in protected runtime configuration. Partial configuration and simultaneous native/WorkOS variables are rejected. GitHub sign-in uses PKCE S256 and explicit empty scope; repository access is not requested. Account ownership uses issuer `https://github.com` and immutable numeric GitHub ID, never email or login name. Do not activate an authentication SaaS service.
 
-Native mode accepts Bog-issued agent and scoped app credentials. It rejects public operator credentials and GitHub access tokens. HTTP and bearer-capable MCP clients share Bog credentials. Native mode does not provide an MCP OAuth authorization server or OAuth resource metadata. See the configured server's `/auth.md` for the device approval protocol.
+Native mode accepts Bog-issued agent and scoped app credentials. Outside the explicit prototype compatibility switch, it rejects public operator credentials. GitHub access tokens are never accepted as Bog API credentials. HTTP and bearer-capable MCP clients share Bog credentials. Native mode does not provide an MCP OAuth authorization server or OAuth resource metadata. See the configured server's `/auth.md` for the device approval protocol.
 
 Human sessions are opaque, private server-side records with 12-hour absolute expiry. Refresh rotates the secret without extending expiry. Sign-out revokes only the local Bog session. Account suspension is enforced locally. Agent credentials expire after 30 days; issuance/revocation is human-only, and current memberships are checked on each request. Existing single-Bog credentials remain valid under their existing rules.
 
@@ -29,4 +31,4 @@ Startup without configured authentication requires explicit `BOG_ALLOW_LEGACY_PU
 
 Legacy ownership claim uses only the private Unix admin socket `POST /claim-legacy`, authenticated with the private operator secret. First configure `BOG_LEGACY_OWNER_GITHUB_ID` to the independently verified canonical numeric owner ID. Send the owner's valid native session secret as JSON `session_token` through a private local client; do not supply a GitHub token, username or email. The server verifies the session, account status and exact immutable identity. Keep both secrets out of shell arguments, history, chats and logs. This route is absent from the public listener. Do not claim legacy ownership until the consumer inventory, chat migration and restore gates pass.
 
-Activation remains blocked until organization app configuration, real-provider proofs, owner/chat cutover, off-host recovery and host-capacity checks are complete.
+The prototype is live; these deferred items apply to a future production cutover. See [verified prototype rollout](verification/bog-cloud-prototype.md) for current evidence.

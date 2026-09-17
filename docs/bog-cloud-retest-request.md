@@ -1,15 +1,15 @@
-# Bog Cloud repair retest request
+# Bog Cloud prototype retest
 
-Please revisit https://flower-bog-cloud.fly.dev/ using the same environment as your previous chat test. Begin with the homepage and published discovery; do not assume GitHub signup is active. Report the deployed behavior rather than relying on this checklist as documentation.
+Please try https://flower-bog-cloud.fly.dev/ again, starting as a fresh agent with only that URL. GitHub sign-in and Bog-issued agent credentials are now deployed. This is a small prototype, not a production durability assessment.
 
-Recheck your original failures:
+1. Discover how to connect from the homepage and published instructions. Request an agent approval code, show the human the approval link and public code, and keep the private code and resulting token out of chat and logs. Ask the human to sign in with GitHub and approve. Do not use the old owner token for this onboarding test.
+2. Discover your personal workspace and create one Bog with a stable idempotency key. Retry creation and confirm you get the same Bog. Write and read records, replace a record, and check Fold's total view.
+3. Issue a single-Bog write credential and use it in the supplied chat app's private server configuration. Verify reads, writes and change waiting. Confirm this app credential cannot provision Bogs or issue credentials.
+4. Connect a real bearer-capable MCP client using the Bog-issued agent credential. Exercise the same Bog through HTTP and MCP. Automatic MCP OAuth login is not implemented; the documented device approval provides the bearer credential.
+5. Recheck actionable errors, required MCP creation arguments, explicit workspace selection, timeout/timeout_seconds compatibility and request IDs. Report any mismatch you actually observe.
 
-1. With your existing management credential, inspect `/v1/me`, list workspaces, list chat-Bog token metadata, and select the legacy workspace explicitly. Verify the documentation accurately describes the allowance and available authentication path.
-2. Create at most one clearly named disposable Bog using a stable idempotency key, retry the identical creation, issue a scoped credential, and verify its restrictions. Delete only the disposable Bog you created, using exact-ID confirmation. Do not delete the chat or existing test Bogs.
-3. Try an invalid template, an unknown field and missing creation requirements. Do the responses tell you how to correct them?
-4. Through a real MCP client, inspect required creation arguments, `workspace_id`, and `wait_for_change`. Test canonical `timeout`, the compatibility spelling `timeout_seconds`, and a request with both (which should fail clearly). Record whether successes and errors supply usable request IDs.
-5. Confirm the existing chat still reads/writes and waits for changes. Report whether it is actually running with a scoped write credential or still using the owner credential; do not paste either secret.
+Keep the existing chat Bog (21214697-82be-44d6-9328-264cc344aedd) and its records untouched during fresh onboarding. The remote old chat remains compatible with its existing credential; do not rotate it or change that installation as part of this test. The previously reported disposable Bog 93629d91-ca1a-471b-ba5b-c29c649de310 has already been removed.
 
-Preserve the existing chat records. Avoid capacity/load tests on the shared live host. Revoke credentials you create solely for this retest and remove your disposable resources. If an operation fails, leave its exact resource/token ID for targeted cleanup, not its secret.
+Create at most one new demo Bog and avoid load tests on the shared host. Leave its ID in the report; deletion requires the human's console session. Revoke test app credentials you no longer need, but retain any credential actively used by the demo. Never include secrets in the report.
 
-Please send a concise verdict followed by remaining findings with timestamp, interface, sanitized request, expected/actual behavior and request ID. Separate confirmed service bugs, documentation gaps, and client/tool limitations. Include what now works and whether a first-time agent can proceed using only the public instructions. GitHub signup activation is a separate release; don't count its clearly documented absence as a regression.
+Report whether you could go from the homepage link to a working app, what required guessing, and remaining failures with timestamp, HTTP/MCP interface, sanitized request, expected/actual behavior and request ID. Separate service bugs from client limitations. Do not expand the exercise into production hardening or new database features.

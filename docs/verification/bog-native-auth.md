@@ -1,5 +1,7 @@
 # Native GitHub authentication verification
 
+> Historical implementation checks. The prototype is now deployed and real GitHub/HTTP/MCP tests passed; see [prototype rollout](bog-cloud-prototype.md). The owner explicitly deferred production safeguards and enabled legacy-workspace compatibility for the existing chat.
+
 ## Deployment boundary
 
 The live repair release remains `503f75f`, with registry version 2. Native authentication is implemented separately in `e3bab67` and is not deployed or activated. Its registry migration produces version 3; never run the repair binary against a migrated registry. Rollback requires a compatible pre-migration snapshot.
