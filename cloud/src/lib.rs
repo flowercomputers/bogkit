@@ -22,7 +22,7 @@ pub use auth::PrincipalKind;
 pub use workspace::IssuedInvitation;
 
 pub mod browser_auth;
-pub mod oauth;
-pub mod gateway;
-pub mod contract;
 pub mod changes;
+pub mod contract;
+pub mod gateway;
+pub mod oauth;
