@@ -26,4 +26,4 @@ User direction: agents are the primary consumers; no dedicated visual dashboard.
 
 ## Status
 
-Implementation in progress.
+Implemented, reviewed, tested and deployed as `1d528c5`. See `docs/verification/bog-observability-2026-09-17.md` for evidence and deliberate limits.

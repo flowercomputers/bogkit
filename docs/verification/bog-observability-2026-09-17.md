@@ -14,7 +14,15 @@ HTTP, MCP and signed-in WebMCP expose `bog_metrics` and `bog_events`. Token list
 
 ## Live verification
 
-Pending deployment and disposable-fixture verification. The original chat is read-only throughout verification; temporary app access will be revoked.
+Deployed `1d528c5` to the existing Fly machine `4d895395c393e8`; health and smoke checks passed. No host expansion.
+
+Live HTTP checks passed: metrics and event discovery, explicit windows, active waiters, a write releasing a waiter, scoped request attribution, error/request-ID correlation, event pagination, coarse token activity, cross-Bog denial and app-event denial. The temporary record was deleted and credential `43e70fb3-29fc-4fc9-921b-193b592adaa3` revoked; subsequent use returned 401. One causal waiter-release sample was observed.
+
+Live MCP initialize, tool discovery and `bog_metrics` passed through the deployed HTTP transport using an already approved identity. This is not a new independent Codex/Claude onboarding trial.
+
+A second fixture remained sleeping with unchanged generation after metrics and event reads. Public discovery checks passed. The original chat's records matched their pre-deployment fingerprint.
+
+Sanitized sample request IDs: `49c23e80-d031-4e29-bffd-96cef531adbe`, `d084c39f-c372-43b6-9740-f23fe84b4e07`, `d9d9bf2e-9b80-4854-ade2-f58a8dbf6cc2`.
 
 ## Deliberate limits
 
