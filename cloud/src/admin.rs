@@ -21,7 +21,62 @@ fn authorize(service: &CloudService, headers: &HeaderMap) -> Result<(), CloudErr
         .and_then(|h| h.strip_prefix("Bearer "))
         .ok_or_else(|| CloudError::new("unauthorized", "owner credentials required"))?;
     let principal = service.auth.authenticate(token)?;
+    if principal.kind() != crate::auth::PrincipalKind::Operator {
+        return Err(CloudError::new(
+            "forbidden",
+            "operator credentials required",
+        ));
+    }
     service.auth.authorize(&principal, None, true)
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ClaimLegacy {
+    access_token: String,
+}
+async fn claim_legacy(
+    State(service): State<Arc<CloudService>>,
+    headers: HeaderMap,
+    Json(body): Json<ClaimLegacy>,
+) -> Response {
+    let result = async {
+        authorize(&service, &headers)?;
+        let public = service
+            .public_auth
+            .as_ref()
+            .ok_or_else(|| CloudError::new("unavailable", "WorkOS is not configured"))?;
+        let issuer = std::env::var("BOG_LEGACY_OWNER_ISSUER").map_err(|_| {
+            CloudError::new(
+                "invalid_config",
+                "legacy owner identity must be explicitly configured",
+            )
+        })?;
+        let subject = std::env::var("BOG_LEGACY_OWNER_SUBJECT").map_err(|_| {
+            CloudError::new(
+                "invalid_config",
+                "legacy owner identity must be explicitly configured",
+            )
+        })?;
+        let identity = public
+            .verifier
+            .verify_access_token(&body.access_token)
+            .await?;
+        let operator = service.auth.authenticate(
+            headers
+                .get("authorization")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.strip_prefix("Bearer "))
+                .unwrap_or_default(),
+        )?;
+        service
+            .auth
+            .claim_legacy(&operator, &identity, &issuer, &subject)
+    }
+    .await;
+    match result {
+        Ok(workspace) => Json(json!({"workspace_id":workspace})).into_response(),
+        Err(e) => error_response(e, &uuid::Uuid::new_v4().to_string()),
+    }
 }
 async fn backup(
     State(service): State<Arc<CloudService>>,
@@ -117,9 +172,10 @@ pub async fn bind(service: Arc<CloudService>, path: PathBuf) -> Result<AdminServ
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).map_err(|_| fail())?;
     std::fs::write(&marker, format!("{}:{}", meta.dev(), meta.ino())).map_err(|_| fail())?;
     let router = Router::new()
+        .route("/claim-legacy", post(claim_legacy))
         .route("/backup/{id}", post(backup))
         .route("/restore/{id}", post(restore))
-        .layer(DefaultBodyLimit::max(1024))
+        .layer(DefaultBodyLimit::max(16384))
         .with_state(service);
     let (stop, rx) = tokio::sync::oneshot::channel();
     let task = tokio::spawn(async move {

@@ -38,6 +38,7 @@ impl Processes {
     fn start(&mut self) {
         self.manager = Some(
             Command::new(env!("CARGO_BIN_EXE_bog-cloud"))
+                .env("BOG_ALLOW_LEGACY_PUBLIC_OPERATOR", "true")
                 .env("BOG_CLOUD_ROOT", &self.root)
                 .env("BOG_WORKER_BINARY", &self.binary)
                 .env("BOG_CLOUD_OWNER_TOKEN", OWNER)

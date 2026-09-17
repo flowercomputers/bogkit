@@ -16,3 +16,13 @@ pub use http::build_rest_router;
 pub mod backup;
 
 pub mod admin;
+
+pub mod workspace;
+pub use auth::PrincipalKind;
+pub use workspace::IssuedInvitation;
+
+pub mod browser_auth;
+pub mod oauth;
+pub mod gateway;
+pub mod contract;
+pub mod changes;

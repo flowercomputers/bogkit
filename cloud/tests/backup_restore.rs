@@ -59,7 +59,9 @@ async fn closed_store_backup_restores_independently_and_detects_corruption() {
             .await
             .unwrap()
             .body;
-        assert_eq!(a, b);
+        assert_eq!(a["data"], b["data"]);
+        assert_eq!(a["seq"], b["seq"]);
+        assert_ne!(a["cursor"], b["cursor"], "restore has a separate cursor identity");
     }
     svc.execute(
         &owner,
