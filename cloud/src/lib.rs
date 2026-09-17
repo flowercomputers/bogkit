@@ -31,3 +31,7 @@ pub mod agent_tokens;
 pub mod native_auth;
 
 mod native_http;
+
+mod public_discovery;
+
+pub mod agent_discovery;

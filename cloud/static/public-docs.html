@@ -1,0 +1,22 @@
+<section><h2>When to use Bog</h2><p>Use Bog for a small agent notebook, shared reading list, or script state. Store JSON objects under keys and read them through HTTP or MCP. This is a working prototype; keep a separate copy of important data. SQL, direct browser app access, app-user authentication, and durable event replay are outside this release.</p></section>
+<section><h2>Pricing and limits</h2><p>{{pricing}}</p></section>
+<section><h2>Authenticate first</h2><p>Read <a href="/auth.md">the deployment's authentication guide</a> for the active mode. With native GitHub authentication, sign in through <a href="/auth/login">GitHub</a> and create a named agent credential in the <a href="/console">console</a>, or follow the device approval flow in that guide. MCP uses a Bog bearer credential at <code>/mcp</code>; native mode does not provide an OAuth authorization server. An operator-only deployment requires a privately supplied credential.</p><p>Keep credentials in a local secret store or environment, never in chat or URLs. Set <code>BOG_URL</code> to this site's origin and <code>BOG_TOKEN</code> to your credential. Management credentials can create Bogs; a single-Bog app credential cannot. Authenticated account requests default to the personal workspace; use <code>?workspace_id=UUID</code> to select another workspace.</p></section>
+<section><h2>Create a Bog</h2><p>Send a stable, unique idempotency key for each intended creation. Reuse that key when retrying the same request. Save the returned Bog ID as <code>BOG_ID</code>.</p><pre><code>curl "$BOG_URL/v1/bogs" \
+  -H "Authorization: Bearer $BOG_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: reading-list-001' \
+  -d '{"name":"reading-list","template":"records-v1"}'</code></pre></section>
+<section><h2>Write and read a record</h2><p>A write replaces the object stored at the key. Use a management, delegated-agent, or matching single-Bog write credential. Reads also accept matching read credentials.</p><pre><code>curl -X PUT "$BOG_URL/v1/bogs/$BOG_ID/docs/dune" \
+  -H "Authorization: Bearer $BOG_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"title":"Dune","status":"to-read"}'
+
+curl "$BOG_URL/v1/bogs/$BOG_ID/docs/dune" \
+  -H "Authorization: Bearer $BOG_TOKEN"</code></pre></section>
+<section><h2>Wait for a change</h2><p>Acquire a cursor first, then pass the returned opaque cursor to a subsequent request. Each wait is limited to 25 seconds. Initial state acquisition can separately take up to 25 seconds, even with <code>timeout=0</code>. If the response indicates reset, refetch your records. This is a change notification, not durable event history.</p><pre><code>curl "$BOG_URL/v1/bogs/$BOG_ID/changes?timeout=0" \
+  -H "Authorization: Bearer $BOG_TOKEN"
+
+curl --get "$BOG_URL/v1/bogs/$BOG_ID/changes" \
+  --data-urlencode "cursor=$BOG_CURSOR" --data-urlencode 'timeout=25' \
+  -H "Authorization: Bearer $BOG_TOKEN"</code></pre></section>
+<section><h2>Explore the contract</h2><p><a href="/v1">Operations and limits</a> · <a href="/v1/templates">Templates</a> · <a href="/openapi.json">OpenAPI</a> · <a href="/llms.txt">Agent entry point</a> · <a href="/.well-known/api-catalog">API catalog</a></p><p>Respect error responses and retry guidance. Never treat an authentication failure as evidence that a private resource exists.</p></section>

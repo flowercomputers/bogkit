@@ -1,0 +1,9 @@
+# Public discovery implementation
+
+Implemented public robots instructions (wildcard plus GPTBot, OAI-SearchBot, Claude-Web, Google-Extended), sitemap containing only five public HTML pages with content revision date 2026-09-17, RFC 9727 Linkset API catalog and Link headers, negotiated homepage Markdown, canonical/Open Graph/SoftwareApplication metadata, a text SVG social asset, public docs/about/contact/privacy pages, negotiated public unknown-path 404, and real per-principal HTTP quota headers. Existing guide visual HTML and GitHub redirect remain intact; private namespaces still authenticate before resolving resources. Public documentation explains create/read/write/wait with actual bearer credentials and mode-aware free prototype limits. No OAuth authorization server or unsupported authentication capability advertised.
+
+RFC 9727 primary reference: https://www.rfc-editor.org/rfc/rfc9727.html (GET and HEAD catalog behavior, Linkset media type/profile, item and service relations).
+
+Validation: cargo test -p bog-cloud --test public_discovery --test rest. Two real localhost HTTP integration tests and four existing REST tests pass. Covers GET/HEAD catalog, Markdown Accept/q=0/preference handling, HTML preservation, robots groups, sitemap, public docs, native GitHub offsite303, unsupported OAuth/OIDC404, private401 boundary, actual600-request limiter exhaustion and Retry-After without leaking quota to anonymous callers. Local HTTP tests required approved sandbox escalation for localhost listening. No deployment or infrastructure changes.
+
+Known practical limits: sitemap date is checked-in content revision and must be maintained when public copy changes. SVG Open Graph image is intentionally a simple text asset; social crawlers may prefer raster formats. Quota headers describe the existing fixed window bucket and can naturally change under concurrent calls; they never charge requests. Visual browser inspection belongs to root integration pass.

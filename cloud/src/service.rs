@@ -337,6 +337,22 @@ impl CloudService {
             body: result,
         })
     }
+    /// Snapshot the existing bucket without authenticating or charging a request.
+    /// No bucket means this principal has not reached the rate-limited operation path.
+    pub(crate) fn rate_limit_snapshot(&self, principal: &Principal) -> Option<(u32, u64)> {
+        let key = principal
+            .account_id()
+            .or(principal.token_id.as_deref())
+            .unwrap_or("operator");
+        let rates = self.rates.lock().ok()?;
+        let (start, count) = rates.get(key)?;
+        let elapsed = start.elapsed();
+        if elapsed >= std::time::Duration::from_secs(60) {
+            return None;
+        }
+        let reset = (std::time::Duration::from_secs(60) - elapsed).as_secs() + 1;
+        Some((600u32.saturating_sub(*count), reset.min(60)))
+    }
     pub fn rate_limit(&self, principal: &Principal) -> Result<(), CloudError> {
         let key = principal
             .account_id()

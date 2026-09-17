@@ -56,15 +56,21 @@ pub fn build_rest_router(service: Arc<CloudService>) -> Router {
         .route("/llms.txt", get(discovery))
         .route("/openapi.json", get(discovery))
         .route("/.well-known/oauth-protected-resource", get(discovery))
-        .route(
-            "/",
-            get(|State(service): State<Arc<CloudService>>| async move {
-                guide_asset(
-                    "text/html; charset=utf-8",
-                    crate::native_http::guide(&service),
-                )
-            }),
-        )
+        .route("/", get(crate::public_discovery::homepage))
+        .route("/robots.txt", get(crate::public_discovery::document))
+        .route("/sitemap.xml", get(crate::public_discovery::document))
+        .route("/.well-known/api-catalog", get(crate::public_discovery::document))
+        .route("/docs", get(crate::public_discovery::document))
+        .route("/about", get(crate::public_discovery::document))
+        .route("/contact", get(crate::public_discovery::document))
+        .route("/privacy", get(crate::public_discovery::document))
+        .route("/og.svg", get(crate::public_discovery::document))
+        .route("/.well-known/mcp/server-card.json", get(crate::public_discovery::document).options(crate::public_discovery::document))
+        .route("/.well-known/agent-skills/index.json", get(crate::public_discovery::document).options(crate::public_discovery::document))
+        .route("/.well-known/agent-skills/bog-cloud/SKILL.md", get(crate::public_discovery::document).options(crate::public_discovery::document))
+        .route("/.well-known/ard.json", get(crate::public_discovery::document).options(crate::public_discovery::document))
+        .route("/.well-known/ai-catalog.json", get(crate::public_discovery::document).options(crate::public_discovery::document))
+        .route("/mcp/server-card", get(crate::public_discovery::document).options(crate::public_discovery::document))
         .route(
             "/guide.css",
             get(|| async {
@@ -139,11 +145,15 @@ pub fn error_response(error: CloudError, request_id: &str) -> Response {
     response
 }
 async fn dispatch(State(service): State<Arc<CloudService>>, request: Request) -> Response {
+    if crate::public_discovery::is_public_unknown(request.uri().path()) {
+        return crate::public_discovery::not_found(request.headers());
+    }
     let request_id = Uuid::new_v4().to_string();
     let started = std::time::Instant::now();
+    let mut authenticated_principal = None;
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(30),
-        dispatch_inner(&service, request),
+        dispatch_inner(&service, request, &mut authenticated_principal),
     )
     .await
     .unwrap_or_else(|_| Err(CloudError::new("unavailable", "request timed out")));
@@ -164,6 +174,25 @@ async fn dispatch(State(service): State<Arc<CloudService>>, request: Request) ->
         }
         Err(error) => error_response(error, &request_id),
     };
+    if let Some(principal) = authenticated_principal.as_ref()
+        && let Some((remaining, reset)) = service.rate_limit_snapshot(principal)
+    {
+        for (name, value) in [
+            ("ratelimit-limit", "600".to_owned()),
+            ("ratelimit-remaining", remaining.to_string()),
+            ("ratelimit-reset", reset.to_string()),
+        ] {
+            response
+                .headers_mut()
+                .insert(name, header::HeaderValue::from_str(&value).unwrap());
+        }
+        if response.status() == StatusCode::TOO_MANY_REQUESTS && remaining == 0 {
+            response.headers_mut().insert(
+                header::RETRY_AFTER,
+                header::HeaderValue::from_str(&reset.to_string()).unwrap(),
+            );
+        }
+    }
     if response.status() == StatusCode::UNAUTHORIZED
         && let Ok(v) = header::HeaderValue::from_str(&service.authentication_challenge())
     {
@@ -189,6 +218,7 @@ fn bad(message: &str) -> CloudError {
 async fn dispatch_inner(
     service: &CloudService,
     request: Request,
+    authenticated_principal: &mut Option<crate::Principal>,
 ) -> Result<crate::OperationResult, CloudError> {
     if request
         .headers()
@@ -258,6 +288,7 @@ async fn dispatch_inner(
             .auth
             .principal_from_verified(&identity, workspace.unwrap_or(personal.id))?
     };
+    *authenticated_principal = Some(principal.clone());
     let method = request.method().as_str().to_owned();
     let path: Vec<String> = request
         .uri()
