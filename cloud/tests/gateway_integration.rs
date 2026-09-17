@@ -173,8 +173,13 @@ async fn authenticated_workspace_isolation_and_app_limits() {
         .principal_from_verified(&identity_a, workspace_id)
         .unwrap();
     let invitation = svc.auth.invite(&human_a, "owner").unwrap();
+    let (_, personal_b) = svc.auth.provision_identity(&identity_b).unwrap();
+    let human_b = svc
+        .auth
+        .principal_from_verified(&identity_b, personal_b.id)
+        .unwrap();
     svc.auth
-        .accept_invitation(&identity_b, &invitation.secret)
+        .accept_invitation_for_principal(&human_b, &invitation.secret)
         .unwrap();
     let (_, personal) = call(&app, "GET", "/v1/bogs", &b, json!({})).await;
     assert_eq!(personal["bogs"].as_array().unwrap().len(), 0);
@@ -208,7 +213,7 @@ async fn authenticated_workspace_isolation_and_app_limits() {
         )
         .await
         .0,
-        404
+        403
     );
     assert_eq!(
         call(
@@ -220,8 +225,13 @@ async fn authenticated_workspace_isolation_and_app_limits() {
         )
         .await
         .0,
-        202
+        403
     );
+    let shared_human_b = svc.auth.select_workspace(&human_b, workspace_id).unwrap();
+    let bog_id = bog_cloud::BogId(uuid::Uuid::parse_str(id).unwrap());
+    svc.auth
+        .delete_bog(&shared_human_b, bog_id, bog_id)
+        .unwrap();
     assert_eq!(
         call(&app, "GET", &format!("/v1/bogs/{id}"), token, json!({}))
             .await
@@ -347,6 +357,59 @@ async fn browser_session_rest_requires_origin_and_csrf() {
             .unwrap();
         assert_eq!(r.status().as_u16(), expected);
     }
+    // The same ownership deletion is allowed through a CSRF-protected human
+    // session with an explicitly selected shared workspace.
+    let public = svc.public_auth.as_ref().unwrap();
+    let other_identity = public
+        .verifier
+        .verify_access_token(&jwt(&issuer, "shared-owner"))
+        .await
+        .unwrap();
+    let (_, other_workspace) = svc.auth.provision_identity(&other_identity).unwrap();
+    let other_owner = svc
+        .auth
+        .principal_from_verified(&other_identity, other_workspace.id)
+        .unwrap();
+    let human_identity = public
+        .verifier
+        .verify_access_token(&jwt(&issuer, "human"))
+        .await
+        .unwrap();
+    let human = svc
+        .auth
+        .principal_from_verified(
+            &human_identity,
+            bog_cloud::WorkspaceId(uuid::Uuid::parse_str(w).unwrap()),
+        )
+        .unwrap();
+    let invitation = svc.auth.invite(&other_owner, "owner").unwrap();
+    svc.auth
+        .accept_invitation_for_principal(&human, &invitation.secret)
+        .unwrap();
+    let shared_bog = svc
+        .registry
+        .create_for_principal(&other_owner, "shared", "records-v1", "shared", 32)
+        .unwrap();
+    let deletion = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!(
+                    "/v1/bogs/{}?workspace_id={}",
+                    shared_bog.id, other_workspace.id
+                ))
+                .header("cookie", session)
+                .header("origin", "http://127.0.0.1")
+                .header("x-csrf-token", csrf)
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"confirm":shared_bog.id}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(deletion.status(), 202);
+    assert!(svc.registry.is_deleted(shared_bog.id).unwrap());
     let logout = app
         .clone()
         .oneshot(

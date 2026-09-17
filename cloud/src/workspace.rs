@@ -62,6 +62,12 @@ impl Auth {
         self.check_member(a, w, owner)?;
         Ok((w, a))
     }
+    fn human_owner<'a>(&self, p: &'a Principal) -> Result<(WorkspaceId, &'a str), CloudError> {
+        if p.kind != PrincipalKind::Human {
+            return Err(forbidden());
+        }
+        self.managed(p, true)
+    }
     pub fn provision_identity(
         &self,
         identity: &crate::oauth::VerifiedIdentity,
@@ -185,7 +191,7 @@ impl Auth {
         .map_err(db_error)
     }
     pub fn invite(&self, p: &Principal, role: &str) -> Result<IssuedInvitation, CloudError> {
-        let (w, a) = self.managed(p, true)?;
+        let (w, a) = self.human_owner(p)?;
         if !matches!(role, "owner" | "member") {
             return Err(CloudError::new("invalid_request", "invalid role"));
         }
@@ -205,14 +211,6 @@ impl Auth {
             secret,
             expires_at,
         })
-    }
-    pub fn accept_invitation(
-        &self,
-        identity: &crate::oauth::VerifiedIdentity,
-        secret: &str,
-    ) -> Result<WorkspaceId, CloudError> {
-        let (a, _) = self.provision_identity(identity)?;
-        self.accept_for_account(&a.id, secret)
     }
     fn accept_for_account(&self, a: &str, secret: &str) -> Result<WorkspaceId, CloudError> {
         let mut db = self.registry.connection()?;
@@ -244,7 +242,7 @@ impl Auth {
         Ok(w)
     }
     pub fn revoke_invitation(&self, p: &Principal, id: &str) -> Result<(), CloudError> {
-        let (w, a) = self.managed(p, true)?;
+        let (w, a) = self.human_owner(p)?;
         let mut db = self.registry.connection()?;
         let tx = db
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
@@ -281,7 +279,7 @@ impl Auth {
         .map_err(db_error)
     }
     pub fn remove_member(&self, p: &Principal, account: &str) -> Result<(), CloudError> {
-        let (w, a) = self.managed(p, true)?;
+        let (w, a) = self.human_owner(p)?;
         let mut db = self.registry.connection()?;
         let tx = db
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
@@ -501,6 +499,63 @@ mod tests {
             token_id: None,
             bog_id: None,
         }
+    }
+    #[test]
+    fn agents_cannot_mutate_ownership_but_can_manage_app_credentials() {
+        let (_d, r, a) = setup();
+        let human = person(&a, "owner");
+        let guest = person(&a, "guest");
+        let mut agent = human.clone();
+        agent.kind = PrincipalKind::Agent;
+        let w = human.workspace_id.unwrap();
+        let bog = r
+            .create_for_principal(&agent, "db", "records-v1", "db", 32)
+            .unwrap();
+        assert_eq!(a.invite(&agent, "owner").err().unwrap().code, "forbidden");
+        let revocable = a.invite(&human, "member").unwrap();
+        assert_eq!(
+            a.revoke_invitation(&agent, &revocable.id).unwrap_err().code,
+            "forbidden"
+        );
+        a.revoke_invitation(&human, &revocable.id).unwrap();
+        let invite = a.invite(&human, "member").unwrap();
+        let mut guest_agent = guest.clone();
+        guest_agent.kind = PrincipalKind::Agent;
+        assert_eq!(
+            a.accept_invitation_for_principal(&guest_agent, &invite.secret)
+                .unwrap_err()
+                .code,
+            "forbidden"
+        );
+        assert_eq!(
+            a.accept_invitation_for_principal(&guest, &invite.secret)
+                .unwrap(),
+            w
+        );
+        assert_eq!(
+            a.remove_member(&agent, guest.account_id.as_deref().unwrap())
+                .unwrap_err()
+                .code,
+            "forbidden"
+        );
+        a.remove_member(&human, guest.account_id.as_deref().unwrap())
+            .unwrap();
+        let token = a.issue_app_token(&agent, bog.id, Scope::Write).unwrap();
+        assert!(
+            a.list_tokens(&agent)
+                .unwrap()
+                .iter()
+                .any(|t| t.id == token.id)
+        );
+        a.revoke_app_token(&agent, &token.id).unwrap();
+        assert!(a.authenticate(&token.secret).is_err());
+        assert_eq!(
+            a.delete_bog(&agent, bog.id, bog.id).unwrap_err().code,
+            "forbidden"
+        );
+        assert!(!r.is_deleted(bog.id).unwrap());
+        a.delete_bog(&human, bog.id, bog.id).unwrap();
+        assert!(r.is_deleted(bog.id).unwrap());
     }
     #[test]
     fn verified_principal_expiry_is_rechecked() {
@@ -777,7 +832,7 @@ impl Auth {
                 "database confirmation does not match",
             ));
         }
-        let (w, a) = self.managed(p, true)?;
+        let (w, a) = self.human_owner(p)?;
         let mut db = self.registry.connection()?;
         let tx = db
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
