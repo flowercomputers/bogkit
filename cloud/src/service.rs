@@ -130,7 +130,14 @@ impl CloudService {
                     )
                     .await?
             } else {
-                self.changes.read_cursor(self, principal, *bog_id).await?
+                self.changes
+                    .initialize(
+                        self,
+                        principal,
+                        *bog_id,
+                        std::time::Duration::from_secs(*timeout_seconds),
+                    )
+                    .await?
             };
             return Ok(OperationResult {
                 status: 200,
@@ -368,7 +375,7 @@ impl CloudService {
         let lease = self.supervisor.lease(id).await?;
         let (status, mut value) = lease.client.request(method, &path, body).await?;
         if let Some(seq) = value.get("seq").and_then(Value::as_u64) {
-            let generation = self.registry.get(id)?.generation;
+            let generation = lease.generation;
             value["cursor"] =
                 serde_json::json!(crate::changes::cursor_for_response(id, generation, seq));
         }

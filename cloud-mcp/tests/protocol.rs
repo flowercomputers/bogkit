@@ -277,6 +277,27 @@ async fn mcp_and_rest_share_change_cursors() {
         .create("changes", "records-v1", "changes")
         .unwrap();
     ready(&h, b.id).await;
+    let invalid = call(
+        &client,
+        "wait_for_change",
+        json!({"bog_id":b.id,"timeout_seconds":26}),
+    )
+    .await;
+    assert_eq!(invalid.is_error, Some(true));
+    assert_eq!(
+        invalid.structured_content.unwrap()["error"]["code"],
+        "invalid_request"
+    );
+    assert_eq!(
+        reqwest::Client::new()
+            .get(format!("{}/v1/bogs/{}/changes?timeout=26", h.url, b.id))
+            .bearer_auth(OWNER)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        400
+    );
     let initial = data(
         call(
             &client,

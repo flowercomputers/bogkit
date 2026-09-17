@@ -2,10 +2,16 @@
 use serde_json::{Value, json};
 pub const OPERATIONS: &[(&str, &str, &str, &str)] = &[
     (
+        "schema",
+        "GET",
+        "/v1/bogs/{bog_id}/schema",
+        "Read the actual records template schema.",
+    ),
+    (
         "wait_for_change",
         "GET",
         "/v1/bogs/{bog_id}/changes",
-        "Wait up to 25 seconds using an opaque cursor; reset means refetch. No durable event replay.",
+        "Wait up to 25 seconds using an opaque cursor; reset means refetch. Initial state acquisition has a separate 25-second ceiling even with timeout=0. No durable event replay.",
     ),
     (
         "create_bog",
@@ -187,11 +193,14 @@ pub fn openapi() -> Value {
             vec!["secret"],
         ),
     ] {
-        let parameters = path
+        let mut parameters = path
             .split('/')
             .filter_map(|v| v.strip_prefix('{').and_then(|v| v.strip_suffix('}')))
             .map(|n| json!({"name":n,"in":"path","required":true,"schema":{"type":"string"}}))
             .collect::<Vec<_>>();
+        if path.starts_with("/v1/bogs/") {
+            parameters.push(json!({"name":"workspace_id","in":"query","required":false,"schema":{"type":"string","format":"uuid"}}));
+        }
         let mut op = json!({"description":description,"security":[{"bearer":[]},{"browserSession":[]}],"parameters":parameters,"responses":{"200":{"description":"Result"},"202":{"description":"Deletion accepted"},"401":{"description":"Authentication required"},"403":{"description":"Permission denied"}}});
         if !fields.is_empty() {
             let properties = fields
@@ -246,5 +255,18 @@ mod tests {
             assert!(example.get(field.as_str().unwrap()).is_some());
         }
         assert_eq!(schema["properties"]["template"]["default"], "records-v1");
+        for (path, method) in [
+            ("/v1/bogs/{bog_id}/usage", "get"),
+            ("/v1/bogs/{bog_id}", "delete"),
+            ("/v1/bogs/{bog_id}/schema", "get"),
+        ] {
+            assert!(
+                document["paths"][path][method]["parameters"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|p| p["name"] == "workspace_id" && p["in"] == "query")
+            );
+        }
     }
 }

@@ -61,10 +61,14 @@ async fn authenticated_workspace_isolation_and_app_limits() {
         .await
         .unwrap()
     });
-    let temp = tempfile::tempdir().unwrap();
+    let temp = tempfile::tempdir_in("/tmp").unwrap();
     let root = temp.path().join("cloud");
     let mut svc = CloudService::open(
-        Config::new(root.clone(), std::path::PathBuf::from("/bin/false")),
+        Config::new(
+            root.clone(),
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../target/debug/bog-records-worker"),
+        ),
         "owner-credential-is-at-least-32-bytes",
     )
     .unwrap();
@@ -158,6 +162,73 @@ async fn authenticated_workspace_isolation_and_app_limits() {
     assert_eq!(call(&app, "GET", "/v1/bogs", token, json!({})).await.0, 403);
     let (_, tokens) = call(&app, "GET", &format!("/v1/bogs/{id}/tokens"), &a, json!({})).await;
     assert!(!tokens.to_string().contains(token));
+    // Join A's workspace as an owner using a verified browser identity. B's
+    // personal default remains unchanged; every shared operation is explicit.
+    let verifier = &svc.public_auth.as_ref().unwrap().verifier;
+    let identity_a = verifier.verify_access_token(&a).await.unwrap();
+    let identity_b = verifier.verify_access_token(&b).await.unwrap();
+    let workspace_id = bog_cloud::WorkspaceId(uuid::Uuid::parse_str(workspace).unwrap());
+    let human_a = svc
+        .auth
+        .principal_from_verified(&identity_a, workspace_id)
+        .unwrap();
+    let invitation = svc.auth.invite(&human_a, "owner").unwrap();
+    svc.auth
+        .accept_invitation(&identity_b, &invitation.secret)
+        .unwrap();
+    let (_, personal) = call(&app, "GET", "/v1/bogs", &b, json!({})).await;
+    assert_eq!(personal["bogs"].as_array().unwrap().len(), 0);
+    let (_, shared) = call(
+        &app,
+        "GET",
+        &format!("/v1/bogs?workspace_id={workspace}"),
+        &b,
+        json!({}),
+    )
+    .await;
+    assert_eq!(shared["bogs"][0]["id"], id);
+    for suffix in ["schema", "usage"] {
+        let (status, body) = call(
+            &app,
+            "GET",
+            &format!("/v1/bogs/{id}/{suffix}?workspace_id={workspace}"),
+            &b,
+            json!({}),
+        )
+        .await;
+        assert_eq!(status, 200, "{body}");
+    }
+    assert_eq!(
+        call(
+            &app,
+            "DELETE",
+            &format!("/v1/bogs/{id}"),
+            &b,
+            json!({"confirm":id})
+        )
+        .await
+        .0,
+        404
+    );
+    assert_eq!(
+        call(
+            &app,
+            "DELETE",
+            &format!("/v1/bogs/{id}?workspace_id={workspace}"),
+            &b,
+            json!({"confirm":id})
+        )
+        .await
+        .0,
+        202
+    );
+    assert_eq!(
+        call(&app, "GET", &format!("/v1/bogs/{id}"), token, json!({}))
+            .await
+            .0,
+        401
+    );
+    svc.supervisor.shutdown().await.unwrap();
     task.abort();
 }
 #[tokio::test]
