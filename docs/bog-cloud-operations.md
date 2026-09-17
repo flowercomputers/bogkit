@@ -1,3 +1,7 @@
+> **Legacy deployment reference.** The remainder of this document describes the earlier single-owner release. The team implementation on this branch adds WorkOS authorization, workspaces, scoped expiring app credentials, deletion, idle workers and change waiting. It has not passed production activation yet.
+>
+> For the new release, use [production configuration and gates](bog-cloud-production-gates.md), [backup operations](bog-cloud-backups.md), and [remote chat migration](bog-chat-upgrade.md). The running new server publishes its current contract at `/v1`, `/auth.md` and `/openapi.json`. Startup without WorkOS now requires an explicit legacy migration opt-in.
+
 # Bog Cloud operations
 
 The first service is a private, single-owner records platform. A Bog is a separate Fold store and native worker process on one persistent host, not a separate virtual machine. Only the compiled `records-v1` template is allowed. One manager owns the registry and all workers; adding a second replica is unsupported.
