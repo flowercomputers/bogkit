@@ -333,3 +333,72 @@ async fn stopped_intent_survivors_recover_through_maintenance_and_explicit_retry
         assert_eq!(svc.supervisor.resident_count().await, 0);
     }
 }
+
+#[tokio::test]
+async fn a_held_response_keeps_its_generation_when_another_lease_restarts_the_worker() {
+    let temp = tempfile::Builder::new()
+        .prefix("bc-gen-")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let svc = CloudService::open(Config::new(temp.path().join("r"), worker()), OWNER).unwrap();
+    let owner = svc.auth.authenticate(OWNER).unwrap();
+    let bog = svc.registry.create("a", "records-v1", "a").unwrap();
+    let old = svc.supervisor.lease(bog.id).await.unwrap();
+    let (_, identity) = old
+        .client
+        .request(reqwest::Method::GET, "/_cloud/identity", None)
+        .await
+        .unwrap();
+    let (_, response) = old
+        .client
+        .request(reqwest::Method::GET, "/views/total", None)
+        .await
+        .unwrap();
+    // Keep the earlier response and its read lease alive while a concurrent
+    // reader detects the crash and replaces the worker before cursor tagging.
+    let old_generation = old.generation;
+    assert_eq!(
+        unsafe { libc::kill(identity["pid"].as_i64().unwrap() as i32, libc::SIGKILL) },
+        0
+    );
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let new = svc.supervisor.lease(bog.id).await.unwrap();
+    assert!(new.generation > old_generation);
+    assert_eq!(old.generation, old_generation);
+    let (_, current) = new
+        .client
+        .request(reqwest::Method::GET, "/views/total", None)
+        .await
+        .unwrap();
+    assert_eq!(
+        response["seq"], current["seq"],
+        "same sequence still requires generation reset"
+    );
+    let old_cursor = bog_cloud::changes::cursor_for_response(
+        bog.id,
+        old.generation,
+        response["seq"].as_u64().unwrap(),
+    );
+    let new_cursor = bog_cloud::changes::cursor_for_response(
+        bog.id,
+        new.generation,
+        current["seq"].as_u64().unwrap(),
+    );
+    assert_ne!(old_cursor, new_cursor);
+    drop(new);
+    drop(old);
+    let result = svc
+        .execute(
+            &owner,
+            Operation::WaitForChange {
+                bog_id: bog.id,
+                cursor: Some(old_cursor),
+                timeout_seconds: 0,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.body["reset"], true);
+    assert_eq!(result.body["cursor"], new_cursor);
+    svc.supervisor.shutdown().await.unwrap();
+}

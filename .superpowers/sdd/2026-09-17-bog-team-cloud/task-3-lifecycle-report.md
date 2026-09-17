@@ -32,3 +32,11 @@ Addressed the review finding about untracked survivors becoming healthy after in
 - Added real child-process tests with inherited lifetime locks: a paused pre-socket worker resumes after manager replacement, receives no Bog request, is adopted and idle-evicted, and releases capacity for an unrelated Bog. Separate stopped-intent scenarios prove both automatic maintenance and explicit stop retry.
 
 Verification: all five resident lifecycle tests and both real manager-crash tests passed together. Scoped `cargo clippy -p bog-cloud --lib --no-deps -- -D warnings` passed. Backup recovery tests passed 2/3; the remaining existing comparison fails because concurrent task-6 integration correctly adds different cursors to original/restored Bog responses with identical data/seq. Root was notified to update that separate cursor assertion. Unix-socket tests ran with sandbox escalation. Existing manager test operator opt-in changes were preserved and not included in this correction.
+
+## Generation snapshot correction (Task 4/6 review finding 2)
+
+`Running` now retains its authoritative generation. Startup/adoption returns a private immutable snapshot of client, generation, and last-use clock while holding startup serialization; `WorkerLease.generation` comes from that snapshot, without a later registry lookup. New workers use the generation returned by `start_generation`; survivor reconciliation captures the verified worker generation under the exclusive instance gate. Existing backup `start_locked` callers retain their client-only API.
+
+Gateway and change-wait owners were coordinated to consume lease generation. A new regression keeps an old worker response and lease alive, kills that worker, obtains a replacement through another simultaneous read lease, then tags the earlier response. Even with identical sequence values, the old and new cursors differ, and waiting with the old cursor reports a reset.
+
+Verification: all six resident lifecycle tests passed, including the new crash/restart generation regression. `cargo check -p bog-cloud` and scoped Clippy with warnings denied both passed. Gateway/change-wait integration changes are owned and committed separately.

@@ -18,13 +18,31 @@ use tokio::{
 };
 
 struct Running {
+    generation: i64,
     last_use: Arc<Mutex<std::time::Instant>>,
     client: WorkerClient,
     child: Option<Child>,
     _slot: OwnedSemaphorePermit,
 }
+#[derive(Clone)]
+struct WorkerSnapshot {
+    client: WorkerClient,
+    generation: i64,
+    last_use: Arc<Mutex<std::time::Instant>>,
+}
+impl Running {
+    fn snapshot(&self) -> WorkerSnapshot {
+        WorkerSnapshot {
+            client: self.client.clone(),
+            generation: self.generation,
+            last_use: self.last_use.clone(),
+        }
+    }
+}
 pub struct WorkerLease {
     pub client: WorkerClient,
+    /// Generation captured with this worker client under startup serialization.
+    pub generation: i64,
     last_use: Arc<Mutex<std::time::Instant>>,
     _guard: OwnedRwLockReadGuard<()>,
 }
@@ -122,18 +140,11 @@ impl Supervisor {
         {
             return Err(unavailable("database is not available"));
         }
-        let client = self.start_locked(id).await?;
-        let last_use = self
-            .running
-            .lock()
-            .await
-            .get(&id)
-            .ok_or_else(|| unavailable("worker disappeared"))?
-            .last_use
-            .clone();
+        let snapshot = self.start_snapshot_locked(id).await?;
         Ok(WorkerLease {
-            last_use,
-            client,
+            last_use: snapshot.last_use,
+            client: snapshot.client,
+            generation: snapshot.generation,
             _guard: guard,
         })
     }
@@ -142,6 +153,9 @@ impl Supervisor {
         self.start_locked(id).await
     }
     pub(crate) async fn start_locked(&self, id: BogId) -> Result<WorkerClient, CloudError> {
+        Ok(self.start_snapshot_locked(id).await?.client)
+    }
+    async fn start_snapshot_locked(&self, id: BogId) -> Result<WorkerSnapshot, CloudError> {
         let gate = self
             .starts
             .lock()
@@ -167,15 +181,15 @@ impl Supervisor {
                     if let Ok(mut last_use) = worker.last_use.lock() {
                         *last_use = std::time::Instant::now();
                     }
-                    Some((worker.client.clone(), worker.child.is_none()))
+                    Some((worker.snapshot(), worker.child.is_none()))
                 }
             } else {
                 None
             }
         };
-        if let Some((client, adopted)) = snapshot {
-            if !adopted || self.verify_worker(id, &client).await.is_ok() {
-                return Ok(client);
+        if let Some((snapshot, adopted)) = snapshot {
+            if !adopted || self.verify_worker(id, &snapshot.client).await.is_ok() {
+                return Ok(snapshot);
             }
             self.running.lock().await.remove(&id);
         }
@@ -272,16 +286,16 @@ impl Supervisor {
             }
             self.verify_worker(id, &client).await?;
             self.registry.set_status(id, ObservedState::Ready, None)?;
-            self.running.lock().await.insert(
-                id,
-                Running {
-                    last_use: Arc::new(Mutex::new(std::time::Instant::now())),
-                    client: client.clone(),
-                    child: None,
-                    _slot: slot,
-                },
-            );
-            return Ok(client);
+            let running = Running {
+                generation: bog.generation,
+                last_use: Arc::new(Mutex::new(std::time::Instant::now())),
+                client,
+                child: None,
+                _slot: slot,
+            };
+            let snapshot = running.snapshot();
+            self.running.lock().await.insert(id, running);
+            return Ok(snapshot);
         }
         // Acquire this before recording a new generation, and pass the open
         // file description to the child. It survives a manager crash even if
@@ -315,7 +329,7 @@ impl Supervisor {
         }
         for attempt in 0..3 {
             let nonce = random_secret()?;
-            self.registry.start_generation(id, &nonce)?;
+            let generation = self.registry.start_generation(id, &nonce)?;
             let mut command = Command::new(&self.config.worker_binary);
             command
                 .args([
@@ -382,16 +396,16 @@ impl Supervisor {
                         break;
                     }
                     self.registry.set_status(id, ObservedState::Ready, None)?;
-                    self.running.lock().await.insert(
-                        id,
-                        Running {
-                            last_use: Arc::new(Mutex::new(std::time::Instant::now())),
-                            client: client.clone(),
-                            child: Some(child),
-                            _slot: slot,
-                        },
-                    );
-                    return Ok(client);
+                    let running = Running {
+                        generation,
+                        last_use: Arc::new(Mutex::new(std::time::Instant::now())),
+                        client,
+                        child: Some(child),
+                        _slot: slot,
+                    };
+                    let snapshot = running.snapshot();
+                    self.running.lock().await.insert(id, running);
+                    return Ok(snapshot);
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             }
@@ -589,6 +603,7 @@ impl Supervisor {
                     self.running.lock().await.insert(
                         bog.id,
                         Running {
+                            generation: bog.generation,
                             client,
                             child: None,
                             _slot: slot,
