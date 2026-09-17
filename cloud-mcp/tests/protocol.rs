@@ -344,3 +344,111 @@ async fn mcp_and_rest_share_change_cursors() {
     client.cancel().await.unwrap();
     h.close().await;
 }
+
+#[tokio::test]
+async fn repair_schema_and_request_identifiers() {
+    let h = Harness::new().await;
+    let client = h.client(OWNER).await;
+    let list = client.list_all_tools().await.unwrap();
+    let create = list.iter().find(|t| t.name == "create_bog").unwrap();
+    assert!(
+        create.input_schema["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("name"))
+    );
+    assert_eq!(create.input_schema["properties"]["name"]["type"], "string");
+    let wait = list.iter().find(|t| t.name == "wait_for_change").unwrap();
+    assert!(wait.input_schema["properties"]["timeout"].is_object());
+    let listing = list.iter().find(|t| t.name == "list_bogs").unwrap();
+    assert_eq!(
+        listing.input_schema["properties"]["workspace_id"]["type"],
+        "string"
+    );
+    let denied = call(
+        &client,
+        "list_bogs",
+        json!({"workspace_id":uuid::Uuid::new_v4()}),
+    )
+    .await;
+    assert_eq!(denied.is_error, Some(true));
+    assert_eq!(
+        denied.structured_content.unwrap()["error"]["code"],
+        "forbidden"
+    );
+    let listed = call(
+        &client,
+        "list_bogs",
+        json!({"workspace_id":"00000000-0000-0000-0000-000000000001"}),
+    )
+    .await;
+    assert_ne!(listed.is_error, Some(true));
+    assert!(listed.structured_content.unwrap()["request_id"].is_string());
+    client.cancel().await.unwrap();
+    h.close().await;
+}
+
+#[tokio::test]
+async fn repair_timeout_alias_and_errors_correlate_with_http_headers() {
+    let h = Harness::new().await;
+    let bog = h
+        .service
+        .registry
+        .create("repair", "records-v1", "repair")
+        .unwrap();
+    ready(&h, bog.id).await;
+    for (name, args, invalid) in [
+        (
+            "wait_for_change",
+            json!({"bog_id":bog.id,"timeout":0}),
+            false,
+        ),
+        (
+            "wait_for_change",
+            json!({"bog_id":bog.id,"timeout_seconds":0}),
+            false,
+        ),
+        (
+            "wait_for_change",
+            json!({"bog_id":bog.id,"timeout":0,"timeout_seconds":0}),
+            true,
+        ),
+        ("create_bog", json!({}), true),
+        (
+            "create_bog",
+            json!({"name":"x","idempotency_key":null,"template":"nope","colour":"red"}),
+            true,
+        ),
+        ("list_bogs", json!({"workspace_id":"bad"}), true),
+        (
+            "read_view",
+            json!({"bog_id":bog.id,"view":"not-a-view"}),
+            false,
+        ),
+    ] {
+        let response=reqwest::Client::new().post(format!("{}/mcp",h.url)).bearer_auth(OWNER)
+            .header("accept","application/json, text/event-stream")
+            .json(&json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":name,"arguments":args}}))
+            .send().await.unwrap();
+        let request_id = response.headers()["x-request-id"]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let body: Value = response.json().await.unwrap();
+        let reported = if invalid {
+            &body["error"]["data"]["request_id"]
+        } else {
+            &body["result"]["structuredContent"]["request_id"]
+        };
+        assert_eq!(reported, &request_id, "{body}");
+        if name == "create_bog" {
+            let message = body["error"]["message"].as_str().unwrap();
+            assert!(message.contains("idempotency_key"), "{body}");
+            assert!(
+                message.contains("name") || message.contains("colour"),
+                "{body}"
+            );
+        }
+    }
+    h.close().await;
+}

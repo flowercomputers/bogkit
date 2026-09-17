@@ -54,10 +54,10 @@ pub fn build_rest_router(service: Arc<CloudService>) -> Router {
         .route("/.well-known/oauth-protected-resource", get(discovery))
         .route(
             "/",
-            get(|| async {
+            get(|State(service): State<Arc<CloudService>>| async move {
                 guide_asset(
                     "text/html; charset=utf-8",
-                    include_str!("../static/index.html"),
+                    crate::contract::guide(service.public_auth.is_some(), service.supervisor.max_active()),
                 )
             }),
         )
@@ -95,13 +95,13 @@ pub fn build_rest_router(service: Arc<CloudService>) -> Router {
         .with_state(service)
 }
 
-fn guide_asset(content_type: &'static str, body: &'static str) -> Response {
+fn guide_asset(content_type: &'static str, body: impl Into<String>) -> Response {
     ([
         (header::CONTENT_TYPE, content_type),
         (header::CONTENT_SECURITY_POLICY, "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"),
         (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
         (header::CACHE_CONTROL, "no-cache"),
-    ], body).into_response()
+    ], body.into()).into_response()
 }
 pub fn error_response(error: CloudError, request_id: &str) -> Response {
     let status = match error.code.as_str() {
@@ -283,7 +283,7 @@ async fn dispatch_inner(
         match (method.as_str(), path[1].as_str(), path.len()) {
             ("GET", "me", 2) => {
                 return ok(
-                    json!({"account":{"id":principal.account_id()},"workspace_id":principal.workspace_id()}),
+                    json!({"kind":principal.kind(),"account":principal.account_id().map(|id|json!({"id":id})),"workspace_id":principal.workspace_id()}),
                 );
             }
             ("GET", "workspaces", 2) => {
@@ -361,34 +361,16 @@ async fn dispatch_inner(
         },
         ("GET", 2) => Operation::ListBogs,
         ("POST", 2) => {
-            #[derive(Deserialize)]
-            #[serde(deny_unknown_fields)]
-            struct Create {
-                name: Option<String>,
-                template: Option<String>,
-            }
-            let c: Create =
-                serde_json::from_value(parse()?).map_err(|_| bad("expected name and template"))?;
-            let mut missing = vec![];
-            if c.name.as_deref().is_none_or(|s| s.trim().is_empty()) {
-                missing.push("name")
-            }
-            if key.as_deref().is_none_or(|s| s.trim().is_empty()) {
-                missing.push("Idempotency-Key")
-            }
-            if !missing.is_empty() {
-                return Err(bad(&format!(
-                    "Missing required fields: {}. Supply a database name and a stable Idempotency-Key; template defaults to records-v1.",
-                    missing.join(", ")
-                )));
-            }
+            let (name, template, idempotency_key) =
+                crate::contract::validate_creation(&parse()?, key.as_deref(), "Idempotency-Key")?;
             Operation::CreateBog {
-                name: c.name.unwrap(),
-                template: c.template.unwrap_or_else(|| "records-v1".into()),
-                idempotency_key: key.unwrap(),
+                name,
+                template,
+                idempotency_key,
             }
         }
         ("DELETE", 3) => {
+            service.auth.authorize_delete_bog(&principal, id.unwrap())?;
             let v = parse()?;
             let confirmation = BogId(
                 Uuid::parse_str(
@@ -614,7 +596,7 @@ async fn discovery(State(service): State<Arc<CloudService>>, request: Request) -
                 .as_ref()
                 .map(|a| a.verifier.config.auth_markdown())
                 .unwrap_or_else(|| {
-                    "Authentication is not configured. Public signup is unavailable.".into()
+                    format!("# Bog Cloud: token-access preview\n\n{}\n\nBearer authentication is supported over HTTP and MCP. Use /v1 for creation requirements and /v1/templates for templates. Management credentials default to the legacy workspace. App credentials cannot provision or manage credentials. Keep credentials in a local secret store, never in chats or URLs.\n",crate::contract::LEGACY_GUIDANCE)
                 }),
         )
             .into_response(),
@@ -626,12 +608,18 @@ async fn discovery(State(service): State<Arc<CloudService>>, request: Request) -
         "/openapi.json" => Json(crate::contract::openapi()).into_response(),
         "/llms.txt" => (
             [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
-            crate::contract::llms(),
+            crate::contract::llms_for_mode(service.public_auth.is_some()),
         )
             .into_response(),
+        "/v1/templates" => Json(json!({"templates":crate::contract::overview()["templates"]})).into_response(),
         _ => {
             let mut overview = crate::contract::overview();
             overview["authentication_configured"] = json!(service.public_auth.is_some());
+            if service.public_auth.is_none() {
+                overview["limits"]["legacy_operator_bogs"] = json!(service.supervisor.max_active());
+                overview["workspace_selection"] = json!("Legacy management credentials default to the legacy workspace; account workspaces and signup are not activated.");
+                overview["next_step"] = json!("Ask the operator privately for a management credential to provision, or a single-Bog app credential to use an existing Bog. Never paste credentials into chat.");
+            }
             Json(overview).into_response()
         }
     }

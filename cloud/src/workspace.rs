@@ -167,6 +167,13 @@ impl Auth {
     }
     pub fn workspaces_for_principal(&self, p: &Principal) -> Result<Vec<Workspace>, CloudError> {
         self.authorize(p, None, false)?;
+        if p.legacy_public_operator() {
+            return Ok(vec![Workspace {
+                id: WorkspaceId::legacy(),
+                name: "Legacy".into(),
+                role: "owner".into(),
+            }]);
+        }
         self.workspaces_for_account(p.account_id.as_deref().ok_or_else(forbidden)?)
     }
     fn workspaces_for_account(&self, account: &str) -> Result<Vec<Workspace>, CloudError> {
@@ -331,7 +338,12 @@ impl Auth {
         Ok(IssuedToken { id, secret })
     }
     pub fn list_tokens(&self, p: &Principal) -> Result<Vec<TokenInfo>, CloudError> {
-        let (w, _) = self.managed(p, false)?;
+        let w = if p.legacy_public_operator() {
+            self.authorize(p, None, false)?;
+            WorkspaceId::legacy()
+        } else {
+            self.managed(p, false)?.0
+        };
         let db = self.registry.connection()?;
         let mut s=db.prepare("SELECT id,bog_id,account_id,scope,created_at,expires_at,revoked_at FROM tokens WHERE workspace_id=?1").map_err(db_error)?;
         s.query_map([w.to_string()], |r| {
@@ -499,6 +511,41 @@ mod tests {
             token_id: None,
             bog_id: None,
         }
+    }
+    #[test]
+    fn legacy_public_operator_cannot_cross_workspaces_or_manage_membership() {
+        let (_d, r, a) = setup();
+        let human = person(&a, "other");
+        let foreign = r
+            .create_for_principal(&human, "private", "records-v1", "private", 32)
+            .unwrap();
+        let legacy = r.create("legacy", "records-v1", "legacy").unwrap();
+        let mut operator = a.authenticate(&"x".repeat(32)).unwrap();
+        operator.workspace_id = Some(WorkspaceId::legacy());
+        assert_eq!(
+            a.authorize(&operator, Some(foreign.id), false)
+                .unwrap_err()
+                .code,
+            "not_found"
+        );
+        assert!(a.issue(&operator, foreign.id, Scope::Write).is_err());
+        assert!(a.delete_bog(&operator, foreign.id, foreign.id).is_err());
+        assert!(
+            a.select_workspace(&operator, human.workspace_id.unwrap())
+                .is_err()
+        );
+        assert!(a.invite(&operator, "member").is_err());
+        assert!(
+            a.remove_member(&operator, human.account_id.as_deref().unwrap())
+                .is_err()
+        );
+        let token = a.issue(&operator, legacy.id, Scope::Write).unwrap();
+        assert_eq!(a.list_tokens(&operator).unwrap().len(), 1);
+        a.revoke(&operator, legacy.id, &token.id).unwrap();
+        assert!(a.authenticate(&token.secret).is_err());
+        a.delete_bog(&operator, legacy.id, legacy.id).unwrap();
+        a.delete_bog(&operator, legacy.id, legacy.id).unwrap();
+        assert!(r.get(legacy.id).is_err());
     }
     #[test]
     fn agents_cannot_mutate_ownership_but_can_manage_app_credentials() {
@@ -820,24 +867,54 @@ mod tests {
 }
 
 impl Auth {
+    pub fn authorize_delete_bog(&self, p: &Principal, bog: BogId) -> Result<(), CloudError> {
+        let workspace = if p.legacy_public_operator() {
+            self.authorize(p, None, true)?;
+            WorkspaceId::legacy()
+        } else {
+            self.human_owner(p)?.0
+        };
+        let exists: bool = self
+            .registry
+            .connection()?
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM bogs WHERE id=?1 AND workspace_id=?2)",
+                params![bog.to_string(), workspace.to_string()],
+                |r| r.get(0),
+            )
+            .map_err(db_error)?;
+        if exists {
+            Ok(())
+        } else {
+            Err(CloudError::new("not_found", "database not found"))
+        }
+    }
     pub fn delete_bog(
         &self,
         p: &Principal,
         bog: BogId,
         confirmation: BogId,
     ) -> Result<(), CloudError> {
+        self.authorize_delete_bog(p, bog)?;
         if bog != confirmation {
             return Err(CloudError::new(
                 "invalid_request",
                 "database confirmation does not match",
             ));
         }
-        let (w, a) = self.human_owner(p)?;
+        let (w, a) = if p.legacy_public_operator() {
+            (WorkspaceId::legacy(), None)
+        } else {
+            let (w, a) = self.human_owner(p)?;
+            (w, Some(a))
+        };
         let mut db = self.registry.connection()?;
         let tx = db
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(db_error)?;
-        member(&tx, a, w, true)?;
+        if let Some(a) = a {
+            member(&tx, a, w, true)?;
+        }
         let n=tx.execute("UPDATE bogs SET deleted_at=COALESCE(deleted_at,?3),desired_state='stopped' WHERE id=?1 AND workspace_id=?2",params![bog.to_string(),w.to_string(),now()]).map_err(db_error)?;
         if n == 0 {
             return Err(CloudError::new("not_found", "database not found"));
@@ -847,7 +924,7 @@ impl Auth {
             params![bog.to_string(), now()],
         )
         .map_err(db_error)?;
-        audit(&tx, w, Some(a), "bog.deleted", &bog.to_string())?;
+        audit(&tx, w, a, "bog.deleted", &bog.to_string())?;
         tx.commit().map_err(db_error)
     }
 }

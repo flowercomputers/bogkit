@@ -49,6 +49,8 @@ pub fn build_mcp_router_with_options(service: Arc<CloudService>, options: McpOpt
             authorize,
         ))
 }
+#[derive(Clone)]
+pub(crate) struct RequestId(pub String);
 async fn authorize(State(gateway): State<Gateway>, mut request: Request, next: Next) -> Response {
     let request_id = uuid::Uuid::new_v4().to_string();
     let reject = |code, message| {
@@ -62,6 +64,13 @@ async fn authorize(State(gateway): State<Gateway>, mut request: Request, next: N
                 .headers_mut()
                 .insert(axum::http::header::WWW_AUTHENTICATE, v);
         }
+        response
+            .headers_mut()
+            .insert("x-request-id", request_id.parse().expect("UUID header"));
+        eprintln!(
+            "{}",
+            serde_json::json!({"event":"mcp_request","request_id":request_id,"status":response.status().as_u16()})
+        );
         response
     };
     let headers = request.headers();
@@ -109,8 +118,20 @@ async fn authorize(State(gateway): State<Gateway>, mut request: Request, next: N
         );
     }
     request.extensions_mut().insert(principal);
+    request
+        .extensions_mut()
+        .insert(RequestId(request_id.clone()));
     match tokio::time::timeout(std::time::Duration::from_secs(30), next.run(request)).await {
-        Ok(response) => response,
+        Ok(mut response) => {
+            response
+                .headers_mut()
+                .insert("x-request-id", request_id.parse().expect("UUID header"));
+            eprintln!(
+                "{}",
+                serde_json::json!({"event":"mcp_request","request_id":request_id,"status":response.status().as_u16()})
+            );
+            response
+        }
         Err(_) => reject("unavailable", "request timed out"),
     }
 }

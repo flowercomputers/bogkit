@@ -158,3 +158,121 @@ async fn auth_scope_errors_and_management_are_consistent() {
         401
     );
 }
+
+#[tokio::test]
+async fn legacy_owner_management_repair() {
+    let tmp = tempfile::tempdir().unwrap();
+    let svc = CloudService::open(
+        Config::new(tmp.path().join("service"), std::env::current_exe().unwrap()),
+        OWNER,
+    )
+    .unwrap();
+    let owner = svc.auth.authenticate(OWNER).unwrap();
+    let bog = svc
+        .registry
+        .create("repair", "records-v1", "repair")
+        .unwrap();
+    let token = svc.auth.issue(&owner, bog.id, Scope::Write).unwrap();
+    let router = build_rest_router(svc.clone());
+    let me = request(&router, "GET", "/v1/me", Some(OWNER), None).await;
+    assert_eq!(me.1["kind"], "operator");
+    assert_eq!(me.1["workspace_id"], "00000000-0000-0000-0000-000000000001");
+    assert_eq!(
+        request(&router, "GET", "/v1/workspaces", Some(OWNER), None)
+            .await
+            .0,
+        200
+    );
+    let path = format!("/v1/bogs/{}", bog.id);
+    assert_eq!(
+        request(&router, "GET", &format!("{path}/tokens"), Some(OWNER), None)
+            .await
+            .0,
+        200
+    );
+    assert_eq!(
+        request(
+            &router,
+            "DELETE",
+            &path,
+            Some(&token.secret),
+            Some(json!({"confirm":"wrong"}))
+        )
+        .await
+        .0,
+        403
+    );
+    assert_eq!(
+        request(
+            &router,
+            "DELETE",
+            &path,
+            Some(OWNER),
+            Some(json!({"confirm":bog.id}))
+        )
+        .await
+        .0,
+        202
+    );
+    assert!(svc.auth.authenticate(&token.secret).is_err());
+}
+
+#[tokio::test]
+async fn repair_creation_diagnostics_and_discovery() {
+    let tmp = tempfile::tempdir().unwrap();
+    let svc = CloudService::open(
+        Config::new(tmp.path().join("svc"), std::env::current_exe().unwrap()),
+        OWNER,
+    )
+    .unwrap();
+    let router = build_rest_router(svc);
+    let result = request(
+        &router,
+        "POST",
+        "/v1/bogs",
+        Some(OWNER),
+        Some(json!({"name":"x","template":"nope","colour":"red"})),
+    )
+    .await;
+    let message = result.1["error"]["message"].as_str().unwrap();
+    assert!(
+        message.contains("colour")
+            && message.contains("records-v1")
+            && message.contains("Idempotency-Key"),
+        "{message}"
+    );
+    let templates = request(&router, "GET", "/v1/templates", None, None).await.1;
+    assert!(templates["templates"].is_array());
+    assert!(templates.get("create_example").is_none());
+}
+
+#[tokio::test]
+async fn legacy_guidance_is_truthful_without_javascript() {
+    let tmp = tempfile::tempdir().unwrap();
+    let svc = CloudService::open(
+        Config::new(tmp.path().join("svc"), std::env::current_exe().unwrap()),
+        OWNER,
+    )
+    .unwrap();
+    let router = build_rest_router(svc);
+    for path in ["/", "/auth.md", "/llms.txt"] {
+        let response = router
+            .clone()
+            .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = String::from_utf8(
+            to_bytes(response.into_body(), 1024 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(
+            body.contains("Public signup, workspace sharing, and invitations are unavailable"),
+            "{path}"
+        );
+        assert!(body.contains("privately"), "{path}");
+        assert!(!body.contains("Your GitHub, your workspace."), "{path}");
+    }
+}

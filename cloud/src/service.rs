@@ -180,7 +180,9 @@ impl CloudService {
                     &self.supervisor.config.root,
                     self.supervisor.config.min_free_bytes,
                 )?;
-                let bog = if principal.workspace_id().is_some() {
+                let bog = if principal.kind() != crate::PrincipalKind::Operator
+                    && principal.workspace_id().is_some()
+                {
                     self.registry.create_for_principal(
                         principal,
                         &name,

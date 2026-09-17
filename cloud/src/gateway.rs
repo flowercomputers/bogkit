@@ -66,9 +66,12 @@ impl CloudService {
             self.auth
                 .agent_from_verified(&identity, workspace.unwrap_or(personal.id))?
         } else {
-            let p = self.auth.authenticate(token)?;
+            let mut p = self.auth.authenticate(token)?;
             if self.public_auth.is_some() && p.kind() == PrincipalKind::Operator {
                 return Err(denied());
+            }
+            if p.kind() == PrincipalKind::Operator {
+                p.workspace_id = Some(WorkspaceId::legacy());
             }
             if workspace.is_some_and(|w| p.workspace_id() != Some(w)) {
                 return Err(denied());

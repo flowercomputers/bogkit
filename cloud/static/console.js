@@ -90,7 +90,7 @@ async function start() {
   try {
     const service = await api('/v1');
     if (service.authentication_configured === false) {
-      status('GitHub sign-in is not configured yet. Existing apps and agents can continue using the HTTP and MCP APIs with their bearer credentials.');
+      status('Public signup, workspace sharing, and invitations are unavailable. Ask the operator privately for a management credential to provision, or a single-Bog app credential to use an existing Bog. Existing credentials work through HTTP and MCP.');
       return;
     }
     const session = await api('/console-session'); csrf = session.csrf_token; account = session.account?.id || session.account_id || '';

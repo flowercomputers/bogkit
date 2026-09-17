@@ -113,7 +113,7 @@ impl Auth {
         {
             return Err(denied());
         }
-        if principal.kind != PrincipalKind::Operator {
+        if principal.kind != PrincipalKind::Operator || principal.workspace_id.is_some() {
             if let Some(account) = &principal.account_id {
                 self.check_member(account, principal.workspace_id.ok_or_else(denied)?, false)?;
             }
@@ -160,6 +160,7 @@ impl Auth {
         scope: Scope,
     ) -> Result<IssuedToken, CloudError> {
         self.authorize(principal, None, true)?;
+        self.authorize(principal, Some(bog), true)?;
         self.registry.get(bog)?;
         if principal.kind != PrincipalKind::Operator {
             return self.issue_app_token(principal, bog, scope);
@@ -171,6 +172,7 @@ impl Auth {
     }
     pub fn revoke(&self, principal: &Principal, bog: BogId, id: &str) -> Result<(), CloudError> {
         self.authorize(principal, None, true)?;
+        self.authorize(principal, Some(bog), true)?;
         if principal.kind != PrincipalKind::Operator {
             self.registry
                 .get_scoped(principal.workspace_id.ok_or_else(denied)?, bog)?;
@@ -192,7 +194,8 @@ impl Auth {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PrincipalKind {
     Operator,
     Human,
@@ -200,6 +203,10 @@ pub enum PrincipalKind {
     App,
 }
 impl Principal {
+    pub(crate) fn legacy_public_operator(&self) -> bool {
+        self.kind == PrincipalKind::Operator
+            && self.workspace_id == Some(crate::WorkspaceId::legacy())
+    }
     pub fn kind(&self) -> PrincipalKind {
         self.kind
     }

@@ -11,10 +11,11 @@ use std::sync::Arc;
 struct Empty {}
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[allow(dead_code)] // Schema-only: shared validation retains aggregate diagnostics.
 struct Create {
-    name: Option<String>,
+    name: String,
     template: Option<String>,
-    idempotency_key: Option<String>,
+    idempotency_key: String,
 }
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -63,6 +64,7 @@ struct Batch {
 struct Success {
     status: u16,
     data: Value,
+    request_id: String,
 }
 
 fn schema<T: JsonSchema>() -> Arc<Map<String, Value>> {
@@ -81,11 +83,22 @@ fn definition<T: JsonSchema>(
     destructive: bool,
     idempotent: bool,
 ) -> Tool {
+    let mut input = (*schema::<T>()).clone();
+    if let Some(properties) = input
+        .entry("properties")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
     {
-    let mut input=(*schema::<T>()).clone();
-    if let Some(properties)=input.get_mut("properties").and_then(Value::as_object_mut){ properties.insert("workspace_id".into(),json!({"type":"string","format":"uuid","description":"Explicit workspace selection; defaults to personal workspace."})); }
-    Tool::new(name, bog_cloud::contract::description(name).unwrap_or(description), Arc::new(input))
+        properties.insert("workspace_id".into(), json!({"type":"string","format":"uuid","description":"Explicit workspace selection; defaults to personal workspace for accounts or legacy workspace for legacy management credentials."}));
     }
+    let description = match name {
+        "create_bog" => {
+            "Create a workspace database. name and idempotency_key are required strings; template defaults to records-v1."
+        }
+        "wait_for_change" => description,
+        _ => bog_cloud::contract::description(name).unwrap_or(description),
+    };
+    Tool::new(name, description, Arc::new(input))
         .with_raw_output_schema(schema::<Success>())
         .with_annotations(
             ToolAnnotations::new()
@@ -95,11 +108,12 @@ fn definition<T: JsonSchema>(
                 .open_world(false),
         )
 }
+
 pub fn definitions() -> Vec<Tool> {
     vec![
         definition::<Wait>(
             "wait_for_change",
-            "Wait up to 25 seconds for a change; omit cursor to get current position. Reset requires refetch; no event replay.",
+            "Wait up to 25 seconds for a change using timeout; timeout_seconds is a legacy alias (do not supply both). Omit cursor to get current position. Reset requires refetch; no event replay.",
             true,
             false,
             true,
@@ -167,8 +181,9 @@ pub fn definitions() -> Vec<Tool> {
     ]
 }
 fn parse<T: DeserializeOwned>(value: Value) -> Result<T, ErrorData> {
-    serde_json::from_value(value)
-        .map_err(|_| ErrorData::invalid_params("arguments do not match the tool schema", None))
+    serde_json::from_value(value).map_err(|e| {
+        ErrorData::invalid_params(format!("arguments do not match the tool schema: {e}"), None)
+    })
 }
 fn id(value: String) -> Result<BogId, ErrorData> {
     uuid::Uuid::parse_str(&value)
@@ -180,7 +195,8 @@ fn id(value: String) -> Result<BogId, ErrorData> {
 struct Wait {
     bog_id: String,
     cursor: Option<String>,
-    timeout_seconds: Option<u64>,
+    #[serde(alias = "timeout_seconds")]
+    timeout: Option<u64>,
 }
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -201,7 +217,7 @@ fn operation(name: &str, args: Value) -> Result<Operation, ErrorData> {
             Operation::WaitForChange {
                 bog_id: id(a.bog_id)?,
                 cursor: a.cursor,
-                timeout_seconds: a.timeout_seconds.unwrap_or(25),
+                timeout_seconds: a.timeout.unwrap_or(25),
             }
         }
         "list_workspaces" => {
@@ -238,30 +254,20 @@ fn operation(name: &str, args: Value) -> Result<Operation, ErrorData> {
             }
         }
         "create_bog" => {
-            let a: Create = parse(args)?;
-            let mut missing = vec![];
-            if a.name.as_deref().is_none_or(|v| v.trim().is_empty()) {
-                missing.push("name")
-            }
-            if a.idempotency_key
-                .as_deref()
-                .is_none_or(|v| v.trim().is_empty())
-            {
-                missing.push("idempotency_key")
-            }
-            if !missing.is_empty() {
-                return Err(ErrorData::invalid_params(
-                    format!(
-                        "Missing required fields: {}. Template defaults to records-v1.",
-                        missing.join(", ")
-                    ),
-                    None,
-                ));
-            }
+            let mut args = args.as_object().cloned().ok_or_else(|| {
+                ErrorData::invalid_params("creation arguments must be an object", None)
+            })?;
+            let key = args.remove("idempotency_key");
+            let (name, template, idempotency_key) = bog_cloud::contract::validate_creation(
+                &Value::Object(args),
+                key.as_ref().and_then(Value::as_str),
+                "idempotency_key",
+            )
+            .map_err(|e| ErrorData::invalid_params(e.message, None))?;
             Operation::CreateBog {
-                name: a.name.unwrap(),
-                template: a.template.unwrap_or_else(|| "records-v1".into()),
-                idempotency_key: a.idempotency_key.unwrap(),
+                name,
+                template,
+                idempotency_key,
             }
         }
         "list_bogs" => {
@@ -311,8 +317,10 @@ fn operation(name: &str, args: Value) -> Result<Operation, ErrorData> {
     })
 }
 const MAX_RESULT_BYTES: usize = 1024 * 1024;
-fn tool_error(error: CloudError) -> CallToolResult {
-    CallToolResult::structured_error(json!({"error":{"code":error.code,"message":error.message}}))
+fn tool_error(error: CloudError, request_id: &str) -> CallToolResult {
+    CallToolResult::structured_error(
+        json!({"error":{"code":error.code,"message":error.message},"request_id":request_id}),
+    )
 }
 #[derive(Clone)]
 pub(crate) struct Handler(pub Arc<CloudService>);
@@ -333,62 +341,83 @@ impl ServerHandler for Handler {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
-        // rmcp injects the current HTTP request Parts, including middleware extensions,
-        // on EVERY request. Never retain a Principal in Handler or session state.
-        let principal = context
+        let request_id = context
             .extensions
             .get::<axum::http::request::Parts>()
-            .and_then(|p| p.extensions.get::<Principal>())
-            .ok_or_else(|| ErrorData::internal_error("request authentication unavailable", None))?;
-        let mut args = request.arguments.unwrap_or_default();
-        let principal = if let Some(workspace) = args.remove("workspace_id") {
-            let workspace = workspace
-                .as_str()
-                .and_then(|w| uuid::Uuid::parse_str(w).ok())
-                .map(bog_cloud::WorkspaceId)
-                .ok_or_else(|| ErrorData::invalid_params("workspace_id must be a UUID", None))?;
-            match self.0.auth.select_workspace(principal, workspace) {
-                Ok(p) => p,
-                Err(e) => return Ok(tool_error(e).into()),
-            }
-        } else {
-            principal.clone()
-        };
-        let op = operation(&request.name, Value::Object(args))?;
-        let describe = match &op {
-            Operation::DescribeBog { bog_id } => Some(*bog_id),
-            _ => None,
-        };
+            .and_then(|p| p.extensions.get::<crate::transport::RequestId>())
+            .map(|id| id.0.clone())
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let result = async {
-            let mut result = self.0.execute(&principal, op).await?;
-            if let Some(bog_id) = describe
-                && result.body["status"] == "ready"
-            {
-                let schema = self
-                    .0
-                    .execute(&principal, Operation::Schema { bog_id })
-                    .await?;
-                result.body["schema"] = schema.body;
+            // rmcp injects the current HTTP request Parts, including middleware extensions,
+            // on EVERY request. Never retain a Principal in Handler or session state.
+            let principal = context
+                .extensions
+                .get::<axum::http::request::Parts>()
+                .and_then(|p| p.extensions.get::<Principal>())
+                .ok_or_else(|| {
+                    ErrorData::internal_error("request authentication unavailable", None)
+                })?;
+            let mut args = request.arguments.unwrap_or_default();
+            let principal = if let Some(workspace) = args.remove("workspace_id") {
+                let workspace = workspace
+                    .as_str()
+                    .and_then(|w| uuid::Uuid::parse_str(w).ok())
+                    .map(bog_cloud::WorkspaceId)
+                    .ok_or_else(|| {
+                        ErrorData::invalid_params("workspace_id must be a UUID", None)
+                    })?;
+                match self.0.auth.select_workspace(principal, workspace) {
+                    Ok(p) => p,
+                    Err(e) => return Ok(tool_error(e, &request_id).into()),
+                }
+            } else {
+                principal.clone()
+            };
+            let op = operation(&request.name, Value::Object(args))?;
+            let describe = match &op {
+                Operation::DescribeBog { bog_id } => Some(*bog_id),
+                _ => None,
+            };
+            let result = async {
+                let mut result = self.0.execute(&principal, op).await?;
+                if let Some(bog_id) = describe
+                    && result.body["status"] == "ready"
+                {
+                    let schema = self
+                        .0
+                        .execute(&principal, Operation::Schema { bog_id })
+                        .await?;
+                    result.body["schema"] = schema.body;
+                }
+                Ok::<_, CloudError>(result)
             }
-            Ok::<_, CloudError>(result)
+            .await;
+            Ok(match result {
+                Ok(result) => {
+                    let value =
+                        json!({"status":result.status,"data":result.body,"request_id":request_id});
+                    // Structured content is duplicated as text by the SDK; bound the whole result.
+                    let response = CallToolResult::structured(value);
+                    if serde_json::to_vec(&response).map_or(true, |b| b.len() > MAX_RESULT_BYTES) {
+                        tool_error(
+                            CloudError::new(
+                                "result_too_large",
+                                "result exceeds 1 MiB; request a smaller page",
+                            ),
+                            &request_id,
+                        )
+                    } else {
+                        response
+                    }
+                }
+                Err(error) => tool_error(error, &request_id),
+            }
+            .into())
         }
         .await;
-        Ok(match result {
-            Ok(result) => {
-                let value = json!({"status":result.status,"data":result.body});
-                // Structured content is duplicated as text by the SDK; bound the whole result.
-                let response = CallToolResult::structured(value);
-                if serde_json::to_vec(&response).map_or(true, |b| b.len() > MAX_RESULT_BYTES) {
-                    tool_error(CloudError::new(
-                        "result_too_large",
-                        "result exceeds 1 MiB; request a smaller page",
-                    ))
-                } else {
-                    response
-                }
-            }
-            Err(error) => tool_error(error),
-        }
-        .into())
+        result.map_err(|mut error: ErrorData| {
+            error.data = Some(json!({"request_id":request_id}));
+            error
+        })
     }
 }

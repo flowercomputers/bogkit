@@ -224,9 +224,118 @@ pub fn llms() -> String {
     )
 }
 
+/// Shared creation diagnostics; the transport supplies its own idempotency label.
+pub fn validate_creation(
+    value: &Value,
+    key: Option<&str>,
+    key_label: &str,
+) -> Result<(String, String, String), crate::CloudError> {
+    let object = value.as_object().ok_or_else(|| {
+        crate::CloudError::new("invalid_request", "creation body must be a JSON object")
+    })?;
+    let mut errors = Vec::new();
+    for field in object.keys() {
+        if !["name", "template"].contains(&field.as_str()) {
+            errors.push(format!(
+                "unknown field {field}; accepted fields: name, template"
+            ));
+        }
+    }
+    let name = object.get("name").and_then(Value::as_str).unwrap_or("");
+    if name.trim().is_empty() {
+        errors.push("name is required and must be a non-empty string".into());
+    } else if name.trim().len() > 128
+        || name
+            .chars()
+            .any(|c| c.is_control() || c == '/' || c == '\\')
+        || [".", ".."].contains(&name.trim())
+    {
+        errors.push("name must be at most 128 bytes, without slashes, control characters, or dot-only paths".into());
+    }
+    let template = match object.get("template") {
+        None => "records-v1",
+        Some(v) => v.as_str().unwrap_or(""),
+    };
+    if template != "records-v1" {
+        errors.push("template must be a string: one of records-v1".into());
+    }
+    let key = key.unwrap_or("");
+    if key.trim().is_empty() || key.len() > 128 || key.chars().any(char::is_control) {
+        errors.push(format!("{key_label} is required and must be a non-empty string of at most 128 bytes without control characters"));
+    }
+    if !errors.is_empty() {
+        return Err(crate::CloudError::new(
+            "invalid_request",
+            &format!("{}. Template defaults to records-v1.", errors.join("; ")),
+        ));
+    }
+    Ok((name.into(), template.into(), key.into()))
+}
+
+pub const LEGACY_GUIDANCE: &str = "Public signup, workspace sharing, and invitations are unavailable. Ask the operator privately for a management credential to provision, or a single-Bog app credential to use an existing Bog.";
+pub fn llms_for_mode(configured: bool) -> String {
+    if configured {
+        llms()
+    } else {
+        format!("{}\n\n{}",LEGACY_GUIDANCE,llms().replace("Workspace defaults to personal; pass workspace_id explicitly for teams.","Management credentials default to the legacy workspace. Account workspaces are not activated.").replace("default personal", "default legacy workspace").replace("List current workspace memberships.","List the legacy workspace accessible to management credentials."))
+    }
+}
+pub fn guide(configured: bool, legacy_limit: usize) -> String {
+    let replacements = if configured {
+        vec![
+            ("intro", "Give your scripts, apps, and agents a database of their own. Sign in with GitHub, create a Bog, and let Fold keep your views up to date.".to_owned()),
+            ("allowance", "Three small Bogs per workspace · Free to use · HTTP + MCP".into()),
+            ("identity_title", "Your GitHub, your workspace.".into()),
+            ("identity_body", "Approve a connection. Your personal workspace is created automatically.".into()),
+            ("sharing_summary", "Read Fold views, issue an app credential, or invite someone into your workspace.".into()),
+            ("connect", "Give your agent this page. Discover the API, approve GitHub sign-in, and create a Bog without putting credentials in a conversation.".into()),
+            ("mcp", "connect an OAuth-capable client to <code>https://flower-bog-cloud.fly.dev/mcp</code> and follow its GitHub authorization prompt.".into()),
+            ("http", "follow the <a href=\"/auth.md\">device login instructions</a>, then use <a href=\"/v1\">API discovery</a>.".into()),
+            ("workspace_default", "Your personal workspace is the default; choose a workspace explicitly when working with a team.".into()),
+            ("revocation", "Owners can revoke access in the console. Removing a member also revokes credentials they issued in that workspace.".into()),
+            ("sharing", "Owners can invite people with a single-use link that expires after seven days. Members can create Bogs, use shared records, and issue app credentials. Owners manage membership and deletion.".into()),
+            ("console_link", "Your Bogs ↗".into()),
+        ]
+    } else {
+        vec![
+            ("intro", format!("Create a Bog, store JSON records, and read Fold views through HTTP or MCP. {LEGACY_GUIDANCE}")),
+            ("allowance", format!("Token-access preview · Legacy management allowance: {legacy_limit} Bogs · Account signup pending")),
+            ("identity_title", "Connect with a credential.".into()),
+            ("identity_body", "Obtain a credential privately from the operator. GitHub sign-in and automatic personal workspaces are not activated.".into()),
+            ("sharing_summary", "Read Fold views and issue a credential restricted to one Bog for your server-side app.".into()),
+            ("connect", LEGACY_GUIDANCE.into()),
+            ("mcp", "connect a bearer-capable client to <code>https://flower-bog-cloud.fly.dev/mcp</code> using your privately supplied credential. OAuth signup is unavailable.".into()),
+            ("http", "use your privately supplied bearer credential and follow <a href=\"/v1\">API discovery</a>. <a href=\"/auth.md\">Authentication guidance</a> explains current access.".into()),
+            ("workspace_default", "Management credentials default to the legacy workspace. The three-Bog account workspace allowance applies when account signup is activated, not to the legacy operator.".into()),
+            ("revocation", "Legacy management credentials can list and revoke credentials through HTTP and MCP. The account console is not activated.".into()),
+            ("sharing", "Workspace sharing and invitations are unavailable in token-access preview. Use a single-Bog credential for an application's access.".into()),
+            ("console_link", "Sign-in status ↗".into()),
+        ]
+    };
+    let mut page = include_str!("../static/index.html").to_owned();
+    for (key, value) in replacements {
+        page = page.replace(&format!("{{{{{key}}}}}"), &value);
+    }
+    page
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn guide_modes_have_no_unexpanded_fields_or_false_signup_claims() {
+        let enabled = guide(true, 5);
+        let legacy = guide(false, 5);
+        assert!(enabled.contains("Your GitHub, your workspace."));
+        assert!(!enabled.contains(LEGACY_GUIDANCE));
+        assert!(legacy.contains(LEGACY_GUIDANCE));
+        assert!(legacy.contains("allowance: 5 Bogs"));
+        assert!(!legacy.contains("Your GitHub, your workspace."));
+        for page in [enabled, legacy] {
+            assert!(!page.contains("{{"));
+            assert!(page.contains("older credentials may have no expiry"));
+        }
+    }
     #[test]
     fn contract_paths_and_creation_example_are_complete() {
         let document = openapi();
