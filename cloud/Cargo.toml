@@ -17,10 +17,13 @@ rand = "0.9"
 
 axum = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "process", "signal", "sync", "time"] }
-reqwest = { version = "0.12", default-features = false, features = ["json"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 libc = "0.2"
 
 percent-encoding = "2"
+
+jsonwebtoken = { version = "9", default-features = false, features = ["use_pem"] }
+base64 = "0.22"
 
 [dev-dependencies]
 tempfile = "3"
