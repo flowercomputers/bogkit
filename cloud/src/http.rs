@@ -18,6 +18,7 @@ pub fn build_rest_router(service: Arc<CloudService>) -> Router {
         .route("/flower-header.css", get(|| async { guide_asset("text/css; charset=utf-8", include_str!("../static/flower-header.css")) }))
         .route("/flower-footer.css", get(|| async { guide_asset("text/css; charset=utf-8", include_str!("../static/flower-footer.css")) }))
         .route("/cloud.css", get(|| async { guide_asset("text/css; charset=utf-8", include_str!("../static/cloud.css")) }))
+        .route("/webmcp.js", get(|| async { guide_asset("text/javascript; charset=utf-8", include_str!("../static/webmcp.js")) }))
         .route("/site.js", get(|| async { guide_asset("text/javascript; charset=utf-8", include_str!("../static/site.js")) }))
         .route("/flower.svg", get(|| async { guide_asset("image/svg+xml", include_str!("../static/flower.svg")) }))
         .route("/arizona-text.woff2", get(|| async { ([(header::CONTENT_TYPE,"font/woff2")], include_bytes!("../static/arizona-text.woff2").as_slice()) }))
@@ -49,6 +50,12 @@ pub fn build_rest_router(service: Arc<CloudService>) -> Router {
                 )
             }),
         )
+        .route("/.well-known/oauth-authorization-server", get(crate::native_oauth::endpoint).options(crate::native_oauth::endpoint))
+        .route("/.well-known/oauth-protected-resource/mcp", get(crate::native_oauth::endpoint).options(crate::native_oauth::endpoint))
+        .route("/oauth/authorize", get(crate::native_oauth::endpoint))
+        .route("/oauth/register", axum::routing::post(crate::native_oauth::endpoint).options(crate::native_oauth::endpoint))
+        .route("/oauth/token", axum::routing::post(crate::native_oauth::endpoint).options(crate::native_oauth::endpoint))
+        .route("/oauth/revoke", axum::routing::post(crate::native_oauth::endpoint).options(crate::native_oauth::endpoint))
         .route("/auth/device", axum::routing::post(crate::native_http::endpoint))
         .route("/auth/device/token", axum::routing::post(crate::native_http::endpoint))
         .route("/auth/device/approve", get(crate::native_http::endpoint).post(crate::native_http::endpoint))
@@ -188,6 +195,8 @@ async fn dispatch(State(service): State<Arc<CloudService>>, request: Request) ->
         && let Some((remaining, reset)) = service.rate_limit_snapshot(principal)
     {
         for (name, value) in [
+            ("ratelimit-policy", "\"account\";q=600;w=60".to_owned()),
+            ("ratelimit", format!("\"account\";r={remaining};t={reset}")),
             ("ratelimit-limit", "600".to_owned()),
             ("ratelimit-remaining", remaining.to_string()),
             ("ratelimit-reset", reset.to_string()),

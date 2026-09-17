@@ -73,7 +73,8 @@ for (const [id, approve] of [['approve', true], ['deny', false]]) {
     deciding = true;
     pending(true);
     try {
-      await post({ user_code: request.code, approve }, request.csrf);
+      const result = await post({ user_code: request.code, approve }, request.csrf);
+      if (result.redirect_uri) { location.replace(result.redirect_uri); return; }
       clearReview();
       $('status').textContent = approve
         ? 'Approved. Your agent can now collect its credential.'

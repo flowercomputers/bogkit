@@ -17,7 +17,7 @@ pub(crate) fn shell(mut html: String) -> String {
     if !html.contains("</body>") {
         html = html.replace("</html>", "</body></html>");
     }
-    html = html.replacen("</head>", "<link rel=\"stylesheet\" href=\"/flower-site.css\"><link rel=\"stylesheet\" href=\"/flower-header.css\"><link rel=\"stylesheet\" href=\"/flower-footer.css\"><link rel=\"stylesheet\" href=\"/cloud.css\"><script src=\"/site.js\" defer></script></head>", 1);
+    html = html.replacen("</head>", "<link rel=\"stylesheet\" href=\"/flower-site.css\"><link rel=\"stylesheet\" href=\"/flower-header.css\"><link rel=\"stylesheet\" href=\"/flower-footer.css\"><link rel=\"stylesheet\" href=\"/cloud.css\"><meta name=\"is-agentic-site-type\" content=\"app\"><script src=\"/site.js\" defer></script><script src=\"/webmcp.js\" defer></script></head>", 1);
     html = html.replacen(
         "<body>",
         &format!(

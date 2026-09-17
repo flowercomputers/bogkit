@@ -232,7 +232,7 @@ async fn native_http_device_and_discovery() {
             vec![
                 "hosted typed datastore",
                 "GitHub browser sign-in",
-                "MCP OAuth login are not supported",
+                "OAuth-capable MCP clients",
             ],
         ),
         (
@@ -279,7 +279,7 @@ async fn native_http_device_and_discovery() {
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), 404);
+    assert_eq!(response.status(), 200);
     let response = app
         .clone()
         .oneshot(

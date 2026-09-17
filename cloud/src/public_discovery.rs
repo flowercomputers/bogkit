@@ -65,7 +65,7 @@ fn linked(mut r: Response, base: &str) -> Response {
 }
 fn pricing(service: &CloudService) -> String {
     if service.authentication_configured() {
-        "This prototype is free to use. Each account workspace defaults to three Bogs, with 16 MiB of logical JSON record storage per Bog.".into()
+        "Free tier: this prototype is free to use, with open GitHub signup, self-serve API credentials, no payment card, and no sales contact. Each ordinary workspace defaults to three Bogs, with 16 MiB of logical JSON record storage per Bog. Approved uncapped allowances still obey host capacity and per-Bog storage limits.".into()
     } else {
         format!(
             "This prototype is free to use. This operator-only deployment allows up to {} Bogs, with 16 MiB of logical JSON record storage per Bog. Public signup is unavailable.",
@@ -81,7 +81,7 @@ fn escape(s: &str) -> String {
 }
 fn metadata(base: &str, path: &str) -> String {
     let url = escape(&format!("{base}{path}"));
-    let data=json!({"@context":"https://schema.org","@type":"SoftwareApplication","name":"Bog Cloud","url":format!("{base}/"),"applicationCategory":"DeveloperApplication","operatingSystem":"Web","description":"A working prototype for storing JSON records through HTTP and MCP.","publisher":{"@type":"Organization","name":"Flower Computer","url":"https://flowercomputer.com/"}}).to_string().replace('<',"\\u003c");
+    let data=json!({"@context":"https://schema.org","@type":"SoftwareApplication","name":"Bog Cloud","url":format!("{base}/"),"applicationCategory":"DeveloperApplication","operatingSystem":"Web","description":"A working prototype for storing JSON records through HTTP and MCP.","offers":{"@type":"Offer","price":"0","priceCurrency":"USD","description":"Free prototype; capacity limits apply"},"publisher":{"@type":"Organization","name":"Flower Computer","url":"https://www.flowercomputer.com/","contactPoint":{"@type":"ContactPoint","email":"ed@flowercomputer.com","contactType":"general inquiries"},"address":{"@type":"PostalAddress","addressLocality":"Brooklyn","addressRegion":"New York","addressCountry":"US"}}}).to_string().replace('<',"\\u003c");
     format!(
         "<link rel=\"canonical\" href=\"{url}\"><meta property=\"og:type\" content=\"website\"><meta property=\"og:title\" content=\"Bog Cloud\"><meta property=\"og:url\" content=\"{url}\"><meta property=\"og:image\" content=\"{}/og.svg\"><script type=\"application/ld+json\">{data}</script>",
         escape(base)
@@ -138,9 +138,9 @@ pub async fn document(State(service): State<Arc<CloudService>>, request: Request
     }
     match path {
         "/robots.txt" => {
-            let rules="Allow: /\nAllow: /mcp/server-card\nDisallow: /console\nDisallow: /auth/\nDisallow: /console-session\nDisallow: /v1/bogs\nDisallow: /v1/workspaces\nDisallow: /v1/invitations\nDisallow: /v1/agent-tokens\nDisallow: /v1/me\nDisallow: /mcp\n";
+            let rules="Allow: /\nAllow: /mcp/server-card\nDisallow: /console\nDisallow: /auth/\nDisallow: /oauth/\nDisallow: /console-session\nDisallow: /v1/bogs\nDisallow: /v1/workspaces\nDisallow: /v1/invitations\nDisallow: /v1/agent-tokens\nDisallow: /v1/me\nDisallow: /mcp\n";
             let mut body=String::new();
-            for agent in ["*","GPTBot","OAI-SearchBot","Claude-Web","Google-Extended"] {body.push_str(&format!("User-agent: {agent}\n{rules}\n"));}
+            for agent in ["*","GPTBot","OAI-SearchBot","Claude-Web","Google-Extended"] {body.push_str(&format!("User-agent: {agent}\nContent-Signal: search=yes, ai-input=yes, ai-train=no\n{rules}\n"));}
             body.push_str(&format!("Sitemap: {base}/sitemap.xml\n"));
             guide_asset("text/plain; charset=utf-8",body)
         },
@@ -154,8 +154,8 @@ pub async fn document(State(service): State<Arc<CloudService>>, request: Request
         _ => {
             let (title,body)= match path {
                 "/docs"=>("Documentation",include_str!("../static/public-docs.html").replace("{{pricing}}", &escape(&pricing(&service)))),
-                "/about"=>("About Bog Cloud","<p>Bog Cloud is a working prototype by <a href=\"https://flowercomputer.com/\">Flower Computer</a> for apps and agents to store JSON records through HTTP and MCP.</p>".into()),
-                "/contact"=>("Contact","<p>Visit <a href=\"https://flowercomputer.com/\">Flower Computer</a> for contact information.</p>".into()),
+                "/about"=>("About Bog Cloud",include_str!("../static/about.html").into()),
+                "/contact"=>("Contact Bog Cloud",include_str!("../static/contact.html").into()),
                 _=>("Privacy notes","<p>Bog Cloud uses credentials to control access to workspaces and records. When this deployment enables GitHub sign-in, it identifies your account; repository access is not requested. Never include credentials in chat messages or URLs. This prototype is evolving: keep a separate copy of important data.</p><p>For questions about data handling, contact <a href=\"https://flowercomputer.com/\">Flower Computer</a>. These notes do not specify a retention schedule.</p>".into())
             };
             linked(guide_asset("text/html; charset=utf-8",format!("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>{title} — Bog Cloud</title>{}<link rel=\"stylesheet\" href=\"/guide.css\"></head><body><header><a href=\"/\">Bog Cloud</a><nav><a href=\"/docs\">Documentation</a> · <a href=\"/auth.md\">Authentication</a></nav></header><main><h1>{title}</h1>{body}</main></body></html>",metadata(&base,path))),&base)

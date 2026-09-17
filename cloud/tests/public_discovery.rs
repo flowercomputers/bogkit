@@ -132,7 +132,7 @@ async fn public_discovery_over_real_http_preserves_auth_boundaries() {
             assert!(group.contains(&format!("Disallow: {private}\n")));
         }
     }
-    assert!(!robots.contains("Content-Signal"));
+    assert!(robots.contains("Content-Signal: search=yes, ai-input=yes, ai-train=no"));
     assert!(robots.contains("Sitemap: https://flower-bog-cloud.fly.dev/sitemap.xml"));
     let r = client
         .get(format!("{base}/sitemap.xml"))
@@ -281,20 +281,12 @@ async fn native_documents_redirect_and_actual_rate_limit_headers() {
     ] {
         assert!(body.contains(needle), "{needle}");
     }
-    for path in [
-        "/.well-known/oauth-authorization-server",
-        "/.well-known/openid-configuration",
-        "/.well-known/oauth-protected-resource",
+    for (path, status) in [
+        ("/.well-known/oauth-authorization-server", 200),
+        ("/.well-known/openid-configuration", 404),
+        ("/.well-known/oauth-protected-resource", 200),
     ] {
-        assert_eq!(
-            client
-                .get(format!("{base}{path}"))
-                .send()
-                .await
-                .unwrap()
-                .status(),
-            404
-        );
+        assert_eq!(client.get(format!("{base}{path}")).send().await.unwrap().status(), status);
     }
     server.abort();
     let service = CloudService::open(

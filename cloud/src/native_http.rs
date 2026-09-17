@@ -1,4 +1,4 @@
-//! Native authentication routes, never an OAuth authorization server.
+//! Native GitHub identity and human approval routes.
 use crate::{
     CloudError, CloudService,
     browser_auth::{LOGIN_COOKIE, SESSION_COOKIE},
@@ -85,13 +85,13 @@ async fn inner(service: &CloudService, request: Request) -> Result<Response, Clo
                 ));
             }
             if body.get("approve").is_none() {
-                json!({"name":native.device_details(&session,code)?,"access":"Create and use Bogs and issue app credentials in your current workspaces for 30 days. Cannot manage members, delete Bogs, or create account credentials."})
+                json!({"name":native.device_details(&session,code)?,"access":native.oauth_access_description(code)?.unwrap_or_else(||"Create and use Bogs and issue app credentials in your current workspaces for 30 days. Cannot manage members, delete Bogs, or create account credentials.".into())})
             } else {
                 let approve = body["approve"].as_bool().ok_or_else(|| {
                     CloudError::new("invalid_request", "approval must be true or false")
                 })?;
                 native.approve_device(&session, code, principal, approve, &service.auth)?;
-                json!({"approved":approve})
+                json!({"approved":approve,"redirect_uri":native.oauth_approved(code,approve)?})
             }
         }
         _ => return Err(CloudError::new("not_found", "route not found")),
@@ -189,7 +189,7 @@ pub async fn browser_inner(
         _ => return Err(CloudError::new("not_found", "route not found")),
     })
 }
-pub const AUTH_MARKDOWN: &str = r#"# Bog authentication
+pub const AUTH_MARKDOWN: &str = r#"# auth.md — Bog Cloud authentication
 
 This is a prototype. During this preview, the existing chat owner credential may remain enabled for the legacy workspace only; it cannot access new personal workspaces or manage memberships.
 
@@ -201,11 +201,25 @@ Alternatively, a signed-in human creates/revokes named agent credentials in /con
 
 MCP tool results, including structuredContent, may enter model context, chat transcripts or client logs. Structured output is not a private credential channel. For credential issuance, prefer HTTP and write the response directly to a private file with owner-only permissions, without printing it. Configure the client from that file privately; never paste its contents into a conversation. This applies to device-token responses, account credentials and scoped app credentials.
 
-Use Authorization: Bearer <Bog credential> for REST and bearer-capable MCP clients at /mcp. Select workspace_id explicitly; omission selects personal. Agents can create Bogs and issue scoped app credentials, but cannot manage members, delete Bogs or mint account credentials. App credentials remain restricted to one Bog. Membership is checked on every request. GitHub access tokens are never Bog API credentials. Bog does not currently implement an MCP OAuth authorization server or advertise OAuth discovery. See /v1 for creation requirements and /v1/templates for templates.
+Use Authorization: Bearer <Bog credential> for REST and bearer-capable MCP clients at /mcp. Select workspace_id explicitly; omission selects personal. Agents can create Bogs and issue scoped app credentials, but cannot manage members, delete Bogs or mint account credentials. App credentials remain restricted to one Bog. Membership is checked on every request. GitHub access tokens are never Bog API credentials. OAuth-capable MCP clients can discover the self-hosted authorization server and request bog:read or bog:write. GitHub remains the identity provider; there is no paid authentication intermediary. See /v1 for creation requirements and /v1/templates for templates.
+
+## OAuth 2.0 for MCP clients
+
+Discover /.well-known/oauth-protected-resource (resource is this origin plus /mcp), then /.well-known/oauth-authorization-server. Register a public client at POST /oauth/register with application/json, client_name, redirect_uris, and token_endpoint_auth_method "none". Registration lasts 30 days. Only exact HTTPS or HTTP loopback-IP redirect URLs are accepted. Client metadata document URLs, refresh tokens, OIDC ID tokens, and the separate Auth.md identity-assertion registration protocol are not implemented.
+
+Open /oauth/authorize with response_type=code, client_id, redirect_uri, resource, scope, state, code_challenge and code_challenge_method=S256. The human signs in through GitHub and explicitly approves or denies the named client and callback destination. Check state and the returned iss before exchanging the code. Exchange within 60 seconds at POST /oauth/token using application/x-www-form-urlencoded: grant_type=authorization_code, code, code_verifier, client_id, the exact redirect_uri and resource. Codes are one-use; pending requests expire after ten minutes and are lost on server restart. Access tokens persist across restart, expire after 30 days, and remain subject to current membership and account suspension.
+
+Scopes: bog:read reads accessible Bogs, records, workspace and credential metadata; it cannot create, write, or issue credentials. bog:write includes reads, Bog creation, record writes, and single-Bog app credential issuance/revocation. Neither scope permits Bog deletion, organization/membership administration, platform controls or account credential issuance. Request the least access needed; the default is bog:read. Both HTTP and MCP share this permission boundary. For a deployed app, use a single-Bog read or write credential instead of an account-wide OAuth credential.
+
+Revoke an OAuth connection through Agents in /console, or POST /oauth/revoke using application/x-www-form-urlencoded with token and client_id. Revocation is immediate, including for pending change waits. Invalid or already-revoked tokens also receive HTTP 200. There are no refresh tokens: reconnect with a new human approval after expiry. Keep access tokens out of model context, URLs, logs, and chat; the client handles the short-lived authorization code and PKCE verifier privately.
+
+## Free self-serve access
+
+GitHub signup is open. No payment card, sales contact, organization setup or manual key approval is required. The free prototype allowance is three Bogs per ordinary workspace, 16 MiB each, subject to shared host capacity. Approved accounts or organizations can have an uncapped Bog allowance; per-Bog storage and host capacity still apply. Device approval or OAuth gets an agent started; /console provides self-serve credential creation and revocation. Test in a disposable Bog in your workspace; there is no separate sandbox environment.
 "#;
 fn native_llms() -> String {
     format!(
-        "{}\nUse Bog Cloud when an app or agent needs a hosted typed datastore with schema validation and durable storage. Use HTTP for direct API integration and private credential issuance; use MCP for a bearer-capable agent client.\n\nAuthentication: GitHub browser sign-in at /auth/login, Bog device approval at /auth/device, and Bog bearer credentials. Read /auth.md before requesting credentials. OAuth authorization-server discovery and MCP OAuth login are not supported.\n",
+        "{}\n## When to use Bog Cloud\n\nUse Bog Cloud when an app or agent needs a hosted typed datastore with schema validation and durable storage. Use HTTP for direct API integration and private credential issuance; use MCP for a bearer-capable agent client.\n\nAuthentication: GitHub browser sign-in at /auth/login, Bog device approval at /auth/device, and Bog bearer credentials. Read /auth.md before requesting credentials. Free tier: three Bogs per ordinary workspace, 16 MiB each, no payment card. Self-serve API keys are available after GitHub approval in /console. Use a disposable Bog for testing; no separate sandbox is provided. OAuth-capable MCP clients use /.well-known/oauth-protected-resource and /.well-known/oauth-authorization-server.\n",
         crate::contract::llms()
     )
 }
@@ -216,7 +230,34 @@ pub fn discovery(service: &CloudService, path: &str) -> Option<Response> {
             AUTH_MARKDOWN,
         )
             .into_response(),
-        "/.well-known/oauth-protected-resource" => StatusCode::NOT_FOUND.into_response(),
+        "/.well-known/oauth-protected-resource" => (
+            [(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")],
+            Json(service.native_auth.as_ref()?.resource_metadata()),
+        )
+            .into_response(),
+        "/openapi.json" => {
+            let native = service.native_auth.as_ref()?;
+            let base = native.config.origin();
+            let mut spec = crate::contract::openapi();
+            spec["components"]["securitySchemes"]["oauth2"] = json!({"type":"oauth2","description":"Self-hosted OAuth with human GitHub approval, PKCE S256 and current workspace checks. App credentials are separately restricted to one Bog.","flows":{"authorizationCode":{"authorizationUrl":format!("{base}/oauth/authorize"),"tokenUrl":format!("{base}/oauth/token"),"scopes":{"bog:read":"Read accessible Bogs, records and workspace metadata","bog:write":"Read/write records, create Bogs and manage single-Bog app credentials; no owner administration"}}}});
+            for (path, methods) in spec["paths"].as_object_mut()? {
+                for (method, operation) in methods.as_object_mut()? {
+                    let allowed = path == "/v1/me"
+                        || (path == "/v1/workspaces" && method == "get")
+                        || (path.starts_with("/v1/bogs")
+                            && !(method == "delete" && path == "/v1/bogs/{bog_id}"));
+                    if allowed && let Some(security) = operation["security"].as_array_mut() {
+                        let scope = if method == "get" {
+                            "bog:read"
+                        } else {
+                            "bog:write"
+                        };
+                        security.push(json!({"oauth2":[scope]}));
+                    }
+                }
+            }
+            Json(spec).into_response()
+        }
         "/llms.txt" => (
             [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
             native_llms(),
@@ -224,9 +265,11 @@ pub fn discovery(service: &CloudService, path: &str) -> Option<Response> {
             .into_response(),
         "/v1" => {
             let mut v = crate::contract::overview();
+            v["pricing"] = json!({"plan":"free prototype","price":0,"currency":"USD","payment_card_required":false,"self_serve_signup":"/auth/login","self_serve_credentials":"/console","sandbox":"Use a disposable Bog in your workspace; no separate sandbox"});
+            v["interfaces"] = json!({"http":"/v1","mcp":"/mcp","graphql":false});
             v["authentication_configured"] = json!(service.authentication_configured());
             v["authentication_mode"] = json!("github_native");
-            v["authentication"] = json!({"browser_login":"/auth/login","device_start":"/auth/device","device_token":"/auth/device/token","device_approval":"/auth/device/approve","agent_tokens":"/v1/agent-tokens","account":"/v1/me","session":"/console-session","mcp":"bearer","oauth_authorization_server":false});
+            v["authentication"] = json!({"browser_login":"/auth/login","device_start":"/auth/device","device_token":"/auth/device/token","device_approval":"/auth/device/approve","agent_tokens":"/v1/agent-tokens","account":"/v1/me","session":"/console-session","mcp":"bearer","oauth_authorization_server":true,"oauth_metadata":"/.well-known/oauth-authorization-server","scopes":["bog:read","bog:write"]});
             v["next_step"] = json!(
                 "Sign in with GitHub at /auth/login or request human approval via /auth/device. Read /auth.md."
             );

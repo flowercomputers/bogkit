@@ -37,3 +37,5 @@ mod public_discovery;
 pub mod agent_discovery;
 
 mod site;
+
+mod native_oauth;

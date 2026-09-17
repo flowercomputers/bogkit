@@ -163,12 +163,8 @@ impl CloudService {
         use Operation::*;
         let (target, write) = match &operation {
             WaitForChange { .. } => unreachable!(),
-            CreateBog { .. }
-            | ListBogs
-            | ListWorkspaces
-            | ListTokens { .. }
-            | IssueToken { .. }
-            | RevokeToken { .. } => (None, true),
+            ListBogs | ListWorkspaces | ListTokens { .. } => (None, false),
+            CreateBog { .. } | IssueToken { .. } | RevokeToken { .. } => (None, true),
             DescribeBog { bog_id }
             | Usage { bog_id }
             | Schema { bog_id }

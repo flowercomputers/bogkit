@@ -1,0 +1,438 @@
+mod common;
+use axum::{
+    Json, Router,
+    routing::{get, post},
+};
+use bog_cloud::{
+    CloudService,
+    config::Config,
+    native_auth::{GithubConfig, NativeAuth},
+};
+use rmcp::{
+    ServiceExt,
+    transport::{
+        StreamableHttpClientTransport, streamable_http_client::StreamableHttpClientTransportConfig,
+    },
+};
+use serde_json::{Value, json};
+use std::{future::IntoFuture, sync::Arc};
+const VERIFIER: &str = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+const CHALLENGE: &str = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
+
+trait EncodedRequest {
+    fn form(self, pairs: &[(&str, &str)]) -> Self;
+    fn query(self, pairs: &[(&str, &str)]) -> Self;
+}
+fn encoded(pairs: &[(&str, &str)]) -> String {
+    let mut url = reqwest::Url::parse("https://example.invalid/").unwrap();
+    url.query_pairs_mut().extend_pairs(pairs.iter().copied());
+    url.query().unwrap_or("").to_owned()
+}
+impl EncodedRequest for reqwest::RequestBuilder {
+    fn form(self, pairs: &[(&str, &str)]) -> Self {
+        self.header("content-type", "application/x-www-form-urlencoded")
+            .body(encoded(pairs))
+    }
+    fn query(self, pairs: &[(&str, &str)]) -> Self {
+        let (client, request) = self.build_split();
+        let mut request = request.unwrap();
+        request.url_mut().set_query(Some(&encoded(pairs)));
+        reqwest::RequestBuilder::from_parts(client, request)
+    }
+}
+
+#[tokio::test]
+async fn pkce_consent_scopes_replay_revocation_and_restart_over_real_rest_and_mcp() {
+    let provider = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let provider_url = format!("http://{}", provider.local_addr().unwrap());
+    let provider_task=tokio::spawn(axum::serve(provider,Router::new().route("/token",post(||async{Json(json!({"access_token":"fixture-provider-token","token_type":"bearer","scope":""}))})).route("/user",get(||async{Json(json!({"id":42}))}))).into_future());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let root = tempfile::tempdir_in("/tmp").unwrap();
+    let worker = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../target/debug/bog-records-worker")
+        .canonicalize()
+        .unwrap();
+    let mut service =
+        CloudService::open(Config::new(root.path().into(), worker), common::OWNER).unwrap();
+    let mut config = GithubConfig::for_loopback_testing(&provider_url).unwrap();
+    config.redirect_uri = format!("{base}/auth/callback");
+    let native = NativeAuth::new(config.clone(), &root.path().join("sessions")).unwrap();
+    Arc::get_mut(&mut service).unwrap().native_auth = Some(native.clone());
+    let app = bog_cloud::build_rest_router(service.clone())
+        .merge(bog_cloud_mcp::build_mcp_router(service.clone()));
+    let server = tokio::spawn(
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .into_future(),
+    );
+    let http = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let metadata: Value = http
+        .get(format!("{base}/.well-known/oauth-authorization-server"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(metadata["issuer"], base);
+    assert_eq!(
+        metadata["code_challenge_methods_supported"],
+        json!(["S256"])
+    );
+    let challenge = http.post(format!("{base}/mcp")).send().await.unwrap();
+    assert_eq!(challenge.status(), 401);
+    assert!(
+        challenge.headers()["www-authenticate"]
+            .to_str()
+            .unwrap()
+            .contains("resource_metadata=")
+    );
+    let redirect = "http://127.0.0.1:9999/callback";
+    for bad in [
+        "https://example.com/cb#fragment",
+        "http://remote.example/cb",
+        "https://user:pass@example.com/cb",
+    ] {
+        assert_eq!(
+            http.post(format!("{base}/oauth/register"))
+                .json(&json!({"redirect_uris":[bad]}))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            400
+        );
+    }
+    let registered:Value=http.post(format!("{base}/oauth/register")).json(&json!({"client_name":"OAuth test client","redirect_uris":[redirect],"token_endpoint_auth_method":"none"})).send().await.unwrap().json().await.unwrap();
+    let client = registered["client_id"].as_str().unwrap();
+    let login = native.begin_login(None).unwrap();
+    let state = reqwest::Url::parse(&login.authorization_url)
+        .unwrap()
+        .query_pairs()
+        .find(|(k, _)| k == "state")
+        .unwrap()
+        .1
+        .into_owned();
+    let binding = login
+        .set_cookie
+        .split(';')
+        .next()
+        .unwrap()
+        .split_once('=')
+        .unwrap()
+        .1;
+    let session = native
+        .complete_login(&state, "fixture-code", binding)
+        .await
+        .unwrap();
+    service.auth.provision_identity(&session.identity).unwrap();
+    let cookie = session.set_cookie.split(';').next().unwrap();
+    let mut issued = Vec::new();
+    for scope in ["bog:read", "bog:write"] {
+        let params = [
+            ("client_id", client),
+            ("redirect_uri", redirect),
+            ("response_type", "code"),
+            ("resource", &format!("{base}/mcp")),
+            ("scope", scope),
+            ("state", "fixture-state"),
+            ("code_challenge", CHALLENGE),
+            ("code_challenge_method", "S256"),
+        ];
+        let mut wrong = params.to_vec();
+        wrong[1].1 = "https://attacker.example/callback";
+        assert_eq!(
+            http.get(format!("{base}/oauth/authorize"))
+                .query(&wrong)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            400
+        );
+        let mut wrong = params.to_vec();
+        wrong[3].1 = "https://another.example/mcp";
+        assert_eq!(
+            http.get(format!("{base}/oauth/authorize"))
+                .query(&wrong)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            400
+        );
+        let auth = http
+            .get(format!("{base}/oauth/authorize"))
+            .query(&params)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(auth.status(), 303);
+        let public = auth.headers()["location"]
+            .to_str()
+            .unwrap()
+            .split("user_code=")
+            .nth(1)
+            .unwrap();
+        let approve = || {
+            http.post(format!("{base}/auth/device/approve"))
+                .header("cookie", cookie)
+                .header("origin", &base)
+                .header("x-csrf-token", &session.csrf_token)
+        };
+        let details: Value = approve()
+            .json(&json!({"user_code":public}))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert!(details["access"].as_str().unwrap().contains(scope));
+        assert!(details["access"].as_str().unwrap().contains(redirect));
+        assert_eq!(
+            http.post(format!("{base}/auth/device/approve"))
+                .header("cookie", cookie)
+                .json(&json!({"user_code":public,"approve":true}))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            401
+        );
+        let approval: Value = approve()
+            .json(&json!({"user_code":public,"approve":true}))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let callback = reqwest::Url::parse(approval["redirect_uri"].as_str().unwrap()).unwrap();
+        let query: std::collections::HashMap<_, _> = callback.query_pairs().into_owned().collect();
+        assert_eq!(query["state"], "fixture-state");
+        assert_eq!(query["iss"], base);
+        let form = [
+            ("grant_type", "authorization_code"),
+            ("client_id", client),
+            ("redirect_uri", redirect),
+            ("resource", &format!("{base}/mcp")),
+            ("code", query["code"].as_str()),
+            ("code_verifier", VERIFIER),
+        ];
+        let mut wrong = form.to_vec();
+        wrong[5].1 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        assert_eq!(
+            http.post(format!("{base}/oauth/token"))
+                .form(&wrong)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            400
+        );
+        let token: Value = http
+            .post(format!("{base}/oauth/token"))
+            .form(&form)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(token["scope"], scope);
+        assert!(token.get("refresh_token").is_none());
+        assert_eq!(
+            http.post(format!("{base}/oauth/token"))
+                .form(&form)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            400
+        );
+        let secret = token["access_token"].as_str().unwrap().to_owned();
+        assert_eq!(
+            http.get(format!("{base}/v1/bogs"))
+                .bearer_auth(&secret)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            200
+        );
+        assert_eq!(
+            http.get(format!("{base}/v1/workspaces"))
+                .bearer_auth(&secret)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            200
+        );
+        assert_eq!(
+            http.post(format!("{base}/v1/agent-tokens"))
+                .bearer_auth(&secret)
+                .json(&json!({"name":"escalation"}))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            403
+        );
+        let sdk = ()
+            .serve(StreamableHttpClientTransport::with_client(
+                http.clone(),
+                StreamableHttpClientTransportConfig::with_uri(format!("{base}/mcp"))
+                    .auth_header(&secret),
+            ))
+            .await
+            .unwrap();
+        assert!(
+            !common::call(&sdk, "list_bogs", json!({}))
+                .await
+                .is_error
+                .unwrap_or(false)
+        );
+        let created = common::call(
+            &sdk,
+            "create_bog",
+            json!({"name":"oauth-test","idempotency_key":"oauth-create"}),
+        )
+        .await;
+        assert_eq!(created.is_error.unwrap_or(false), scope == "bog:read");
+        sdk.cancel().await.unwrap();
+        issued.push(secret);
+    }
+    let bogs: Value = http
+        .get(format!("{base}/v1/bogs"))
+        .bearer_auth(&issued[1])
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let bog = bogs["bogs"][0]["id"].as_str().unwrap();
+    service
+        .supervisor
+        .ensure_running(bog_cloud::BogId(uuid::Uuid::parse_str(bog).unwrap()))
+        .await
+        .unwrap();
+    for (token, expected) in [(&issued[0], 403), (&issued[1], 200)] {
+        assert_eq!(
+            http.put(format!("{base}/v1/bogs/{bog}/docs/item"))
+                .bearer_auth(token)
+                .json(&json!({"ok":true}))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            expected
+        );
+    }
+    assert_eq!(
+        http.post(format!("{base}/v1/bogs/{bog}/tokens"))
+            .bearer_auth(&issued[0])
+            .json(&json!({"scope":"write"}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        403
+    );
+    assert_eq!(
+        http.delete(format!("{base}/v1/bogs/{bog}"))
+            .bearer_auth(&issued[1])
+            .json(&json!({"confirm":bog}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        403
+    );
+    // Authentication storage survives reopen; the active token is still checked
+    // against the account registry and cannot be used as a regular agent token.
+    let reopened = NativeAuth::new(config, &root.path().join("sessions")).unwrap();
+    drop(reopened);
+    assert!(
+        service
+            .auth
+            .authenticate_agent_token(&issued[0], None)
+            .is_err()
+    );
+    assert_eq!(
+        http.post(format!("{base}/oauth/revoke"))
+            .form(&[("token", issued[0].as_str()), ("client_id", client)])
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+    assert_eq!(
+        http.get(format!("{base}/v1/bogs"))
+            .bearer_auth(&issued[0])
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        401
+    );
+    assert_eq!(
+        http.get(format!("{base}/v1/bogs"))
+            .bearer_auth(&issued[1])
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+    let agent_list: Value = http
+        .get(format!("{base}/v1/agent-tokens"))
+        .header("cookie", cookie)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let active = agent_list["tokens"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["revoked_at"].is_null())
+        .unwrap();
+    assert_eq!(
+        http.delete(format!(
+            "{base}/v1/agent-tokens/{}",
+            active["id"].as_str().unwrap()
+        ))
+        .header("cookie", cookie)
+        .header("origin", &base)
+        .header("x-csrf-token", &session.csrf_token)
+        .send()
+        .await
+        .unwrap()
+        .status(),
+        200
+    );
+    assert_eq!(
+        http.get(format!("{base}/v1/bogs"))
+            .bearer_auth(&issued[1])
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        401
+    );
+    service.supervisor.shutdown().await.unwrap();
+    server.abort();
+    provider_task.abort();
+}

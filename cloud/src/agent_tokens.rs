@@ -85,16 +85,28 @@ impl Auth {
         }
         let db = self.registry.connection()?;
         let row:Option<(String,Vec<u8>,i64,String)>=db.query_row("SELECT t.account_id,t.secret_hash,t.expires_at,w.id FROM agent_tokens t JOIN accounts a ON a.id=t.account_id JOIN workspaces w ON w.personal_account_id=a.id WHERE t.id=?1 AND t.revoked_at IS NULL AND t.expires_at>?2 AND a.suspended_at IS NULL",params![id,now()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional().map_err(db_error)?;
-        let (account, stored, expires, personal) = row.ok_or_else(denied)?;
+        let (_, stored, _, _) = row.ok_or_else(denied)?;
         if !bool::from(stored.ct_eq(&hash(secret.as_bytes()))) {
             return Err(denied());
         }
+        drop(db);
+        self.principal_for_agent_id(id, workspace)
+    }
+    pub(crate) fn principal_for_agent_id(
+        &self,
+        id: &str,
+        workspace: Option<WorkspaceId>,
+    ) -> Result<Principal, CloudError> {
+        let db = self.registry.connection()?;
+        let row: Option<(String,i64,String)> = db.query_row("SELECT t.account_id,t.expires_at,w.id FROM agent_tokens t JOIN accounts a ON a.id=t.account_id JOIN workspaces w ON w.personal_account_id=a.id WHERE t.id=?1 AND t.revoked_at IS NULL AND t.expires_at>?2 AND a.suspended_at IS NULL",params![id,now()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(db_error)?;
+        let (account, expires, personal) = row.ok_or_else(denied)?;
         drop(db);
         let workspace = workspace.unwrap_or(WorkspaceId(
             Uuid::parse_str(&personal).map_err(|_| denied())?,
         ));
         self.check_member(&account, workspace, false)?;
         Ok(Principal {
+            read_only: false,
             token_id: Some(id.into()),
             kind: PrincipalKind::Agent,
             expires_at: Some(expires as u64),
@@ -102,6 +114,17 @@ impl Auth {
             workspace_id: Some(workspace),
             bog_id: None,
         })
+    }
+    pub(crate) fn revoke_oauth_agent(&self, id: &str) -> Result<(), CloudError> {
+        let mut db = self.registry.connection()?;
+        let tx = db.transaction().map_err(db_error)?;
+        tx.execute(
+            "UPDATE agent_tokens SET revoked_at=COALESCE(revoked_at,?1) WHERE id=?2",
+            params![now(), id],
+        )
+        .map_err(db_error)?;
+        tx.execute("INSERT INTO audit_events(account_id,action,resource_id,created_at) SELECT account_id,'agent_token_revoked',id,?1 FROM agent_tokens WHERE id=?2",params![now(),id]).map_err(db_error)?;
+        tx.commit().map_err(db_error)
     }
     pub(crate) fn check_agent_token(&self, p: &Principal) -> Result<(), CloudError> {
         let Some(id) = &p.token_id else { return Ok(()) };

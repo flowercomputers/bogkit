@@ -154,6 +154,7 @@ impl Auth {
         let (account, _) = self.provision_identity(identity)?;
         self.check_member(&account.id, workspace, false)?;
         Ok(Principal {
+            read_only: false,
             kind,
             expires_at: Some(identity.expires_at()),
             account_id: Some(account.id),
@@ -520,6 +521,7 @@ mod tests {
     fn person(a: &Auth, subject: &str) -> Principal {
         let (account, w) = a.provision_subject("issuer", subject).unwrap();
         Principal {
+            read_only: false,
             kind: PrincipalKind::Human,
             expires_at: None,
             account_id: Some(account.id),
@@ -1412,6 +1414,7 @@ impl Auth {
         self.authorize(operator, None, true)?;
         let workspace: String=self.registry.connection()?.query_row("SELECT w.id FROM workspaces w JOIN accounts a ON a.id=w.personal_account_id WHERE a.id=?1 AND a.suspended_at IS NULL AND w.deleted_at IS NULL AND w.suspended_at IS NULL",[owner_account],|r|r.get(0)).optional().map_err(db_error)?.ok_or_else(forbidden)?;
         let human = Principal {
+            read_only: false,
             kind: PrincipalKind::Human,
             account_id: Some(owner_account.into()),
             workspace_id: Some(WorkspaceId(

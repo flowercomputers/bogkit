@@ -151,3 +151,5 @@ async function refreshPlatform() {
   }
 }
 start();
+
+document.addEventListener('bog-resources-changed', () => { if (workspace) refresh().catch(error => status(error.message, true)); });

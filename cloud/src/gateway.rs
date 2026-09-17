@@ -42,6 +42,12 @@ impl PublicAuth {
 }
 impl CloudService {
     pub fn authentication_challenge(&self) -> String {
+        if let Some(native) = &self.native_auth {
+            return format!(
+                "Bearer resource_metadata=\"{}/.well-known/oauth-protected-resource\", scope=\"bog:read\"",
+                native.config.origin()
+            );
+        }
         self.public_auth
             .as_ref()
             .and_then(|a| reqwest::Url::parse(&a.verifier.config.resource).ok())
@@ -58,6 +64,13 @@ impl CloudService {
         token: &str,
         workspace: Option<WorkspaceId>,
     ) -> Result<Principal, CloudError> {
+        if token.starts_with("bog_oauth_") {
+            return self
+                .native_auth
+                .as_ref()
+                .ok_or_else(denied)?
+                .authenticate_oauth(self, token, workspace);
+        }
         // JWT-shaped credentials are never retried as opaque application/operator secrets.
         if token.starts_with("bog_agent_") {
             if self.native_auth.is_none() {

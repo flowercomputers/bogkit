@@ -8,6 +8,7 @@ use uuid::Uuid;
 
 #[derive(Clone, Debug)]
 pub struct Principal {
+    pub(crate) read_only: bool,
     pub(crate) token_id: Option<String>,
     pub(crate) kind: PrincipalKind,
     pub(crate) expires_at: Option<u64>,
@@ -63,6 +64,7 @@ impl Auth {
         let digest = hash(secret.as_bytes());
         if bool::from(digest.ct_eq(&self.owner_hash)) {
             return Ok(Principal {
+                read_only: false,
                 token_id: None,
                 kind: PrincipalKind::Operator,
                 expires_at: None,
@@ -97,6 +99,7 @@ impl Auth {
             return Err(denied());
         }
         let principal = Principal {
+            read_only: false,
             kind: PrincipalKind::App,
             expires_at: None,
             account_id,
@@ -116,6 +119,9 @@ impl Auth {
         bog: Option<BogId>,
         write: bool,
     ) -> Result<(), CloudError> {
+        if write && principal.read_only {
+            return Err(CloudError::new("forbidden", "bog:write scope required"));
+        }
         if principal
             .expires_at
             .is_some_and(|expiry| expiry <= now().max(0) as u64)

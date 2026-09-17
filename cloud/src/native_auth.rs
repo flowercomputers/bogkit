@@ -17,6 +17,7 @@ use std::{
 };
 use subtle::ConstantTimeEq;
 
+#[derive(Clone)]
 pub struct GithubConfig {
     client_id: String,
     secret: String,
@@ -77,7 +78,8 @@ impl GithubConfig {
 pub struct NativeAuth {
     pub config: GithubConfig,
     client: reqwest::Client,
-    db: Mutex<Connection>,
+    pub(crate) db: Mutex<Connection>,
+    pub(crate) oauth: Mutex<crate::native_oauth::OauthState>,
     grants: Mutex<DeviceState>,
 }
 struct Grant {
@@ -181,6 +183,7 @@ impl NativeAuth {
         }
         let db = Connection::open(path).map_err(db_error)?;
         db.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA secure_delete=ON; CREATE TABLE IF NOT EXISTS native_logins(state BLOB PRIMARY KEY,binding BLOB NOT NULL,verifier TEXT NOT NULL,target TEXT,expires INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS native_sessions(id BLOB PRIMARY KEY,csrf TEXT NOT NULL,subject TEXT NOT NULL,expires INTEGER NOT NULL);").map_err(db_error)?;
+        crate::native_oauth::initialize(&db)?;
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
             .redirect(reqwest::redirect::Policy::none())
@@ -192,6 +195,7 @@ impl NativeAuth {
             client,
             db: Mutex::new(db),
             grants: Mutex::new(DeviceState::default()),
+            oauth: Mutex::new(Default::default()),
         }))
     }
     pub fn begin_login(&self, public_code: Option<&str>) -> Result<LoginStart, CloudError> {
