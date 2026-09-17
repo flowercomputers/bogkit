@@ -129,7 +129,7 @@ pub fn openapi() -> Value {
             }
             _ => None,
         };
-        let mut op = json!({"operationId":name,"description":description,"security":[{"bearer":[]}],"parameters":parameters,"responses":{"200":{"description":"Operation result"},"202":{"description":"Provisioning or deletion accepted"},"204":{"description":"Credential revoked"},"400":{"description":"Actionable invalid request"},"401":{"description":"Authentication required"},"403":{"description":"Workspace permission denied"},"404":{"description":"Resource unavailable"},"429":{"description":"Quota or rate limit"}}});
+        let mut op = json!({"operationId":name,"description":description,"security":[{"bearer":[]}],"parameters":parameters,"responses":{}});
         if let Some(schema) = body {
             op["requestBody"] =
                 json!({"required":true,"content":{"application/json":{"schema":schema}}});
@@ -201,7 +201,7 @@ pub fn openapi() -> Value {
         if path.starts_with("/v1/bogs/") {
             parameters.push(json!({"name":"workspace_id","in":"query","required":false,"schema":{"type":"string","format":"uuid"}}));
         }
-        let mut op = json!({"description":description,"security":[{"bearer":[]},{"browserSession":[]}],"parameters":parameters,"responses":{"200":{"description":"Result"},"202":{"description":"Deletion accepted"},"401":{"description":"Authentication required"},"403":{"description":"Permission denied"}}});
+        let mut op = json!({"description":description,"security":[{"bearer":[]},{"browserSession":[]}],"parameters":parameters,"responses":{}});
         if !fields.is_empty() {
             let properties = fields
                 .iter()
@@ -211,11 +211,349 @@ pub fn openapi() -> Value {
         }
         paths.entry(path).or_insert_with(|| json!({}))[method] = op;
     }
-    json!({"openapi":"3.1.0","info":{"title":"Bog Cloud","version":"1","description":"Cookie-authenticated mutations require exact Origin and x-csrf-token from /console-session. View ordering is implementation-defined; no insertion-order or replay guarantee."},"paths":paths,"components":{"securitySchemes":{"bearer":{"type":"http","scheme":"bearer"},"browserSession":{"type":"apiKey","in":"cookie","name":"__Host-bog_session"}}}})
+    finish_contract(paths)
+}
+
+fn object(properties: Value, required: &[&str]) -> Value {
+    json!({"type":"object","properties":properties,"required":required})
+}
+fn array(items: Value) -> Value {
+    json!({"type":"array","items":items})
+}
+fn reference(name: &str) -> Value {
+    json!({"$ref":format!("#/components/schemas/{name}")})
+}
+fn envelope(data: Value) -> Value {
+    object(
+        json!({"seq":{"type":"integer","minimum":0},"data":data}),
+        &["seq", "data"],
+    )
+}
+fn response(schema: Value) -> Value {
+    json!({"description":"Successful result","content":{"application/json":{"schema":schema}}})
+}
+fn finish_contract(mut paths: serde_json::Map<String, Value>) -> Value {
+    let string = json!({"type":"string"});
+    let integer = json!({"type":"integer"});
+    let boolean = json!({"type":"boolean"});
+    let nullable_integer = json!({"type":["integer","null"]});
+    let record = json!({"type":"object","additionalProperties":true});
+    let workspace = object(
+        json!({"id":string,"name":string,"role":string}),
+        &["id", "name", "role"],
+    );
+    let invitation = object(
+        json!({"id":string,"workspace_id":string,"workspace_name":string,"role":string,"expires_at":integer,"accepted_at":nullable_integer,"revoked_at":nullable_integer}),
+        &[
+            "id",
+            "workspace_id",
+            "workspace_name",
+            "role",
+            "expires_at",
+            "accepted_at",
+            "revoked_at",
+        ],
+    );
+    let bog = object(
+        json!({"id":{"type":"string","format":"uuid"},"name":string,"template":{"const":"records-v1"},"template_version":string,"status":{"enum":["creating","ready","stopped","failed","restoring","maintenance"]},"desired_state":{"enum":["running","stopped"]},"generation":integer,"failure_code":{"type":["string","null"]},"created_at":integer,"api_url":string,"request_id":string}),
+        &[
+            "id",
+            "name",
+            "template",
+            "template_version",
+            "status",
+            "desired_state",
+            "generation",
+            "failure_code",
+            "created_at",
+        ],
+    );
+    let error = object(
+        json!({"error":object(json!({"code":string,"message":string}), &["code","message"]),"request_id":string}),
+        &["error", "request_id"],
+    );
+    let token = object(
+        json!({"id":string,"bog_id":string,"account_id":{"type":["string","null"]},"scope":{"enum":["read","write"]},"created_at":integer,"expires_at":nullable_integer,"revoked_at":nullable_integer}),
+        &[
+            "id",
+            "bog_id",
+            "account_id",
+            "scope",
+            "created_at",
+            "expires_at",
+            "revoked_at",
+        ],
+    );
+    let schema = object(
+        json!({"fingerprint":string,"input":record,"views":array(object(json!({"name":string,"kind":string,"keyed":boolean,"search":{"type":["string","null"]},"item":record}), &["name","kind","keyed","search","item"])),"write":object(json!({"keyed":record}), &["keyed"]),"template_version":{"const":"records-v1"}}),
+        &["fingerprint", "input", "views", "write", "template_version"],
+    );
+    let mut schemas = json!({"Bog":bog,"Error":error,"Workspace":workspace,"Invitation":invitation,"Token":token,"RecordSchema":schema});
+    schemas["Changes"] = object(
+        json!({"cursor":string,"seq":integer,"changed":boolean,"reset":boolean}),
+        &["cursor", "seq", "changed", "reset"],
+    );
+    for (path, methods) in &mut paths {
+        for (method, op) in methods.as_object_mut().unwrap() {
+            let id = op["operationId"]
+                .as_str()
+                .map(str::to_owned)
+                .unwrap_or_else(|| {
+                    match (method.as_str(), path.as_str()) {
+                        ("get", "/v1/me") => "current_account",
+                        ("get", "/v1/bogs/{bog_id}/usage") => "usage",
+                        ("delete", "/v1/bogs/{bog_id}") => "delete_bog",
+                        ("get", "/v1/workspaces/{workspace_id}/members") => "list_members",
+                        ("delete", "/v1/workspaces/{workspace_id}/members/{account_id}") => {
+                            "remove_member"
+                        }
+                        ("get", "/v1/workspaces/{workspace_id}/invitations") => "list_invitations",
+                        ("post", "/v1/workspaces/{workspace_id}/invitations") => {
+                            "create_invitation"
+                        }
+                        ("delete", "/v1/workspaces/{workspace_id}/invitations/{invitation_id}") => {
+                            "revoke_invitation"
+                        }
+                        ("post", "/v1/invitations/preview") => "preview_invitation",
+                        _ => "accept_invitation",
+                    }
+                    .to_owned()
+                });
+            op["operationId"] = json!(id);
+            op["security"] = json!([{"bearer":[]},{"browserSession":[]}]);
+            let result = match id.as_str() {
+                "create_bog" | "describe_bog" => reference("Bog"),
+                "list_bogs" => object(json!({"bogs":array(reference("Bog"))}), &["bogs"]),
+                "list_workspaces" => object(
+                    json!({"workspaces":array(reference("Workspace"))}),
+                    &["workspaces"],
+                ),
+                "schema" => reference("RecordSchema"),
+                "wait_for_change" => reference("Changes"),
+                "get_record" => envelope(record.clone()),
+                "upsert_record" => object(
+                    json!({"seq":integer,"replaced":boolean}),
+                    &["seq", "replaced"],
+                ),
+                "delete_record" => object(
+                    json!({"seq":integer,"removed":boolean}),
+                    &["seq", "removed"],
+                ),
+                "batch" => object(json!({"seq":integer}), &["seq"]),
+                "read_view" => envelope(
+                    json!({"oneOf":[array(object(json!({"key":string,"value":record}), &["key","value"])),object(json!({"value":integer}), &["value"])]}),
+                ),
+                "usage" => envelope(object(
+                    json!({"logical_bytes":integer,"limit_bytes":integer,"over_limit":boolean}),
+                    &["logical_bytes", "limit_bytes", "over_limit"],
+                )),
+                "issue_token" => object(
+                    json!({"id":string,"token":string,"scope":{"enum":["read","write"]}}),
+                    &["id", "token", "scope"],
+                ),
+                "list_tokens" => object(json!({"tokens":array(reference("Token"))}), &["tokens"]),
+                "current_account" => object(
+                    json!({"kind":{"enum":["operator","human","agent","app"]},"account":{"oneOf":[{"type":"null"},object(json!({"id":string}), &["id"])]},"workspace_id":{"type":["string","null"]}}),
+                    &["kind", "account", "workspace_id"],
+                ),
+                "delete_bog" => object(json!({"deleted":{"const":true}}), &["deleted"]),
+                "list_members" => object(
+                    json!({"members":array(object(json!({"account_id":string,"role":string}), &["account_id","role"]))}),
+                    &["members"],
+                ),
+                "remove_member" => object(json!({"removed":{"const":true}}), &["removed"]),
+                "list_invitations" => object(
+                    json!({"invitations":array(reference("Invitation"))}),
+                    &["invitations"],
+                ),
+                "create_invitation" => object(
+                    json!({"id":string,"secret":string,"expires_at":integer}),
+                    &["id", "secret", "expires_at"],
+                ),
+                "preview_invitation" => reference("Invitation"),
+                "accept_invitation" => object(json!({"workspace_id":string}), &["workspace_id"]),
+                _ => object(json!({"revoked":{"const":true}}), &["revoked"]),
+            };
+            op["responses"] = json!({});
+            if id == "revoke_token" {
+                op["responses"]["204"] =
+                    json!({"description":"Credential revoked; no response body"});
+            } else {
+                op["responses"][if ["create_bog", "delete_bog"].contains(&id.as_str()) {
+                    "202"
+                } else {
+                    "200"
+                }] = response(result);
+            }
+            for (status, description) in [
+                ("400", "Invalid request"),
+                ("401", "Authentication required"),
+                ("403", "Permission denied"),
+                ("404", "Resource unavailable"),
+                ("409", "Conflicting state or idempotency key"),
+                ("413", "Request or response exceeds size limit"),
+                ("429", "Capacity or request limit reached"),
+                ("503", "Temporarily unavailable"),
+            ] {
+                op["responses"][status] = response(reference("Error"));
+                op["responses"][status]["description"] = json!(description);
+            }
+            op["responses"]["503"]["headers"] = json!({"Retry-After":{"description":"Seconds before retrying","schema":{"type":"integer","const":1}}});
+            if id == "read_view" {
+                for parameter in op["parameters"].as_array_mut().unwrap() {
+                    if parameter["name"] == "view" {
+                        parameter["schema"] = json!({"enum":["docs","total"]});
+                    }
+                }
+            }
+            if id == "create_invitation" {
+                op["requestBody"]["content"]["application/json"]["schema"] = object(
+                    json!({"role":{"type":"string","enum":["member","owner"],"default":"member"}}),
+                    &[],
+                );
+            }
+            op["x-bog-access"] = json!(match id.as_str() {
+                "get_record" | "read_view" | "schema" | "wait_for_change" | "usage"
+                | "describe_bog" => "workspace member or matching single-Bog read/write credential",
+                "upsert_record" | "delete_record" | "batch" =>
+                    "workspace member or matching single-Bog write credential",
+                "delete_bog" | "create_invitation" | "revoke_invitation" | "remove_member"
+                | "list_invitations" =>
+                    "human workspace owner; delegated agents cannot perform this operation",
+                _ =>
+                    "workspace authorization applies; application credentials cannot provision or issue credentials",
+            });
+        }
+    }
+    for (path, id, description, body, result) in [
+        (
+            "/auth/device",
+            "start_device_login",
+            "Start native device approval; available only in native authentication mode. Show the human only user_code and verification_uri. Keep device_code private.",
+            object(json!({"name":string}), &["name"]),
+            object(
+                json!({"device_code":string,"user_code":string,"verification_uri":string,"expires_in":{"const":600},"interval":{"const":5}}),
+                &[
+                    "device_code",
+                    "user_code",
+                    "verification_uri",
+                    "expires_in",
+                    "interval",
+                ],
+            ),
+        ),
+        (
+            "/auth/device/token",
+            "poll_device_login",
+            "Poll at least five seconds apart. authorization_pending means wait, slow_down means wait at least five seconds, expired_token means restart, access_denied means stop. A successful token is returned once. Native mode only; this is not an OAuth authorization server.",
+            object(json!({"device_code":string}), &["device_code"]),
+            object(
+                json!({"access_token":string,"token_type":{"const":"Bearer"},"expires_in":{"const":2592000}}),
+                &["access_token", "token_type", "expires_in"],
+            ),
+        ),
+    ] {
+        paths.insert(path.into(), json!({"post":{"operationId":id,"description":description,"security":[],"requestBody":{"required":true,"content":{"application/json":{"schema":body}}},"responses":{"200":response(result),"400":response(reference("Error")),"429":response(reference("Error")),"503":response(reference("Error"))}}}));
+    }
+    for (path, id, description, result) in [
+        (
+            "/v1",
+            "discover_api",
+            "Public API discovery, including deployment-specific authentication mode.",
+            object(
+                json!({"api":string,"openapi":string,"mcp":string,"templates":array(record.clone()),"limits":record}),
+                &["api", "openapi", "mcp", "templates", "limits"],
+            ),
+        ),
+        (
+            "/v1/templates",
+            "list_templates",
+            "Public supported template catalog.",
+            object(
+                json!({"templates":array(object(json!({"id":string,"default":boolean,"description":string}), &["id","default","description"]))}),
+                &["templates"],
+            ),
+        ),
+    ] {
+        paths.insert(path.into(),json!({"get":{"operationId":id,"description":description,"security":[],"responses":{"200":response(result)}}}));
+    }
+
+    for (path, method, id, description, result, body) in [
+        (
+            "/console-session",
+            "get",
+            "browser_session",
+            "Read the signed-in browser account, workspace memberships and CSRF token. Native mode also reports authentication_mode.",
+            object(
+                json!({"account":object(json!({"id":string}), &["id"]),"workspaces":array(reference("Workspace")),"csrf_token":string,"authentication_mode":string}),
+                &["account", "workspaces", "csrf_token"],
+            ),
+            None,
+        ),
+        (
+            "/v1/agent-tokens",
+            "get",
+            "list_agent_tokens",
+            "Native mode only. Human account lists its own delegated-agent credential metadata, never secrets.",
+            object(
+                json!({"tokens":array(object(json!({"id":string,"name":string,"created_at":integer,"expires_at":integer,"revoked_at":nullable_integer}), &["id","name","created_at","expires_at","revoked_at"]))}),
+                &["tokens"],
+            ),
+            None,
+        ),
+        (
+            "/v1/agent-tokens",
+            "post",
+            "issue_agent_token",
+            "Native mode only. Human account creates a named 30-day delegated-agent credential; secret returned only once. Agent credentials cannot create these credentials.",
+            object(
+                json!({"id":string,"token":string,"expires_in":{"const":2592000}}),
+                &["id", "token", "expires_in"],
+            ),
+            Some(object(
+                json!({"name":{"type":"string","minLength":1,"description":"1 to 80 UTF-8 bytes; no control characters"}}),
+                &["name"],
+            )),
+        ),
+        (
+            "/v1/agent-tokens/{token_id}",
+            "delete",
+            "revoke_agent_token",
+            "Native mode only. Human account revokes one of its own delegated-agent credentials.",
+            object(json!({"revoked":{"const":true}}), &["revoked"]),
+            None,
+        ),
+        (
+            "/auth/device/approve",
+            "post",
+            "review_device_login",
+            "Native browser session and CSRF protection required. Omit approve to inspect requested access; set approve true or false only after an explicit human decision.",
+            json!({"oneOf":[object(json!({"name":string,"access":string}), &["name","access"]),object(json!({"approved":boolean}), &["approved"])]}),
+            Some(object(
+                json!({"user_code":{"type":"string","minLength":8,"maxLength":8},"approve":boolean}),
+                &["user_code"],
+            )),
+        ),
+    ] {
+        let mut op = json!({"operationId":id,"description":description,"security":[{"browserSession":[]}],"parameters":[],"responses":{"200":response(result),"400":response(reference("Error")),"401":response(reference("Error")),"403":response(reference("Error")),"404":response(reference("Error")),"429":response(reference("Error")),"503":response(reference("Error"))}});
+        if path.starts_with("/v1/") {
+            op["security"] = json!([{"bearer":[]},{"browserSession":[]}]);
+        }
+        if path.contains("{token_id}") {
+            op["parameters"] =
+                json!([{"name":"token_id","in":"path","required":true,"schema":string}]);
+        }
+        if let Some(body) = body {
+            op["requestBody"] =
+                json!({"required":true,"content":{"application/json":{"schema":body}}});
+        }
+        paths.entry(path).or_insert_with(|| json!({}))[method] = op;
+    }
+    json!({"openapi":"3.1.0","info":{"title":"Bog Cloud","version":"1","description":"Working prototype. Cookie-authenticated mutations require exact Origin and x-csrf-token from /console-session. View ordering is implementation-defined; no insertion-order or replay guarantee. No guaranteed deprecation notice period."},"x-bog-credentials":{"application":{"scopes":["read","write"],"resource":"one Bog","write_includes_read":true,"can_provision":false,"can_issue_credentials":false},"delegated_agent":{"can_create_bogs":true,"can_issue_app_credentials":true,"can_delete_bogs":false,"can_manage_members":false,"can_issue_account_credentials":false,"lifetime_seconds":2592000},"human":{"permissions":"current workspace membership and role; owner required for destructive workspace administration"}},"paths":paths,"components":{"schemas":schemas,"securitySchemes":{"bearer":{"type":"http","scheme":"bearer","description":"Bog bearer credential. Application scopes read/write are internal permissions, not OAuth scopes."},"browserSession":{"type":"apiKey","in":"cookie","name":"__Host-bog_session"}}}})
 }
 pub fn llms() -> String {
     format!(
-        "# Bog Cloud\n\nAuthentication: /auth.md\nAPI schema: /openapi.json\nTemplates: /v1/templates\nMCP: /mcp\n\n{}\n\nNever put credentials in URLs. Workspace defaults to personal; pass workspace_id explicitly for teams. Application credentials only access their one Bog and cannot provision or mint credentials.\n",
+        "# Bog Cloud\n\nA working prototype for small apps, scripts, and agent-owned JSON records with maintained views. Use a separate copy of important data. Account workspaces allow three Bogs and each Bog has a 16 MiB logical-storage limit; legacy operator limits may differ. No guaranteed deprecation notice period.\n\nAuthentication: /auth.md\nAPI schema: /openapi.json\nTemplates: /v1/templates\nMCP: /mcp\n\n{}\n\nNever put credentials in URLs. Workspace defaults to personal; pass workspace_id explicitly for teams. Application credentials only access their one Bog and cannot provision or mint credentials.\n",
         OPERATIONS
             .iter()
             .map(|(n, m, p, d)| format!("- {n}: {m} {p}. {d}"))
