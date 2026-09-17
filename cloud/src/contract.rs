@@ -549,7 +549,35 @@ fn finish_contract(mut paths: serde_json::Map<String, Value>) -> Value {
         }
         paths.entry(path).or_insert_with(|| json!({}))[method] = op;
     }
-    json!({"openapi":"3.1.0","info":{"title":"Bog Cloud","version":"1","description":"Working prototype. Cookie-authenticated mutations require exact Origin and x-csrf-token from /console-session. View ordering is implementation-defined; no insertion-order or replay guarantee. No guaranteed deprecation notice period."},"x-bog-credentials":{"application":{"scopes":["read","write"],"resource":"one Bog","write_includes_read":true,"can_provision":false,"can_issue_credentials":false},"delegated_agent":{"can_create_bogs":true,"can_issue_app_credentials":true,"can_delete_bogs":false,"can_manage_members":false,"can_issue_account_credentials":false,"lifetime_seconds":2592000},"human":{"permissions":"current workspace membership and role; owner required for destructive workspace administration"}},"paths":paths,"components":{"schemas":schemas,"securitySchemes":{"bearer":{"type":"http","scheme":"bearer","description":"Bog bearer credential. Application scopes read/write are internal permissions, not OAuth scopes."},"browserSession":{"type":"apiKey","in":"cookie","name":"__Host-bog_session"}}}})
+    // Dispatch attaches these only after authentication and once a bucket exists.
+    // Public discovery and native device endpoints use different request paths.
+    for (path, methods) in &mut paths {
+        if !path.starts_with("/v1/") || path == "/v1/templates" {
+            continue;
+        }
+        for operation in methods.as_object_mut().unwrap().values_mut() {
+            for (status, result) in operation["responses"].as_object_mut().unwrap() {
+                if result.get("headers").is_none() {
+                    result["headers"] = json!({});
+                }
+                for name in ["RateLimit-Limit", "RateLimit-Remaining", "RateLimit-Reset"] {
+                    result["headers"][name] =
+                        json!({"$ref":format!("#/components/headers/{name}")});
+                }
+                if status == "429" {
+                    result["headers"]["Retry-After"] =
+                        json!({"$ref":"#/components/headers/RateLimitRetryAfter"});
+                }
+            }
+        }
+    }
+    let headers = json!({
+        "RateLimit-Limit":{"description":"Optional. Present after authentication when a request-rate bucket exists: maximum requests per 60-second bucket.","schema":{"type":"integer","const":600}},
+        "RateLimit-Remaining":{"description":"Optional. Requests remaining in the authenticated principal's current bucket at response time. Absent when no bucket exists.","schema":{"type":"integer","minimum":0,"maximum":600}},
+        "RateLimit-Reset":{"description":"Optional. Seconds until the authenticated principal's current rate bucket resets. Absent when no bucket exists.","schema":{"type":"integer","minimum":0}},
+        "RateLimitRetryAfter":{"description":"Optional on 429: seconds until the request-rate bucket resets, supplied only when that bucket is exhausted. Other capacity limits do not guarantee this header.","schema":{"type":"integer","minimum":0}}
+    });
+    json!({"openapi":"3.1.0","info":{"title":"Bog Cloud","version":"1","description":"Working prototype. Cookie-authenticated mutations require exact Origin and x-csrf-token from /console-session. View ordering is implementation-defined; no insertion-order or replay guarantee. No guaranteed deprecation notice period."},"x-bog-credentials":{"application":{"scopes":["read","write"],"resource":"one Bog","write_includes_read":true,"can_provision":false,"can_issue_credentials":false},"delegated_agent":{"can_create_bogs":true,"can_issue_app_credentials":true,"can_delete_bogs":false,"can_manage_members":false,"can_issue_account_credentials":false,"lifetime_seconds":2592000},"human":{"permissions":"current workspace membership and role; owner required for destructive workspace administration"}},"paths":paths,"components":{"headers":headers,"schemas":schemas,"securitySchemes":{"bearer":{"type":"http","scheme":"bearer","description":"Bog bearer credential. Application scopes read/write are internal permissions, not OAuth scopes."},"browserSession":{"type":"apiKey","in":"cookie","name":"__Host-bog_session"}}}})
 }
 pub fn llms() -> String {
     format!(
@@ -672,6 +700,50 @@ mod tests {
         for page in [enabled, legacy] {
             assert!(!page.contains("{{"));
             assert!(page.contains("older credentials may have no expiry"));
+        }
+    }
+    #[test]
+    fn quota_headers_are_optional_and_only_describe_dispatch_routes() {
+        let document = openapi();
+        for path in [
+            "/v1",
+            "/v1/templates",
+            "/auth/device",
+            "/auth/device/token",
+            "/auth/device/approve",
+            "/console-session",
+        ] {
+            for operation in document["paths"][path].as_object().unwrap().values() {
+                for response in operation["responses"].as_object().unwrap().values() {
+                    assert!(response["headers"].get("RateLimit-Limit").is_none());
+                }
+            }
+        }
+        let responses = &document["paths"]["/v1/bogs"]["post"]["responses"];
+        assert_eq!(
+            responses["202"]["headers"]["RateLimit-Remaining"]["$ref"],
+            "#/components/headers/RateLimit-Remaining"
+        );
+        assert_eq!(
+            responses["429"]["headers"]["Retry-After"]["$ref"],
+            "#/components/headers/RateLimitRetryAfter"
+        );
+        assert_eq!(
+            responses["503"]["headers"]["Retry-After"]["schema"]["const"],
+            1
+        );
+        assert!(
+            document["components"]["headers"]["RateLimitRetryAfter"]["description"]
+                .as_str()
+                .unwrap()
+                .contains("only when that bucket is exhausted")
+        );
+        for header in document["components"]["headers"]
+            .as_object()
+            .unwrap()
+            .values()
+        {
+            assert_ne!(header["required"], true);
         }
     }
     #[test]
