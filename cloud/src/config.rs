@@ -6,6 +6,7 @@ pub struct Config {
     pub max_active: usize,
     pub max_starts: usize,
     pub min_free_bytes: u64,
+    pub idle_timeout: std::time::Duration,
     pub readiness_timeout: std::time::Duration,
 }
 impl Config {
@@ -16,6 +17,7 @@ impl Config {
             max_active: 8,
             max_starts: 2,
             min_free_bytes: 64 * 1024 * 1024,
+            idle_timeout: std::time::Duration::from_secs(600),
             readiness_timeout: std::time::Duration::from_secs(15),
         }
     }

@@ -134,7 +134,16 @@ async fn slow_start_does_not_block_an_existing_database_and_spawn_failure_is_vis
     )
     .unwrap();
     let b = svc.registry.create("b", "records-v1", "b").unwrap();
-    assert_eq!(svc.supervisor.reconcile().await.unwrap().len(), 1);
+    assert!(svc.supervisor.reconcile().await.unwrap().is_empty());
+    assert_eq!(
+        svc.supervisor
+            .ensure_running(b.id)
+            .await
+            .err()
+            .unwrap()
+            .code,
+        "unavailable"
+    );
     let b = svc.registry.get(b.id).unwrap();
     assert_eq!(b.status, bog_cloud::ObservedState::Failed);
     assert_eq!(b.generation, 3);

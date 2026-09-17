@@ -18,13 +18,22 @@ use tokio::{
 };
 
 struct Running {
+    last_use: Arc<Mutex<std::time::Instant>>,
     client: WorkerClient,
     child: Option<Child>,
     _slot: OwnedSemaphorePermit,
 }
 pub struct WorkerLease {
     pub client: WorkerClient,
+    last_use: Arc<Mutex<std::time::Instant>>,
     _guard: OwnedRwLockReadGuard<()>,
+}
+impl Drop for WorkerLease {
+    fn drop(&mut self) {
+        if let Ok(mut last_use) = self.last_use.lock() {
+            *last_use = std::time::Instant::now();
+        }
+    }
 }
 pub struct Supervisor {
     pub(crate) config: Config,
@@ -114,7 +123,16 @@ impl Supervisor {
             return Err(unavailable("database is not available"));
         }
         let client = self.start_locked(id).await?;
+        let last_use = self
+            .running
+            .lock()
+            .await
+            .get(&id)
+            .ok_or_else(|| unavailable("worker disappeared"))?
+            .last_use
+            .clone();
         Ok(WorkerLease {
+            last_use,
             client,
             _guard: guard,
         })
@@ -146,6 +164,9 @@ impl Supervisor {
                     running.remove(&id);
                     None
                 } else {
+                    if let Ok(mut last_use) = worker.last_use.lock() {
+                        *last_use = std::time::Instant::now();
+                    }
                     Some((worker.client.clone(), worker.child.is_none()))
                 }
             } else {
@@ -171,7 +192,53 @@ impl Supervisor {
             .active_slots
             .clone()
             .try_acquire_owned()
-            .map_err(|_| CloudError::new("capacity", "active database limit reached"))?;
+            .map_err(|_| CloudError::new("capacity", "all resident database slots are in use; retry after idle workers close or stop an unused database"))?;
+        // Surviving but unresponsive workers still consume physical capacity.
+        // Their lifetime/store locks are authoritative even before a socket
+        // exists; never launch replacement capacity beside those processes.
+        let running = self.running.lock().await;
+        let mut untracked = 0;
+        for entry in std::fs::read_dir(self.config.root.join("instances"))
+            .map_err(|_| unavailable("cannot inspect resident worker capacity"))?
+        {
+            let entry =
+                entry.map_err(|_| unavailable("cannot inspect resident worker capacity"))?;
+            let Ok(uuid) = uuid::Uuid::parse_str(&entry.file_name().to_string_lossy()) else {
+                continue;
+            };
+            let other = BogId(uuid);
+            if other == id || running.contains_key(&other) {
+                continue;
+            }
+            for path in [
+                entry.path().join("worker.lock"),
+                entry.path().join("data/lock"),
+            ] {
+                match OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .custom_flags(libc::O_NOFOLLOW)
+                    .open(path)
+                {
+                    Ok(lock) if lock.try_lock().is_err() => {
+                        untracked += 1;
+                        break;
+                    }
+                    Ok(_) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(_) => return Err(unavailable("cannot inspect resident worker ownership")),
+                }
+            }
+        }
+        drop(running);
+        if self.config.max_active - self.active_slots.available_permits() + untracked
+            > self.config.max_active
+        {
+            return Err(CloudError::new(
+                "capacity",
+                "surviving workers occupy resident slots; retry when they recover or stop an unused database",
+            ));
+        }
         let _start_slot = self
             .start_slots
             .clone()
@@ -208,6 +275,7 @@ impl Supervisor {
             self.running.lock().await.insert(
                 id,
                 Running {
+                    last_use: Arc::new(Mutex::new(std::time::Instant::now())),
                     client: client.clone(),
                     child: None,
                     _slot: slot,
@@ -317,6 +385,7 @@ impl Supervisor {
                     self.running.lock().await.insert(
                         id,
                         Running {
+                            last_use: Arc::new(Mutex::new(std::time::Instant::now())),
                             client: client.clone(),
                             child: Some(child),
                             _slot: slot,
@@ -420,6 +489,11 @@ impl Supervisor {
     pub async fn reconcile(&self) -> Result<Vec<(BogId, String)>, CloudError> {
         crate::backup::recover_staging(&self.config.root.join("backups"))?;
         let mut failures = Vec::new();
+        for id in self.registry.pending_deletions()? {
+            if let Err(error) = self.cleanup_deleted(id).await {
+                failures.push((id, error.code));
+            }
+        }
         for bog in self.registry.list()? {
             if bog.status == ObservedState::Maintenance {
                 // An interrupted closed-store backup never changes source data.
@@ -435,15 +509,144 @@ impl Supervisor {
                 self.registry.set_desired(bog.id, false)?;
                 continue;
             }
+            // Only adopt verified surviving workers here. A stale socket must
+            // not cause every retained store to start during manager recovery.
             if bog.desired_state == DesiredState::Running
-                && let Err(e) = self.ensure_running(bog.id).await
+                && self.instance_dir(bog.id).join("worker.sock").exists()
             {
-                failures.push((bog.id, e.code));
+                let client = WorkerClient::new(&self.instance_dir(bog.id).join("worker.sock"))?;
+                let result = match self.verify_worker(bog.id, &client).await {
+                    Ok(()) => self.ensure_running(bog.id).await.map(|_| ()),
+                    Err(error) => Err(error),
+                };
+                if let Err(error) = result {
+                    failures.push((bog.id, error.code));
+                }
             }
         }
         Ok(failures)
     }
-    /// Stop workers while retaining intent, so the next manager restores them.
+    /// Retry filesystem cleanup only after access has been atomically revoked.
+    pub async fn cleanup_deleted(&self, id: BogId) -> Result<(), CloudError> {
+        let _guard = self.gate(id)?.write_owned().await;
+        if !self.registry.is_deleted(id)? {
+            return Err(unavailable("database must be deleted before cleanup"));
+        }
+        self.stop_locked(id, false).await?;
+        let dir = self.instance_dir(id);
+        if !dir.exists() {
+            return self.registry.finish_delete(id);
+        }
+        // A manager restart may leave a worker that was never adopted. Only
+        // its registered identity authorizes asking that worker to shut down.
+        let client = WorkerClient::new(&dir.join("worker.sock"))?;
+        if dir.join("worker.sock").exists()
+            && let Ok((200, _)) = client
+                .request(reqwest::Method::GET, "/_cloud/identity", None)
+                .await
+        {
+            self.verify_worker(id, &client).await?;
+            let (status, _) = client
+                .request(
+                    reqwest::Method::POST,
+                    "/_cloud/shutdown",
+                    Some(serde_json::json!({"nonce": self.registry.startup_nonce(id)?})),
+                )
+                .await?;
+            if status != 200 {
+                return Err(unavailable("worker refused deletion shutdown"));
+            }
+        }
+        // Hold both ownership locks through removal. Socket disappearance is
+        // insufficient evidence that Fjall has released the database.
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(20);
+        loop {
+            let mut locks = Vec::new();
+            let mut busy = false;
+            for path in [dir.join("worker.lock"), dir.join("data/lock")] {
+                match OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .custom_flags(libc::O_NOFOLLOW)
+                    .open(path)
+                {
+                    Ok(lock) => {
+                        if lock.try_lock().is_err() {
+                            busy = true;
+                            break;
+                        }
+                        locks.push(lock);
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(_) => return Err(unavailable("cannot inspect deleted database ownership")),
+                }
+            }
+            if !busy {
+                std::fs::remove_dir_all(&dir)
+                    .map_err(|_| unavailable("database cleanup pending; retry deletion"))?;
+                return self.registry.finish_delete(id);
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Err(unavailable(
+                    "database worker still owns files; retry deletion",
+                ));
+            }
+            drop(locks);
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    }
+    /// Evict only workers with no active lease and a full idle interval.
+    pub async fn evict_idle(&self) -> Result<usize, CloudError> {
+        let ids: Vec<_> = self.running.lock().await.keys().copied().collect();
+        let mut evicted = 0;
+        for id in ids {
+            let Ok(_guard) = self.gate(id)?.try_write_owned() else {
+                continue;
+            };
+            let idle = self.running.lock().await.get(&id).is_some_and(|worker| {
+                worker
+                    .last_use
+                    .lock()
+                    .map(|last| last.elapsed() >= self.config.idle_timeout)
+                    .unwrap_or(false)
+            });
+            if idle {
+                self.stop_locked(id, false).await?;
+                evicted += 1;
+            }
+        }
+        Ok(evicted)
+    }
+    pub async fn resident_count(&self) -> usize {
+        self.running.lock().await.len()
+    }
+    /// The caller owns and aborts this task during manager shutdown.
+    pub fn spawn_maintenance(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
+        let supervisor = Arc::downgrade(self);
+        let period = self
+            .config
+            .idle_timeout
+            .min(std::time::Duration::from_secs(30))
+            .max(std::time::Duration::from_millis(10));
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(period);
+            loop {
+                interval.tick().await;
+                let Some(supervisor) = supervisor.upgrade() else {
+                    break;
+                };
+                for id in supervisor.registry.pending_deletions().unwrap_or_default() {
+                    if let Err(error) = supervisor.cleanup_deleted(id).await {
+                        eprintln!("database deletion cleanup pending: {}", error.code);
+                    }
+                }
+                if let Err(error) = supervisor.evict_idle().await {
+                    eprintln!("worker idle maintenance failed: {}", error.code);
+                }
+            }
+        })
+    }
+    /// Stop workers while retaining intent; subsequent access wakes them.
     pub async fn shutdown(&self) -> Result<(), CloudError> {
         let ids: Vec<_> = self.running.lock().await.keys().copied().collect();
         for id in ids {

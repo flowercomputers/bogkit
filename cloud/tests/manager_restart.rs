@@ -195,6 +195,17 @@ async fn pre_socket_worker_keeps_ownership_across_manager_crash() {
     std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o700)).unwrap();
     let mut processes = Processes::new(root, wrapper);
     processes.start();
+    processes.healthy().await;
+    // Retained databases now wake on demand, so initiate a request before
+    // killing the manager while its worker is still before socket startup.
+    let request = processes
+        .client
+        .get(format!(
+            "http://{}/v1/bogs/{}/docs/saved",
+            processes.address, bog.id
+        ))
+        .bearer_auth(OWNER);
+    let pending = tokio::spawn(async move { request.send().await });
     let deadline = Instant::now() + Duration::from_secs(10);
     while !pid_file.exists()
         || std::fs::read_to_string(&pid_file)
@@ -223,6 +234,7 @@ async fn pre_socket_worker_keeps_ownership_across_manager_crash() {
             .exists()
     );
     processes.crash();
+    pending.abort();
     processes.start();
     processes.healthy().await;
     assert_eq!(registry.startup_nonce(bog.id).unwrap(), nonce);

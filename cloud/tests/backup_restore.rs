@@ -155,6 +155,15 @@ async fn failed_backup_resumes_source_and_interrupted_restore_stays_failed() {
     assert!(svc.supervisor.reconcile().await.unwrap().is_empty());
     assert_eq!(
         svc.registry.get(original.id).unwrap().status,
+        bog_cloud::ObservedState::Stopped
+    );
+    assert_eq!(
+        svc.registry.get(original.id).unwrap().desired_state,
+        bog_cloud::DesiredState::Running
+    );
+    svc.supervisor.ensure_running(original.id).await.unwrap();
+    assert_eq!(
+        svc.registry.get(original.id).unwrap().status,
         bog_cloud::ObservedState::Ready
     );
     let failed = svc.registry.get(incomplete.id).unwrap();
