@@ -1,0 +1,243 @@
+.site-body {
+  --site-ink: lab(10% 0 0);
+  --site-paper: oklch(94.22% 0.0034 325.6);
+  --site-white: lab(100% 0 0);
+  --site-background: var(--site-paper);
+  --site-foreground: var(--site-ink);
+  --site-clear: color-mix(in lab, var(--site-foreground) 0%, transparent);
+  --site-hairline: color-mix(in srgb, var(--site-foreground) 22%, transparent);
+  --site-light-gray: color-mix(in lab, var(--site-foreground) 8%, transparent);
+  --site-noise-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.045'/%3E%3C/svg%3E");
+  --site-font-size: 1.11em;
+  --site-muted-foreground: color-mix(in lab, var(--site-foreground) 55%, var(--site-background));
+  --site-section-gap: max(calc(var(--site-inset) - 0.55em), 1em);
+  --site-subtle-foreground: color-mix(in lab, var(--site-foreground) 33%, var(--site-background));
+  --site-inset: 2.22em;
+  --site-header-block-size: 1lh;
+  --site-hero-viewport-size: 80svh;
+  --site-space-2: 0.44rem;
+  --site-transition: all 0.33s cubic-bezier(0.175, 0.885, 0.32, 1);
+  --site-header-scrim-depth: 5;
+  background: var(--site-background);
+  color: var(--site-foreground);
+  color-scheme: light;
+  margin: 0;
+  padding: 0;
+}
+
+.skip-link {
+  align-items: center;
+  appearance: none;
+  -webkit-appearance: none;
+  background: var(--site-foreground);
+  border: 1px solid var(--site-foreground);
+  border-radius: 10px;
+  color: var(--site-background);
+  display: inline-flex;
+  font-family: var(--font-abc-arizona-sans), sans-serif;
+  inset-block-start: var(--site-space-2);
+  inset-inline-start: var(--site-space-2);
+  justify-content: center;
+  letter-spacing: inherit;
+  opacity: 0;
+  padding: 0.33em 0.77em;
+  pointer-events: none;
+  position: fixed;
+  text-align: center;
+  text-decoration: none;
+  transition: opacity 160ms ease;
+  z-index: 20;
+}
+
+.skip-link:focus {
+  opacity: 1;
+  outline: 0;
+  pointer-events: auto;
+}
+
+.skip-link:focus-visible {
+  outline: 1px solid var(--site-foreground);
+  outline-offset: 3px;
+}
+
+@supports (corner-shape: superellipse(2)) {
+  .skip-link {
+    border-radius: 20px;
+    corner-shape: superellipse(2);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skip-link {
+    transition: none;
+  }
+}
+
+.site-shell,
+.site-shell :where(*:not(.site-mark):not(.site-mark *), *::before, *::after) {
+  box-sizing: border-box;
+}
+
+.site-shell {
+  background: var(--site-background);
+  color: var(--site-foreground);
+  display: flex;
+  flex-direction: column;
+  font-family: var(--font-abc-arizona-text), serif;
+  font-size: var(--site-font-size);
+  font-weight: 333;
+  line-height: 1.33;
+  margin: 0;
+  min-height: 100svh;
+  padding: var(--site-inset);
+}
+
+.site-shell main {
+  flex: 1;
+  margin: 0;
+  padding: 0;
+}
+
+/* The footer owns the final gap, without trailing content margins stacking onto it. */
+.site-shell main > :last-child,
+.site-shell main > :last-child > :last-child,
+.site-shell main > :last-child > :last-child > :last-child,
+.site-shell main > :last-child > :last-child > :last-child > :last-child {
+  margin-block-end: 0;
+}
+
+.site-shell main > :is(.bog, .about, .contact, .newsletter, .latest-post) {
+  max-inline-size: 60ch;
+  text-wrap: pretty;
+}
+
+.site-shell main > .contact address {
+  font-style: inherit;
+}
+
+.site-shell main h2 {
+  color: var(--site-subtle-foreground);
+}
+
+.site-shell main h1 {
+  color: var(--site-muted-foreground);
+}
+
+.site-shell main.sectioned-page h2 {
+  margin-block-start: var(--site-section-gap);
+}
+
+.site-shell main > :first-child,
+.site-shell main > :first-child > :first-child {
+  margin-block-start: 0;
+}
+
+.site-shell main > :is(.about, .contact) > header > :first-child {
+  margin-block-start: 0;
+}
+
+.site-header {
+  margin-block-end: var(--site-section-gap);
+}
+
+.site-shell main :is(h1, h2, h3, h4, h5, h6) {
+  display: block;
+  font: inherit;
+  font-size: 1em;
+  font-weight: inherit;
+  line-height: normal;
+  margin-block: 1em;
+}
+
+.site-shell main :where(ul, ol) {
+  padding-inline-start: 1.5em;
+}
+
+.site-shell main :where(ul) {
+  list-style-type: square;
+}
+
+.site-shell main :where(li)::marker {
+  color: var(--site-subtle-foreground);
+}
+
+.site-shell :where(a) {
+  color: var(--site-foreground);
+}
+
+.site-shell .site-table-scroll {
+  margin-block: 1em;
+  overflow-x: auto;
+}
+
+.site-shell .site-table {
+  --site-table-border: var(--site-hairline);
+  --site-table-padding: 1em;
+  border: 1px solid var(--site-table-border);
+  border-radius: calc(var(--site-table-padding) + 10px);
+  border-spacing: 0;
+  overflow: hidden;
+  width: 100%;
+}
+
+.site-shell .site-table :is(th, td) {
+  padding: var(--site-table-padding);
+  text-align: left;
+}
+
+.site-shell .site-table th {
+  font-weight: inherit;
+}
+
+.site-shell .site-table thead {
+  background: var(--site-light-gray);
+  background-image: var(--site-noise-image);
+}
+
+.site-shell .site-table tr > :not(:first-child) {
+  border-inline-start: 1px solid var(--site-table-border);
+}
+
+.site-shell .site-table tr:not(:first-child) > *,
+.site-shell .site-table :is(thead, tbody, tfoot) + :is(tbody, tfoot) > tr:first-child > * {
+  border-block-start: 1px solid var(--site-table-border);
+}
+
+@supports (corner-shape: superellipse(2)) {
+  .site-shell .site-table {
+    border-radius: 2em;
+    corner-shape: superellipse(2);
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  .site-body {
+    --site-background: var(--site-ink);
+    --site-foreground: var(--site-white);
+    color-scheme: dark;
+  }
+}
+
+@media screen and (max-width: 640px) {
+  .site-body {
+    --site-header-block-size: 44px;
+    --site-inset: 1.11em;
+  }
+
+  .site-shell .site-table {
+    min-inline-size: 40rem;
+  }
+}
+
+@media screen and (min-width: 64rem) {
+  .site-body {
+    --site-header-scrim-depth: 3.5;
+  }
+}
+
+@media screen and (min-width: 1600px) {
+  .site-body {
+    --site-font-size: 1.5em;
+    --site-inset: 3.33em;
+  }
+}

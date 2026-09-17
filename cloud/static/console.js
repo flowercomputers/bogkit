@@ -16,7 +16,7 @@ async function api(path, options = {}, retried = false) {
     if (renewed.ok) { const update = await renewed.json(); if (update.csrf_token) csrf = update.csrf_token; return api(path, options, true); }
   }
   const data = response.status === 204 ? {} : await response.json();
-  if (!response.ok) throw new Error(data.error?.message || 'Request could not be completed. Please try again.');
+  if (!response.ok) { const error = new Error(data.error?.message || 'Request could not be completed. Please try again.'); error.status = response.status; throw error; }
   return data;
 }
 const selected = path => path + (path.includes('?') ? '&' : '?') + 'workspace_id=' + encodeURIComponent(workspace);
@@ -105,7 +105,7 @@ async function start() {
     workspace = $('workspace').value; owner = $('workspace').selectedOptions[0]?.dataset.role === 'owner';
     await refresh(); status('Signed in. Your workspace is ready.');
     if (invitation) { const preview = await api('/v1/invitations/preview', { method: 'POST', body: JSON.stringify({ secret: invitation }) }); $('invite-description').textContent = `You have been invited to join ${preview.workspace_name || preview.name} as ${preview.role}.`; $('invitation').hidden = false; }
-  } catch (e) { status(e.message, true); $('login').hidden = false; if (invitation) status('Sign in with GitHub, then open your invitation link again.'); }
+  } catch (e) { status(e.status === 401 ? 'Sign in with GitHub to open your workspace.' : e.message, e.status !== 401); $('login').hidden = false; if (invitation) status('Sign in with GitHub, then open your invitation link again.'); }
 }
 async function refreshAgents() {
   const data = await api('/v1/agent-tokens'); $('agent-tokens').replaceChildren();

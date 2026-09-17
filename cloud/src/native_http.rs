@@ -242,5 +242,5 @@ pub fn guide(service: &CloudService) -> String {
             service.supervisor.max_active(),
         );
     }
-    "<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Bog Cloud</title><link rel=\"stylesheet\" href=\"/guide.css\"><main><h1>Bog Cloud</h1><p>A working prototype for apps and agents.</p><p>Start by signing in with GitHub to create your personal workspace. This preview is still evolving; keep a separate copy of important data. Bog manages access; GitHub repository access is never requested.</p><p><a href=\"/auth/login\">Sign in with GitHub</a> · <a href=\"/console\">Open console</a></p><h2>Connect an agent</h2><p>Create a named 30-day agent credential in the console, or let your agent request an approval code. Review its name and access before approving.</p><p>Use the resulting Bog credential with HTTP or a bearer-capable MCP client at /mcp. Select a workspace explicitly; personal is the default. MCP OAuth login is not currently supported.</p><p><a href=\"/auth.md\">Authentication instructions</a> · <a href=\"/v1\">API operations</a> · <a href=\"/v1/templates\">Templates</a></p></main></html>".to_owned()
+    include_str!("../static/home.html").to_owned()
 }

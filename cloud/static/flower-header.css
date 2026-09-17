@@ -1,0 +1,215 @@
+/* Copied from Flower SiteHeader.astro; Astro :global wrappers removed. */
+
+  .site-header {
+    position: sticky;
+    top: var(--site-inset);
+    z-index: 20;
+    background: var(--site-clear);
+  }
+
+  .site-nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: calc(var(--site-inset) / 2);
+    padding-block: 0;
+    padding-inline: 0;
+  }
+
+  .site-home-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: calc(var(--site-inset) / 4);
+    text-decoration: none;
+  }
+
+  .site-title {
+    font: inherit;
+    white-space: nowrap;
+  }
+
+  .site-mark-frame,
+  .site-mark-frame svg {
+    block-size: 24px;
+    display: block;
+    inline-size: 24px;
+    overflow: visible;
+  }
+
+  .site-mark-frame {
+    --site-mark-y: -1px;
+    flex: 0 0 auto;
+    position: relative;
+    top: var(--site-mark-y);
+  }
+
+  .site-nav-list {
+    display: flex;
+    align-items: center;
+    gap: var(--site-inset);
+    list-style: none;
+    margin-left: auto;
+    margin-block: 0;
+    padding: 0;
+  }
+
+  .site-nav-item {
+    margin: 0;
+  }
+
+  .site-nav-link {
+    text-decoration: none;
+    white-space: nowrap;
+  }
+
+  .site-menu-button {
+    align-items: center;
+    appearance: none;
+    background: none;
+    border: 0;
+    color: inherit;
+    cursor: pointer;
+    display: none;
+    flex-direction: column;
+    justify-content: center;
+    margin: 0;
+    -webkit-tap-highlight-color: transparent;
+    outline: 0;
+    padding: 4px;
+    position: relative;
+    z-index: 1;
+  }
+
+  .site-menu-icon {
+    display: block;
+    height: 24px;
+    overflow: visible;
+    width: 24px;
+  }
+
+  .site-menu-icon-line {
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-width: 1.23;
+    transform-origin: 12px 12px;
+    transition: transform 280ms cubic-bezier(0.22, 1.15, 0.36, 1);
+  }
+
+  .site-menu-icon-line-top {
+    transform: translateY(-5px) rotate(0deg);
+  }
+
+  .site-menu-icon-line-bottom {
+    transform: translateY(5px) rotate(0deg);
+  }
+
+  .site-menu-button[aria-expanded="true"] .site-menu-icon-line-top {
+    transform: translateY(0) rotate(45deg);
+  }
+
+  .site-menu-button[aria-expanded="true"] .site-menu-icon-line-bottom {
+    transform: translateY(0) rotate(-45deg);
+  }
+
+  .mobile-navigation {
+    background: var(--site-background);
+    inset: 0;
+    opacity: 0;
+    position: fixed;
+    transform: scale(0.985);
+    transform-origin: top right;
+    transition:
+      opacity 220ms ease-out,
+      transform 280ms cubic-bezier(0.22, 1.15, 0.36, 1);
+    z-index: 30;
+  }
+
+  .mobile-navigation.is-open {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  .mobile-navigation-content {
+    align-items: center;
+    display: flex;
+    flex-direction: column;
+    gap: var(--site-inset);
+    min-height: 100%;
+    padding: calc(var(--mobile-navigation-content-top, 15vh) + var(--site-inset)) var(--site-inset)
+      var(--site-inset);
+  }
+
+  .mobile-navigation-link {
+    font-size: 1em;
+    line-height: inherit;
+    opacity: 0;
+    text-decoration: none;
+    transform: translateY(12px);
+    transition:
+      opacity 180ms ease-out,
+      transform 260ms cubic-bezier(0.22, 1.15, 0.36, 1);
+  }
+
+  .mobile-navigation.is-open .mobile-navigation-link {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  .mobile-navigation.is-open .mobile-navigation-link:nth-child(1) {
+    transition-delay: 50ms;
+  }
+
+  .mobile-navigation.is-open .mobile-navigation-link:nth-child(2) {
+    transition-delay: 75ms;
+  }
+
+  .mobile-navigation.is-open .mobile-navigation-link:nth-child(3) {
+    transition-delay: 100ms;
+  }
+
+  .site-nav-link:focus-visible,
+  .site-home-link:focus-visible,
+  .mobile-navigation-link:focus-visible {
+    outline: 1px solid currentColor;
+    outline-offset: 3px;
+  }
+
+  @media screen and (max-width: 640px) {
+    .site-home-link {
+      gap: calc(var(--site-inset) / 2);
+    }
+
+    .site-nav-list {
+      display: none;
+    }
+
+    .site-menu-button {
+      block-size: 44px;
+      display: inline-flex;
+      inline-size: 44px;
+      padding: 10px;
+    }
+
+    body.is-mobile-navigation-open .site-header {
+      z-index: 40;
+    }
+
+    body.is-mobile-navigation-open {
+      overflow: hidden;
+    }
+  }
+
+  @media screen and (min-width: 641px) {
+    .mobile-navigation {
+      display: none;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .site-menu-icon-line,
+    .mobile-navigation,
+    .mobile-navigation-link {
+      transition: none;
+    }
+  }

@@ -100,12 +100,11 @@ pub async fn homepage(State(service): State<Arc<CloudService>>, request: Request
     } else {
         let html = crate::native_http::guide(&service);
         let meta = metadata(&base, "/");
-        let mut html = if html.contains("</head>") {
+        let html = if html.contains("</head>") {
             html.replacen("</head>", &format!("{meta}</head>"), 1)
         } else {
             html.replacen("<meta charset=", &format!("{meta}<meta charset="), 1)
         };
-        html=html.replacen("</main>","<p><a href=\"/docs\">Documentation</a> · <a href=\"/about\">About</a> · <a href=\"/contact\">Contact</a> · <a href=\"/privacy\">Privacy notes</a></p></main>",1);
         guide_asset("text/html; charset=utf-8", html)
     };
     response

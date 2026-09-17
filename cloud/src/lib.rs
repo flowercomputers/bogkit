@@ -35,3 +35,5 @@ mod native_http;
 mod public_discovery;
 
 pub mod agent_discovery;
+
+mod site;

@@ -14,6 +14,14 @@ use uuid::Uuid;
 
 pub fn build_rest_router(service: Arc<CloudService>) -> Router {
     Router::new()
+        .route("/flower-site.css", get(|| async { guide_asset("text/css; charset=utf-8", include_str!("../static/flower-site.css")) }))
+        .route("/flower-header.css", get(|| async { guide_asset("text/css; charset=utf-8", include_str!("../static/flower-header.css")) }))
+        .route("/flower-footer.css", get(|| async { guide_asset("text/css; charset=utf-8", include_str!("../static/flower-footer.css")) }))
+        .route("/cloud.css", get(|| async { guide_asset("text/css; charset=utf-8", include_str!("../static/cloud.css")) }))
+        .route("/site.js", get(|| async { guide_asset("text/javascript; charset=utf-8", include_str!("../static/site.js")) }))
+        .route("/flower.svg", get(|| async { guide_asset("image/svg+xml", include_str!("../static/flower.svg")) }))
+        .route("/arizona-text.woff2", get(|| async { ([(header::CONTENT_TYPE,"font/woff2")], include_bytes!("../static/arizona-text.woff2").as_slice()) }))
+        .route("/arizona-sans.woff2", get(|| async { ([(header::CONTENT_TYPE,"font/woff2")], include_bytes!("../static/arizona-sans.woff2").as_slice()) }))
         .route(
             "/console",
             get(|| async {
@@ -106,12 +114,14 @@ pub fn build_rest_router(service: Arc<CloudService>) -> Router {
 }
 
 pub(crate) fn guide_asset(content_type: &'static str, body: impl Into<String>) -> Response {
+    let body = body.into();
+    let body = if content_type.starts_with("text/html") { crate::site::shell(body) } else { body };
     ([
         (header::CONTENT_TYPE, content_type),
-        (header::CONTENT_SECURITY_POLICY, "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"),
+        (header::CONTENT_SECURITY_POLICY, "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"),
         (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
         (header::CACHE_CONTROL, "no-cache"),
-    ], body.into()).into_response()
+    ], body).into_response()
 }
 pub fn error_response(error: CloudError, request_id: &str) -> Response {
     let status = match error.code.as_str() {
