@@ -73,7 +73,10 @@ impl CloudService {
                 .agent_from_verified(&identity, workspace.unwrap_or(personal.id))?
         } else {
             let mut p = self.auth.authenticate(token)?;
-            if self.authentication_configured() && p.kind() == PrincipalKind::Operator {
+            if p.kind() == PrincipalKind::Operator
+                && (self.public_auth.is_some()
+                    || (self.native_auth.is_some() && !self.preview_legacy_operator))
+            {
                 return Err(denied());
             }
             if p.kind() == PrincipalKind::Operator {

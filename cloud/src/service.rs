@@ -71,6 +71,8 @@ pub struct OperationResult {
 pub struct CloudService {
     pub changes: crate::changes::ChangeWaiter,
     pub native_auth: Option<Arc<crate::native_auth::NativeAuth>>,
+    /// Temporary preview compatibility; never permits cross-workspace operator access.
+    pub preview_legacy_operator: bool,
     pub public_auth: Option<crate::gateway::PublicAuth>,
     pub registry: Arc<Registry>,
     pub auth: Auth,
@@ -106,6 +108,8 @@ impl CloudService {
             registry,
             public_auth,
             native_auth,
+            preview_legacy_operator: std::env::var("BOG_PREVIEW_LEGACY_OPERATOR")
+                .is_ok_and(|value| value == "true"),
             changes: crate::changes::ChangeWaiter::new(),
             auth,
             supervisor,

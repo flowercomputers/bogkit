@@ -98,7 +98,7 @@ async fn account_tokens_are_human_only_revocable_and_stored_hashed() {
         .into_future(),
     );
     let dir = tempfile::tempdir().unwrap();
-    let svc = CloudService::open(
+    let mut svc = CloudService::open(
         Config::new(dir.path().join("cloud"), "/tmp/unused-worker".into()),
         "owner-token-long-enough-for-validation",
     )
@@ -133,6 +133,55 @@ async fn account_tokens_are_human_only_revocable_and_stored_hashed() {
         .auth
         .principal_from_verified(&session.identity, w.id)
         .unwrap();
+    // Native mode remains closed unless the temporary compatibility switch is enabled.
+    std::sync::Arc::get_mut(&mut svc).unwrap().native_auth = Some(native);
+    assert!(!svc.preview_legacy_operator);
+    const OWNER: &str = "owner-token-long-enough-for-validation";
+    assert!(svc.authenticate_bearer(OWNER, None).await.is_err());
+    std::sync::Arc::get_mut(&mut svc)
+        .unwrap()
+        .preview_legacy_operator = true;
+    let operator = svc.authenticate_bearer(OWNER, None).await.unwrap();
+    assert_eq!(
+        operator.workspace_id(),
+        Some(bog_cloud::WorkspaceId::legacy())
+    );
+    assert!(svc.authenticate_bearer(OWNER, Some(w.id)).await.is_err());
+    assert!(svc.auth.issue_agent_token(&operator, "escalate").is_err());
+    let legacy = svc
+        .registry
+        .create("existing-chat", "records-v1", "legacy")
+        .unwrap();
+    let personal = svc
+        .registry
+        .create_scoped(w.id, "personal", "records-v1", "personal")
+        .unwrap();
+    assert!(svc.auth.authorize(&operator, Some(legacy.id), true).is_ok());
+    assert!(
+        svc.auth
+            .authorize(&operator, Some(personal.id), false)
+            .is_err()
+    );
+    let app = svc
+        .auth
+        .issue(&operator, legacy.id, bog_cloud::Scope::Read)
+        .unwrap();
+    let app_principal = svc.authenticate_bearer(&app.secret, None).await.unwrap();
+    assert!(
+        svc.auth
+            .authorize(&app_principal, Some(legacy.id), false)
+            .is_ok()
+    );
+    assert!(
+        svc.auth
+            .authorize(&app_principal, Some(legacy.id), true)
+            .is_err()
+    );
+    assert!(
+        svc.auth
+            .authorize(&app_principal, Some(personal.id), false)
+            .is_err()
+    );
     let token = svc.auth.issue_agent_token(&human, "test agent").unwrap();
     assert!(token.secret.starts_with("bog_agent_"));
     let agent = svc

@@ -7,7 +7,10 @@ kill_timeout = 120
   dockerfile = "Dockerfile"
 
 [env]
-  # Temporary migration mode; WorkOS configuration disables public operator auth.
+  # Temporary prototype: preserve existing chat access in the legacy workspace only.
+  # Native auth denies operator credentials by default; WorkOS always denies them.
+  BOG_PREVIEW_LEGACY_OPERATOR = "true"
+  # Permit startup before the GitHub credentials have been configured.
   BOG_ALLOW_LEGACY_PUBLIC_OPERATOR = "true"
   BOG_CLOUD_ROOT = "/data/bog"
   BOG_WORKER_BINARY = "/usr/local/bin/bog-records-worker"

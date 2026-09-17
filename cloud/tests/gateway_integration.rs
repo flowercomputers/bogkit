@@ -86,6 +86,8 @@ async fn authenticated_workspace_isolation_and_app_limits() {
     .unwrap();
     let browser = BrowserAuth::new(verifier.clone(), &root.join("sessions")).unwrap();
     Arc::get_mut(&mut svc).unwrap().public_auth = Some(PublicAuth { verifier, browser });
+    // Even the preview switch must not change WorkOS operator denial.
+    Arc::get_mut(&mut svc).unwrap().preview_legacy_operator = true;
     let app = bog_cloud::build_rest_router(svc.clone());
     let a = jwt(&issuer, "a");
     let b = jwt(&issuer, "b");
