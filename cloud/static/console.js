@@ -12,7 +12,7 @@ async function api(path, options = {}, retried = false) {
   const response = await fetch(path, { credentials: 'same-origin', ...options, headers, cache: 'no-store' });
   if (response.status === 401 && csrf && !retried && !path.startsWith('/auth/')) {
     const renewed = await fetch('/auth/refresh', { method: 'POST', credentials: 'same-origin', headers: { 'x-csrf-token': csrf } });
-    if (renewed.ok) return api(path, options, true);
+    if (renewed.ok) { const update = await renewed.json(); if (update.csrf_token) csrf = update.csrf_token; return api(path, options, true); }
   }
   const data = response.status === 204 ? {} : await response.json();
   if (!response.ok) throw new Error(data.error?.message || 'Request could not be completed. Please try again.');
@@ -94,6 +94,7 @@ async function start() {
       return;
     }
     const session = await api('/console-session'); csrf = session.csrf_token; account = session.account?.id || session.account_id || '';
+    if (session.authentication_mode === 'github_native') { $('agent-access').hidden = false; await refreshAgents(); }
     $('app').hidden = false; $('logout').hidden = false;
     for (const item of session.workspaces || []) { const option = element('option', item.name + (item.role === 'owner' ? ' · owner' : '')); option.value = item.id; option.dataset.role = item.role; $('workspace').append(option); }
     const me = await api('/v1/me'); if (me.workspace_id) $('workspace').value = me.workspace_id;
@@ -102,4 +103,9 @@ async function start() {
     if (invitation) { const preview = await api('/v1/invitations/preview', { method: 'POST', body: JSON.stringify({ secret: invitation }) }); $('invite-description').textContent = `You have been invited to join ${preview.workspace_name || preview.name} as ${preview.role}.`; $('invitation').hidden = false; }
   } catch (e) { status(e.message, true); $('login').hidden = false; if (invitation) status('Sign in with GitHub, then open your invitation link again.'); }
 }
+async function refreshAgents() {
+  const data = await api('/v1/agent-tokens'); $('agent-tokens').replaceChildren();
+  for (const token of data.tokens || []) { if (token.revoked_at) continue; const row=element('div','','row'); row.append(element('span', `${token.name} · expires ${new Date(token.expires_at*1000).toLocaleDateString()}`)); row.append(action('Revoke',async()=>{await api('/v1/agent-tokens/'+token.id,{method:'DELETE'});await refreshAgents();status('Agent credential revoked.');}));$('agent-tokens').append(row); }
+}
+$('agent-issue').onsubmit = event => { event.preventDefault();task(event.submitter,async()=>{const token=await api('/v1/agent-tokens',{method:'POST',body:JSON.stringify({name:$('agent-name').value})});await refreshAgents();$('agent-name').value='';reveal('Save this agent credential in a secret store. It is shown once and expires in 30 days.',token.token);status('Agent credential created.');}); };
 start();

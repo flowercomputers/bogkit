@@ -32,7 +32,8 @@ fn authorize(service: &CloudService, headers: &HeaderMap) -> Result<(), CloudErr
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ClaimLegacy {
-    access_token: String,
+    access_token: Option<String>,
+    session_token: Option<String>,
 }
 async fn claim_legacy(
     State(service): State<Arc<CloudService>>,
@@ -41,26 +42,49 @@ async fn claim_legacy(
 ) -> Response {
     let result = async {
         authorize(&service, &headers)?;
-        let public = service
-            .public_auth
-            .as_ref()
-            .ok_or_else(|| CloudError::new("unavailable", "WorkOS is not configured"))?;
-        let issuer = std::env::var("BOG_LEGACY_OWNER_ISSUER").map_err(|_| {
-            CloudError::new(
-                "invalid_config",
-                "legacy owner identity must be explicitly configured",
+        let (identity, issuer, subject) = if let Some(native) = &service.native_auth {
+            if body.access_token.is_some() {
+                return Err(CloudError::new(
+                    "invalid_request",
+                    "native claim requires local session",
+                ));
+            }
+            let subject = std::env::var("BOG_LEGACY_OWNER_GITHUB_ID").map_err(|_| {
+                CloudError::new("invalid_config", "immutable GitHub owner ID required")
+            })?;
+            if subject
+                .parse::<u64>()
+                .ok()
+                .filter(|id| *id > 0)
+                .map(|id| id.to_string())
+                .as_deref()
+                != Some(subject.as_str())
+            {
+                return Err(CloudError::new(
+                    "invalid_config",
+                    "canonical numeric GitHub owner ID required",
+                ));
+            }
+            let identity = native.authenticate(body.session_token.as_deref().unwrap_or(""))?;
+            service.auth.provision_identity(&identity)?;
+            (identity, "https://github.com".to_owned(), subject)
+        } else {
+            let public = service.public_auth.as_ref().ok_or_else(|| {
+                CloudError::new("unavailable", "authentication is not configured")
+            })?;
+            let issuer = std::env::var("BOG_LEGACY_OWNER_ISSUER")
+                .map_err(|_| CloudError::new("invalid_config", "legacy owner identity required"))?;
+            let subject = std::env::var("BOG_LEGACY_OWNER_SUBJECT")
+                .map_err(|_| CloudError::new("invalid_config", "legacy owner identity required"))?;
+            (
+                public
+                    .verifier
+                    .verify_access_token(body.access_token.as_deref().unwrap_or(""))
+                    .await?,
+                issuer,
+                subject,
             )
-        })?;
-        let subject = std::env::var("BOG_LEGACY_OWNER_SUBJECT").map_err(|_| {
-            CloudError::new(
-                "invalid_config",
-                "legacy owner identity must be explicitly configured",
-            )
-        })?;
-        let identity = public
-            .verifier
-            .verify_access_token(&body.access_token)
-            .await?;
+        };
         let operator = service.auth.authenticate(
             headers
                 .get("authorization")

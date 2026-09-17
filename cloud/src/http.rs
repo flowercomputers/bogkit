@@ -41,6 +41,10 @@ pub fn build_rest_router(service: Arc<CloudService>) -> Router {
                 )
             }),
         )
+        .route("/auth/device", axum::routing::post(crate::native_http::endpoint))
+        .route("/auth/device/token", axum::routing::post(crate::native_http::endpoint))
+        .route("/auth/device/approve", get(crate::native_http::endpoint).post(crate::native_http::endpoint))
+        .route("/device.js",get(||async{guide_asset("text/javascript; charset=utf-8",include_str!("../static/device.js"))}))
         .route("/auth/login", get(browser_endpoint))
         .route("/auth/callback", get(browser_endpoint))
         .route("/auth/logout", axum::routing::post(browser_endpoint))
@@ -57,7 +61,7 @@ pub fn build_rest_router(service: Arc<CloudService>) -> Router {
             get(|State(service): State<Arc<CloudService>>| async move {
                 guide_asset(
                     "text/html; charset=utf-8",
-                    crate::contract::guide(service.public_auth.is_some(), service.supervisor.max_active()),
+                    crate::native_http::guide(&service),
                 )
             }),
         )
@@ -83,7 +87,7 @@ pub fn build_rest_router(service: Arc<CloudService>) -> Router {
             "/healthz",
             get(|State(service): State<Arc<CloudService>>| async move {
                 match service.registry.list() {
-                    Ok(_) => (StatusCode::OK, Json(json!({"status":"ok","authentication_configured":service.public_auth.is_some()}))),
+                    Ok(_) => (StatusCode::OK, Json(json!({"status":"ok","authentication_configured":service.authentication_configured()}))),
                     Err(_) => (
                         StatusCode::SERVICE_UNAVAILABLE,
                         Json(json!({"status":"unavailable"})),
@@ -95,7 +99,7 @@ pub fn build_rest_router(service: Arc<CloudService>) -> Router {
         .with_state(service)
 }
 
-fn guide_asset(content_type: &'static str, body: impl Into<String>) -> Response {
+pub(crate) fn guide_asset(content_type: &'static str, body: impl Into<String>) -> Response {
     ([
         (header::CONTENT_TYPE, content_type),
         (header::CONTENT_SECURITY_POLICY, "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"),
@@ -218,6 +222,21 @@ async fn dispatch_inner(
     }
     let principal = if let Some(token) = token {
         service.authenticate_bearer(token, workspace).await?
+    } else if let Some(native) = &service.native_auth {
+        let session = cookie_value(request.headers(), crate::browser_auth::SESSION_COOKIE)
+            .ok_or_else(|| CloudError::new("unauthorized", "sign in required"))?;
+        let identity = native.authenticate(&session)?;
+        if !matches!(request.method().as_str(), "GET" | "HEAD") {
+            native.check_csrf(
+                &session,
+                header_text(request.headers(), "origin"),
+                header_text(request.headers(), "x-csrf-token"),
+            )?;
+        }
+        let (_, personal) = service.auth.provision_identity(&identity)?;
+        service
+            .auth
+            .principal_from_verified(&identity, workspace.unwrap_or(personal.id))?
     } else {
         let browser = &service
             .public_auth
@@ -280,6 +299,24 @@ async fn dispatch_inner(
     if path[1] != "bogs" {
         service.rate_limit(&principal)?;
         let ok = |body| Ok(crate::OperationResult { status: 200, body });
+        if path[1] == "agent-tokens" && service.native_auth.is_some() {
+            return match (method.as_str(), path.len()) {
+                ("GET", 2) => ok(json!({"tokens":service.auth.list_agent_tokens(&principal)?})),
+                ("POST", 2) => {
+                    let v = parse()?;
+                    let token = service.auth.issue_agent_token(
+                        &principal,
+                        v["name"].as_str().ok_or_else(|| bad("name required"))?,
+                    )?;
+                    ok(json!({"id":token.id,"token":token.secret,"expires_in":2592000}))
+                }
+                ("DELETE", 3) => {
+                    service.auth.revoke_agent_token(&principal, &path[2])?;
+                    ok(json!({"revoked":true}))
+                }
+                _ => Err(CloudError::new("not_found", "route not found")),
+            };
+        }
         match (method.as_str(), path[1].as_str(), path.len()) {
             ("GET", "me", 2) => {
                 return ok(
@@ -482,10 +519,10 @@ async fn dispatch_inner(
     service.execute(&principal, op).await
 }
 
-fn header_text<'a>(h: &'a axum::http::HeaderMap, n: &str) -> &'a str {
+pub(crate) fn header_text<'a>(h: &'a axum::http::HeaderMap, n: &str) -> &'a str {
     h.get(n).and_then(|v| v.to_str().ok()).unwrap_or("")
 }
-fn cookie_value(h: &axum::http::HeaderMap, name: &str) -> Option<String> {
+pub(crate) fn cookie_value(h: &axum::http::HeaderMap, name: &str) -> Option<String> {
     header_text(h, "cookie").split(';').find_map(|v| {
         v.trim()
             .split_once('=')
@@ -493,7 +530,7 @@ fn cookie_value(h: &axum::http::HeaderMap, name: &str) -> Option<String> {
             .map(|(_, v)| v.to_owned())
     })
 }
-fn url_query(query: &str, name: &str) -> Option<String> {
+pub(crate) fn url_query(query: &str, name: &str) -> Option<String> {
     reqwest::Url::parse(&format!("http://localhost/?{query}"))
         .ok()?
         .query_pairs()
@@ -510,6 +547,9 @@ async fn browser_endpoint(State(service): State<Arc<CloudService>>, request: Req
     response
 }
 async fn browser_inner(service: &CloudService, request: Request) -> Result<Response, CloudError> {
+    if service.native_auth.is_some() {
+        return crate::native_http::browser_inner(service, request).await;
+    }
     let public = service
         .public_auth
         .as_ref()
@@ -588,6 +628,11 @@ async fn browser_inner(service: &CloudService, request: Request) -> Result<Respo
     Ok(response)
 }
 async fn discovery(State(service): State<Arc<CloudService>>, request: Request) -> Response {
+    if service.native_auth.is_some() {
+        if let Some(response) = crate::native_http::discovery(&service, request.uri().path()) {
+            return response;
+        }
+    }
     match request.uri().path() {
         "/auth.md" => (
             [(header::CONTENT_TYPE, "text/markdown; charset=utf-8")],

@@ -59,6 +59,12 @@ impl CloudService {
         workspace: Option<WorkspaceId>,
     ) -> Result<Principal, CloudError> {
         // JWT-shaped credentials are never retried as opaque application/operator secrets.
+        if token.starts_with("bog_agent_") {
+            if self.native_auth.is_none() {
+                return Err(denied());
+            }
+            return self.auth.authenticate_agent_token(token, workspace);
+        }
         let principal = if token.matches('.').count() == 2 {
             let public = self.public_auth.as_ref().ok_or_else(denied)?;
             let identity = public.verifier.verify_access_token(token).await?;
@@ -67,7 +73,7 @@ impl CloudService {
                 .agent_from_verified(&identity, workspace.unwrap_or(personal.id))?
         } else {
             let mut p = self.auth.authenticate(token)?;
-            if self.public_auth.is_some() && p.kind() == PrincipalKind::Operator {
+            if self.authentication_configured() && p.kind() == PrincipalKind::Operator {
                 return Err(denied());
             }
             if p.kind() == PrincipalKind::Operator {

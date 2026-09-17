@@ -83,7 +83,7 @@ impl Registry {
         let version: u32 = db
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .map_err(db_error)?;
-        if version > 2 {
+        if version > 3 {
             return Err(CloudError::new(
                 "incompatible_registry",
                 "registry version is newer than this server",
@@ -95,6 +95,10 @@ impl Registry {
         }
         if version < 2 {
             db.execute_batch(include_str!("../migrations/002_workspaces.sql"))
+                .map_err(db_error)?;
+        }
+        if version < 3 {
+            db.execute_batch(include_str!("../migrations/003_agent_tokens.sql"))
                 .map_err(db_error)?;
         }
         let foreign_key_errors: i64 = db

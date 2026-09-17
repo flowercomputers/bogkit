@@ -129,6 +129,9 @@ impl Auth {
                 }
             }
         }
+        if principal.kind == PrincipalKind::Agent {
+            return self.check_agent_token(principal);
+        }
         let Some(id) = &principal.token_id else {
             return Ok(());
         };

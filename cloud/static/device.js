@@ -1,0 +1,8 @@
+'use strict';
+const $=id=>document.getElementById(id);
+let csrf='',code='';
+$('code').value=new URLSearchParams(location.search).get('user_code')||'';
+async function post(body){const r=await fetch('/auth/device/approve',{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json','x-csrf-token':csrf},body:JSON.stringify(body)});const v=await r.json();if(!r.ok)throw Error(v.error?.message||'Request unavailable');return v;}
+$('lookup').onsubmit=async e=>{e.preventDefault();$('review').hidden=true;try{code=$('code').value.trim().toUpperCase();if(!/^[0-9A-F]{8}$/.test(code))throw Error('Enter the 8-character public code.');const r=await fetch('/console-session',{credentials:'same-origin',cache:'no-store'});if(r.status===401){$('login').href='/auth/login?user_code='+encodeURIComponent(code);$('login').hidden=false;$('status').textContent='Sign in to review this request.';return;}if(!r.ok)throw Error('Sign-in unavailable');csrf=(await r.json()).csrf_token;const v=await post({user_code:code});$('name').textContent=v.name;$('access').textContent=v.access;$('review').hidden=false;$('status').textContent='Review the requested access, then choose approve or deny.';}catch(e){$('status').textContent=e.message;}};
+for(const [id,approve] of [['approve',true],['deny',false]])$(id).onclick=async()=>{ $('approve').disabled=$('deny').disabled=true;try{await post({user_code:code,approve});$('review').hidden=true;$('status').textContent=approve?'Approved. Your agent can now collect its credential.':'Denied. No credential will be issued.';}catch(e){$('status').textContent=e.message;}finally{$('approve').disabled=$('deny').disabled=false;}};
+if($('code').value)$('lookup').requestSubmit();

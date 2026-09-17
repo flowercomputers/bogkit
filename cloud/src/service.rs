@@ -70,6 +70,7 @@ pub struct OperationResult {
 }
 pub struct CloudService {
     pub changes: crate::changes::ChangeWaiter,
+    pub native_auth: Option<Arc<crate::native_auth::NativeAuth>>,
     pub public_auth: Option<crate::gateway::PublicAuth>,
     pub registry: Arc<Registry>,
     pub auth: Auth,
@@ -78,6 +79,9 @@ pub struct CloudService {
     rates: std::sync::Mutex<std::collections::HashMap<String, (std::time::Instant, u32)>>,
 }
 impl CloudService {
+    pub fn authentication_configured(&self) -> bool {
+        self.native_auth.is_some() || self.public_auth.is_some()
+    }
     pub fn open(config: Config, owner_token: &str) -> Result<Arc<Self>, CloudError> {
         if !config.root.is_absolute() {
             return Err(CloudError::new(
@@ -93,6 +97,7 @@ impl CloudService {
                 "registry must not be a symlink",
             ));
         }
+        let native_auth = crate::native_auth::NativeAuth::from_env(&config.root)?;
         let registry = Arc::new(Registry::open(&config.root.join("registry.sqlite"))?);
         let auth = Auth::new(registry.clone(), owner_token)?;
         let public_auth = crate::gateway::PublicAuth::from_env(&config.root)?;
@@ -100,6 +105,7 @@ impl CloudService {
         Ok(Arc::new(Self {
             registry,
             public_auth,
+            native_auth,
             changes: crate::changes::ChangeWaiter::new(),
             auth,
             supervisor,

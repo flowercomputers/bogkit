@@ -1,6 +1,6 @@
-> **Legacy deployment reference.** The remainder of this document describes the earlier single-owner release. The team implementation on this branch adds WorkOS authorization, workspaces, scoped expiring app credentials, deletion, idle workers and change waiting. It has not passed production activation yet.
+> **Legacy deployment reference.** The remainder of this document describes the earlier single-owner release. The team implementation on this branch adds direct GitHub identity and Bog-owned authorization, workspaces, scoped expiring app credentials, deletion, idle workers and change waiting. It has not passed production activation yet.
 >
-> For the new release, use [production configuration and gates](bog-cloud-production-gates.md), [backup operations](bog-cloud-backups.md), and [remote chat migration](bog-chat-upgrade.md). The running new server publishes its current contract at `/v1`, `/auth.md` and `/openapi.json`. Startup without WorkOS now requires an explicit legacy migration opt-in.
+> For the new release, use [production configuration and gates](bog-cloud-production-gates.md), [backup operations](bog-cloud-backups.md), and [remote chat migration](bog-chat-upgrade.md). The running new server publishes its current contract at `/v1`, `/auth.md` and `/openapi.json`. Startup without configured authentication requires an explicit legacy migration opt-in.
 
 # Bog Cloud operations
 

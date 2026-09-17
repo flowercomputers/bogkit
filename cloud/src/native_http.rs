@@ -1,0 +1,220 @@
+//! Native authentication routes, never an OAuth authorization server.
+use crate::{
+    CloudError, CloudService,
+    browser_auth::{LOGIN_COOKIE, SESSION_COOKIE},
+    http::{cookie_value, guide_asset, header_text, url_query},
+};
+use axum::{
+    Json,
+    body::to_bytes,
+    extract::{ConnectInfo, Request, State},
+    http::{StatusCode, header},
+    response::{IntoResponse, Response},
+};
+use serde_json::json;
+use std::{net::SocketAddr, sync::Arc};
+fn denied() -> CloudError {
+    CloudError::new("unauthorized", "sign in required")
+}
+pub async fn endpoint(State(service): State<Arc<CloudService>>, request: Request) -> Response {
+    let mut r = inner(&service, request)
+        .await
+        .unwrap_or_else(|e| crate::http::error_response(e, &uuid::Uuid::new_v4().to_string()));
+    r.headers_mut().insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-store"),
+    );
+    r
+}
+async fn inner(service: &CloudService, request: Request) -> Result<Response, CloudError> {
+    let native = service
+        .native_auth
+        .as_ref()
+        .ok_or_else(|| CloudError::new("unavailable", "native authentication is not configured"))?;
+    let path = request.uri().path().to_owned();
+    if path == "/auth/device/approve" && request.method() == "GET" {
+        return Ok(guide_asset(
+            "text/html; charset=utf-8",
+            include_str!("../static/device.html"),
+        ));
+    }
+    if header_text(request.headers(), "content-type")
+        .split(';')
+        .next()
+        != Some("application/json")
+    {
+        return Err(CloudError::new(
+            "invalid_request",
+            "application/json required",
+        ));
+    }
+    let peer = request
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|p| p.0.ip());
+    let session = cookie_value(request.headers(), SESSION_COOKIE).unwrap_or_default();
+    let origin = header_text(request.headers(), "origin").to_owned();
+    let csrf = header_text(request.headers(), "x-csrf-token").to_owned();
+    let bytes = to_bytes(request.into_body(), 4096)
+        .await
+        .map_err(|_| CloudError::new("payload_too_large", "request too large"))?;
+    let body: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|_| CloudError::new("invalid_request", "invalid JSON"))?;
+    let value = match path.as_str() {
+        "/auth/device" => native.start_device(
+            peer.ok_or_else(|| CloudError::new("unavailable", "peer address required"))?,
+            body["name"].as_str().unwrap_or(""),
+        )?,
+        "/auth/device/token" => {
+            let token =
+                native.poll_device(body["device_code"].as_str().unwrap_or(""), &service.auth)?;
+            json!({"access_token":token.secret,"token_type":"Bearer","expires_in":2592000})
+        }
+        "/auth/device/approve" => {
+            native.check_csrf(&session, &origin, &csrf)?;
+            let identity = native.authenticate(&session)?;
+            let (_, personal) = service.auth.provision_identity(&identity)?;
+            let principal = service
+                .auth
+                .principal_from_verified(&identity, personal.id)?;
+            let code = body["user_code"].as_str().unwrap_or("");
+            if !crate::native_auth::valid_public(code) {
+                return Err(CloudError::new(
+                    "invalid_request",
+                    "8-character public code required",
+                ));
+            }
+            if body.get("approve").is_none() {
+                json!({"name":native.device_details(&session,code)?,"access":"Create and use Bogs and issue app credentials in your current workspaces for 30 days. Cannot manage members, delete Bogs, or create account credentials."})
+            } else {
+                let approve = body["approve"].as_bool().ok_or_else(|| {
+                    CloudError::new("invalid_request", "approval must be true or false")
+                })?;
+                native.approve_device(&session, code, principal, approve, &service.auth)?;
+                json!({"approved":approve})
+            }
+        }
+        _ => return Err(CloudError::new("not_found", "route not found")),
+    };
+    Ok(Json(value).into_response())
+}
+pub async fn browser_inner(
+    service: &CloudService,
+    request: Request,
+) -> Result<Response, CloudError> {
+    let native = service.native_auth.as_ref().ok_or_else(denied)?;
+    let h = request.headers();
+    let session = cookie_value(h, SESSION_COOKIE).unwrap_or_default();
+    Ok(match request.uri().path() {
+        "/auth/login" => {
+            let code = url_query(request.uri().query().unwrap_or(""), "user_code");
+            let start = native.begin_login(code.as_deref())?;
+            (
+                [
+                    (header::LOCATION, start.authorization_url),
+                    (header::SET_COOKIE, start.set_cookie),
+                ],
+                StatusCode::SEE_OTHER,
+            )
+                .into_response()
+        }
+        "/auth/callback" => {
+            let q = request.uri().query().unwrap_or("");
+            if url_query(q, "error").is_some() {
+                let _ = native.cancel_login(
+                    &url_query(q, "state").unwrap_or_default(),
+                    &cookie_value(h, LOGIN_COOKIE).unwrap_or_default(),
+                );
+                return Err(denied());
+            }
+            let login = native
+                .complete_login(
+                    &url_query(q, "state").unwrap_or_default(),
+                    &url_query(q, "code").unwrap_or_default(),
+                    &cookie_value(h, LOGIN_COOKIE).unwrap_or_default(),
+                )
+                .await?;
+            service.auth.provision_identity(&login.identity)?;
+            let target = login
+                .public_code
+                .map(|c| format!("/auth/device/approve?user_code={c}"))
+                .unwrap_or_else(|| "/console".into());
+            let mut r = (
+                [
+                    (header::LOCATION, target),
+                    (header::SET_COOKIE, login.set_cookie),
+                ],
+                StatusCode::SEE_OTHER,
+            )
+                .into_response();
+            r.headers_mut().append(
+                header::SET_COOKIE,
+                header::HeaderValue::from_static(
+                    "__Host-bog_login=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0",
+                ),
+            );
+            r
+        }
+        "/console-session" => {
+            let identity = native.authenticate(&session)?;
+            let (account, _) = service.auth.provision_identity(&identity)?;
+            Json(json!({"account":account,"workspaces":service.auth.list_workspaces(&identity)?,"csrf_token":native.csrf_token(&session)?,"authentication_mode":"github_native"})).into_response()
+        }
+        "/auth/logout" => {
+            let cookie = native.logout(
+                &session,
+                header_text(h, "origin"),
+                header_text(h, "x-csrf-token"),
+            )?;
+            (
+                [(header::SET_COOKIE, cookie)],
+                Json(json!({"logged_out":true,"provider_revoked":false})),
+            )
+                .into_response()
+        }
+        "/auth/refresh" => {
+            let identity = native.authenticate(&session)?;
+            service.auth.provision_identity(&identity)?;
+            let renewed = native.refresh(
+                &session,
+                header_text(h, "origin"),
+                header_text(h, "x-csrf-token"),
+            )?;
+            (
+                [(header::SET_COOKIE, renewed.set_cookie)],
+                Json(json!({"refreshed":true,"csrf_token":renewed.csrf_token})),
+            )
+                .into_response()
+        }
+        _ => return Err(CloudError::new("not_found", "route not found")),
+    })
+}
+pub const AUTH_MARKDOWN: &str = r#"# Bog authentication
+
+GitHub sign-in at /auth/login proves identity. Bog owns sessions, memberships and credentials. No repository scopes are requested. Your personal workspace is created once. Logout ends only the local Bog session.
+
+For agents, POST /auth/device with JSON {"name":"My agent"}. Keep device_code private in memory. Show the user only verification_uri and user_code. The human signs in, reviews the name/access, and explicitly approves or denies. Poll POST /auth/device/token with JSON {"device_code":"<private code>"} at intervals of at least 5 seconds. Grants expire after 10 minutes and are lost on server restart. Errors: authorization_pending (keep waiting), slow_down (wait at least 5 seconds), expired_token (start again), access_denied (stop). Successful polling returns access_token exactly once, token_type Bearer, expires_in 2592000. Never put credentials in chat, URLs, logs or browser storage.
+
+Alternatively, a signed-in human creates/revokes named agent credentials in /console or uses GET/POST /v1/agent-tokens and DELETE /v1/agent-tokens/{id}. Writes require the session cookie, exact Origin and x-csrf-token from /console-session. Only humans can manage account credentials. Tokens expire in 30 days; revocation and account suspension are immediate.
+
+Use Authorization: Bearer <Bog credential> for REST and bearer-capable MCP clients at /mcp. Select workspace_id explicitly; omission selects personal. Agents can create Bogs and issue scoped app credentials, but cannot manage members, delete Bogs or mint account credentials. App credentials remain restricted to one Bog. Membership is checked on every request. GitHub access tokens are never Bog API credentials. Bog does not currently implement an MCP OAuth authorization server or advertise OAuth discovery. See /v1 for creation requirements and /v1/templates for templates.
+"#;
+pub fn discovery(service: &CloudService, path: &str) -> Option<Response> {
+    Some(match path{
+    "/auth.md"=>([(header::CONTENT_TYPE,"text/markdown; charset=utf-8")],AUTH_MARKDOWN).into_response(),
+    "/.well-known/oauth-protected-resource"=>StatusCode::NOT_FOUND.into_response(),
+    "/llms.txt"=>([(header::CONTENT_TYPE,"text/plain; charset=utf-8")],"Bog Cloud: GitHub browser sign-in, Bog device approval and bearer credentials. REST /v1; MCP /mcp with bearer credentials. Read /auth.md. OAuth authorization-server discovery is not supported.").into_response(),
+    "/v1"=>{let mut v=crate::contract::overview();v["authentication_configured"]=json!(service.authentication_configured());v["authentication_mode"]=json!("github_native");v["authentication"]=json!({"browser_login":"/auth/login","device_start":"/auth/device","device_token":"/auth/device/token","device_approval":"/auth/device/approve","agent_tokens":"/v1/agent-tokens","account":"/v1/me","session":"/console-session","mcp":"bearer","oauth_authorization_server":false});v["next_step"]=json!("Sign in with GitHub at /auth/login or request human approval via /auth/device. Read /auth.md.");Json(v).into_response()},
+    _=>return None})
+}
+pub fn guide(service: &CloudService) -> String {
+    if service.native_auth.is_none() {
+        return crate::contract::guide(
+            service.public_auth.is_some(),
+            service.supervisor.max_active(),
+        );
+    }
+    format!(
+        "<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Bog Cloud</title><link rel=\"stylesheet\" href=\"/guide.css\"><main><h1>Bog Cloud</h1><p>Your data, ready for apps and agents.</p><p>Sign in with GitHub to create your personal workspace. Bog manages access; GitHub repository access is never requested.</p><p><a href=\"/auth/login\">Sign in with GitHub</a> · <a href=\"/console\">Open console</a></p><h2>Connect an agent</h2><p>Create a named 30-day agent credential in the console, or let your agent request an approval code. Review its name and access before approving.</p><p>Use the resulting Bog credential with HTTP or a bearer-capable MCP client at /mcp. Select a workspace explicitly; personal is the default. MCP OAuth login is not currently supported.</p><p><a href=\"/auth.md\">Authentication instructions</a> · <a href=\"/v1\">API operations</a> · <a href=\"/v1/templates\">Templates</a></p></main></html>"
+    )
+}

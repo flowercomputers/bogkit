@@ -153,6 +153,14 @@ pub struct VerifiedIdentity {
     expires_at: u64,
 }
 impl VerifiedIdentity {
+    pub(crate) fn native(subject: &str, expires_at: u64) -> Self {
+        Self {
+            issuer: "https://github.com".into(),
+            subject: subject.into(),
+            client_id: None,
+            expires_at,
+        }
+    }
     pub fn issuer(&self) -> &str {
         &self.issuer
     }

@@ -17,10 +17,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         Config::from_env(root.clone().into(), binary.into())?,
         &token,
     )?;
-    if svc.public_auth.is_none()
+    if !svc.authentication_configured()
         && std::env::var("BOG_ALLOW_LEGACY_PUBLIC_OPERATOR").as_deref() != Ok("true")
     {
-        return Err("WorkOS must be configured; legacy operator exposure requires explicit migration opt-in".into());
+        return Err("GitHub authentication must be configured; legacy operator exposure requires explicit migration opt-in".into());
     }
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     for (_, code) in svc.supervisor.reconcile().await? {
@@ -30,11 +30,15 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let admin =
         bog_cloud::admin::bind(svc.clone(), std::path::Path::new(&root).join("admin.sock")).await?;
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-    axum::serve(listener, build_rest_router(svc.clone()))
-        .with_graceful_shutdown(async move {
-            tokio::select! {_=tokio::signal::ctrl_c()=>{},_=terminate.recv()=>{}}
-        })
-        .await?;
+    axum::serve(
+        listener,
+        build_rest_router(svc.clone())
+            .into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move {
+        tokio::select! {_=tokio::signal::ctrl_c()=>{},_=terminate.recv()=>{}}
+    })
+    .await?;
     maintenance.abort();
     admin.shutdown().await?;
     svc.supervisor.shutdown().await?;
