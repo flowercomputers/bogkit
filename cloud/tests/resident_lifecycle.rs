@@ -166,6 +166,170 @@ async fn a_pre_socket_orphan_reserves_physical_capacity() {
     );
     assert_eq!(svc.registry.get(b.id).unwrap().generation, 0);
     drop(orphan);
-    svc.supervisor.ensure_running(b.id).await.unwrap();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        match svc.supervisor.ensure_running(b.id).await {
+            Ok(_) => break,
+            Err(error) => {
+                assert_eq!(error.code, "capacity");
+                assert!(tokio::time::Instant::now() < deadline);
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        }
+    }
     svc.supervisor.shutdown().await.unwrap();
+}
+
+struct Orphan(std::process::Child);
+impl Drop for Orphan {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+fn pre_socket_orphan(svc: &CloudService, id: bog_cloud::BogId) -> Orphan {
+    use std::os::{fd::AsRawFd, unix::process::CommandExt};
+    let dir = svc.supervisor.instance_dir(id);
+    std::fs::create_dir_all(&dir).unwrap();
+    let lock = std::fs::File::create(dir.join("worker.lock")).unwrap();
+    lock.try_lock().unwrap();
+    svc.registry
+        .start_generation(id, "survivor-test-nonce")
+        .unwrap();
+    let fd = lock.as_raw_fd();
+    let mut command = std::process::Command::new("/bin/sh");
+    command
+        .args(["-c", "kill -STOP $$; exec \"$@\"", "survivor"])
+        .arg(worker())
+        .arg("--data-dir")
+        .arg(dir.join("data"))
+        .arg("--socket")
+        .arg(dir.join("worker.sock"))
+        .args(["--template-version", "records-v1"])
+        .env("BOG_INSTANCE_ID", id.to_string())
+        .env("BOG_STARTUP_NONCE", "survivor-test-nonce")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    unsafe {
+        command.pre_exec(move || {
+            if libc::fcntl(fd, libc::F_SETFD, 0) == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let child = command.spawn().unwrap();
+    let mut status = 0;
+    assert_eq!(
+        unsafe { libc::waitpid(child.id() as i32, &mut status, libc::WUNTRACED) },
+        child.id() as i32
+    );
+    assert!(libc::WIFSTOPPED(status));
+    Orphan(child)
+}
+async fn wait_for_exit(orphan: &mut Orphan) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while orphan.0.try_wait().unwrap().is_none() {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "survivor remained alive"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+#[tokio::test]
+async fn maintenance_recovers_pre_socket_survivor_then_idles_it_without_a_request() {
+    let temp = tempfile::Builder::new()
+        .prefix("bc-late-")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let mut config = Config::new(temp.path().join("r"), worker());
+    config.max_active = 1;
+    config.idle_timeout = Duration::from_millis(80);
+    let svc = CloudService::open(config.clone(), OWNER).unwrap();
+    let a = svc.registry.create("a", "records-v1", "a").unwrap();
+    let b = svc.registry.create("b", "records-v1", "b").unwrap();
+    let mut orphan = pre_socket_orphan(&svc, a.id);
+    drop(svc);
+    let svc = CloudService::open(config, OWNER).unwrap();
+    assert!(svc.supervisor.reconcile().await.unwrap().is_empty());
+    assert_eq!(
+        svc.supervisor
+            .ensure_running(b.id)
+            .await
+            .err()
+            .unwrap()
+            .code,
+        "capacity"
+    );
+    let maintenance = svc.supervisor.spawn_maintenance();
+    assert_eq!(
+        unsafe { libc::kill(orphan.0.id() as i32, libc::SIGCONT) },
+        0
+    );
+    wait_for_exit(&mut orphan).await;
+    assert_eq!(svc.registry.get(a.id).unwrap().generation, 1);
+    assert_eq!(
+        svc.registry.get(a.id).unwrap().desired_state,
+        DesiredState::Running
+    );
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        match svc.supervisor.ensure_running(b.id).await {
+            Ok(_) => break,
+            Err(error) => {
+                assert_eq!(error.code, "capacity");
+                assert!(
+                    tokio::time::Instant::now() < deadline,
+                    "idle shutdown did not release capacity"
+                );
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        }
+    }
+    maintenance.abort();
+    let _ = maintenance.await;
+    svc.supervisor.shutdown().await.unwrap();
+}
+#[tokio::test]
+async fn stopped_intent_survivors_recover_through_maintenance_and_explicit_retry() {
+    for automatic in [true, false] {
+        let temp = tempfile::Builder::new()
+            .prefix("bc-stop-")
+            .tempdir_in("/tmp")
+            .unwrap();
+        let mut config = Config::new(temp.path().join("r"), worker());
+        config.idle_timeout = Duration::from_millis(80);
+        let svc = CloudService::open(config.clone(), OWNER).unwrap();
+        let bog = svc.registry.create("a", "records-v1", "a").unwrap();
+        let mut orphan = pre_socket_orphan(&svc, bog.id);
+        svc.registry.set_desired(bog.id, false).unwrap(); // Crash between persisting stop intent and shutdown.
+        drop(svc);
+        let svc = CloudService::open(config, OWNER).unwrap();
+        assert_eq!(svc.supervisor.reconcile().await.unwrap().len(), 1);
+        assert!(svc.supervisor.stop(bog.id).await.is_err());
+        assert_eq!(
+            unsafe { libc::kill(orphan.0.id() as i32, libc::SIGCONT) },
+            0
+        );
+        if automatic {
+            let maintenance = svc.supervisor.spawn_maintenance();
+            wait_for_exit(&mut orphan).await;
+            maintenance.abort();
+            let _ = maintenance.await;
+        } else {
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+            while svc.supervisor.stop(bog.id).await.is_err() {
+                assert!(tokio::time::Instant::now() < deadline);
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            wait_for_exit(&mut orphan).await;
+        }
+        assert_eq!(
+            svc.registry.get(bog.id).unwrap().desired_state,
+            DesiredState::Stopped
+        );
+        assert_eq!(svc.registry.get(bog.id).unwrap().generation, 1);
+        assert_eq!(svc.supervisor.resident_count().await, 0);
+    }
 }

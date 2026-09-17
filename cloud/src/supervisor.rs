@@ -483,8 +483,124 @@ impl Supervisor {
                     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                 }
             }
+        } else {
+            self.stop_survivor_locked(id).await?;
         }
         self.registry.set_status(id, ObservedState::Stopped, None)
+    }
+    fn survivor_owns_store(&self, id: BogId) -> Result<bool, CloudError> {
+        let dir = self.instance_dir(id);
+        for path in [dir.join("worker.lock"), dir.join("data/lock")] {
+            match OpenOptions::new()
+                .read(true)
+                .write(true)
+                .custom_flags(libc::O_NOFOLLOW)
+                .open(path)
+            {
+                Ok(lock) if lock.try_lock().is_err() => return Ok(true),
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(_) => return Err(unavailable("cannot inspect surviving worker ownership")),
+            }
+        }
+        Ok(false)
+    }
+    async fn stop_survivor_locked(&self, id: BogId) -> Result<(), CloudError> {
+        if !self.survivor_owns_store(id)? {
+            return Ok(());
+        }
+        let client = WorkerClient::new(&self.instance_dir(id).join("worker.sock"))?;
+        tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            self.verify_worker(id, &client),
+        )
+        .await
+        .map_err(|_| unavailable("surviving worker is not responsive; retry stop"))??;
+        let (status, _) = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            client.request(
+                reqwest::Method::POST,
+                "/_cloud/shutdown",
+                Some(serde_json::json!({"nonce": self.registry.startup_nonce(id)?})),
+            ),
+        )
+        .await
+        .map_err(|_| unavailable("surviving worker shutdown pending; retry stop"))??;
+        if status != 200 {
+            return Err(unavailable("surviving worker refused shutdown"));
+        }
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(20);
+        while self.survivor_owns_store(id)? {
+            if tokio::time::Instant::now() >= deadline {
+                return Err(unavailable("surviving worker shutdown pending; retry stop"));
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        Ok(())
+    }
+    /// Revisit survivors without starting closed stores or resetting active idle clocks.
+    pub async fn reconcile_survivors(&self) -> Result<Vec<(BogId, String)>, CloudError> {
+        let mut failures = Vec::new();
+        for bog in self.registry.list()? {
+            let Ok(_guard) = self.gate(bog.id)?.try_write_owned() else {
+                continue;
+            };
+            let bog = match self.registry.get(bog.id) {
+                Ok(bog) => bog,
+                Err(error) if error.code == "not_found" => continue,
+                Err(error) => return Err(error),
+            };
+            if matches!(
+                bog.status,
+                ObservedState::Maintenance | ObservedState::Restoring
+            ) {
+                continue;
+            }
+            if bog.desired_state == DesiredState::Stopped {
+                if !self.running.lock().await.contains_key(&bog.id)
+                    && !self.survivor_owns_store(bog.id)?
+                {
+                    continue;
+                }
+                if let Err(error) = self.stop_locked(bog.id, false).await {
+                    failures.push((bog.id, error.code));
+                }
+                continue;
+            }
+            if self.running.lock().await.contains_key(&bog.id)
+                || !self.instance_dir(bog.id).join("worker.sock").exists()
+            {
+                continue;
+            }
+            let client = WorkerClient::new(&self.instance_dir(bog.id).join("worker.sock"))?;
+            match tokio::time::timeout(
+                std::time::Duration::from_millis(500),
+                self.verify_worker(bog.id, &client),
+            )
+            .await
+            {
+                Ok(Ok(())) => {
+                    let Ok(slot) = self.active_slots.clone().try_acquire_owned() else {
+                        failures.push((bog.id, "capacity".into()));
+                        continue;
+                    };
+                    self.registry
+                        .set_status(bog.id, ObservedState::Ready, None)?;
+                    self.running.lock().await.insert(
+                        bog.id,
+                        Running {
+                            client,
+                            child: None,
+                            _slot: slot,
+                            last_use: Arc::new(Mutex::new(std::time::Instant::now())),
+                        },
+                    );
+                }
+                Ok(Err(error)) => failures.push((bog.id, error.code)),
+                Err(_) => failures.push((bog.id, "unavailable".into())),
+            }
+        }
+        Ok(failures)
     }
     pub async fn reconcile(&self) -> Result<Vec<(BogId, String)>, CloudError> {
         crate::backup::recover_staging(&self.config.root.join("backups"))?;
@@ -509,21 +625,8 @@ impl Supervisor {
                 self.registry.set_desired(bog.id, false)?;
                 continue;
             }
-            // Only adopt verified surviving workers here. A stale socket must
-            // not cause every retained store to start during manager recovery.
-            if bog.desired_state == DesiredState::Running
-                && self.instance_dir(bog.id).join("worker.sock").exists()
-            {
-                let client = WorkerClient::new(&self.instance_dir(bog.id).join("worker.sock"))?;
-                let result = match self.verify_worker(bog.id, &client).await {
-                    Ok(()) => self.ensure_running(bog.id).await.map(|_| ()),
-                    Err(error) => Err(error),
-                };
-                if let Err(error) = result {
-                    failures.push((bog.id, error.code));
-                }
-            }
         }
+        failures.extend(self.reconcile_survivors().await?);
         Ok(failures)
     }
     /// Retry filesystem cleanup only after access has been atomically revoked.
@@ -536,26 +639,6 @@ impl Supervisor {
         let dir = self.instance_dir(id);
         if !dir.exists() {
             return self.registry.finish_delete(id);
-        }
-        // A manager restart may leave a worker that was never adopted. Only
-        // its registered identity authorizes asking that worker to shut down.
-        let client = WorkerClient::new(&dir.join("worker.sock"))?;
-        if dir.join("worker.sock").exists()
-            && let Ok((200, _)) = client
-                .request(reqwest::Method::GET, "/_cloud/identity", None)
-                .await
-        {
-            self.verify_worker(id, &client).await?;
-            let (status, _) = client
-                .request(
-                    reqwest::Method::POST,
-                    "/_cloud/shutdown",
-                    Some(serde_json::json!({"nonce": self.registry.startup_nonce(id)?})),
-                )
-                .await?;
-            if status != 200 {
-                return Err(unavailable("worker refused deletion shutdown"));
-            }
         }
         // Hold both ownership locks through removal. Socket disappearance is
         // insufficient evidence that Fjall has released the database.
@@ -639,6 +722,14 @@ impl Supervisor {
                     if let Err(error) = supervisor.cleanup_deleted(id).await {
                         eprintln!("database deletion cleanup pending: {}", error.code);
                     }
+                }
+                match supervisor.reconcile_survivors().await {
+                    Ok(failures) => {
+                        for (_, code) in failures {
+                            eprintln!("worker survivor recovery pending: {code}");
+                        }
+                    }
+                    Err(error) => eprintln!("worker survivor recovery failed: {}", error.code),
                 }
                 if let Err(error) = supervisor.evict_idle().await {
                     eprintln!("worker idle maintenance failed: {}", error.code);

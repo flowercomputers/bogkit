@@ -20,3 +20,15 @@ All local process tests required escalation because the managed sandbox denies U
 - Scoped clippy found two local style issues, both fixed; remaining findings on the final repeat were concurrent HTTP and changes-module collapsible-if lints (no lifecycle warnings); root notified. Unscoped clippy also reports pre-existing anny range-loop lints.
 
 No deployment performed. Full gateway/authorization integration and Linux verification remain with root.
+
+## Round 1 recovery correction
+
+Addressed the review finding about untracked survivors becoming healthy after initial reconciliation.
+
+- Periodic maintenance now repeats a survivor-only reconciliation. Identity/schema probes are bounded to 500 ms, busy instance gates are skipped, and closed stores are never spawned by this pass.
+- Verified running-intent survivors enter resident accounting with a fresh idle timestamp. Existing tracked workers are skipped so recurring scans cannot reset their idle deadline.
+- Stopped-intent survivors receive only identity-verified shutdown requests. Both periodic recovery and explicit stop retries wait for lifetime/store ownership to be released; unavailable pre-socket workers remain retryable.
+- Tombstone cleanup reuses the same stopped-survivor path rather than duplicating shutdown probes.
+- Added real child-process tests with inherited lifetime locks: a paused pre-socket worker resumes after manager replacement, receives no Bog request, is adopted and idle-evicted, and releases capacity for an unrelated Bog. Separate stopped-intent scenarios prove both automatic maintenance and explicit stop retry.
+
+Verification: all five resident lifecycle tests and both real manager-crash tests passed together. Scoped `cargo clippy -p bog-cloud --lib --no-deps -- -D warnings` passed. Backup recovery tests passed 2/3; the remaining existing comparison fails because concurrent task-6 integration correctly adds different cursors to original/restored Bog responses with identical data/seq. Root was notified to update that separate cursor assertion. Unix-socket tests ran with sandbox escalation. Existing manager test operator opt-in changes were preserved and not included in this correction.
