@@ -16,13 +16,21 @@ pub fn skills_index() -> Value {
 
 pub fn server_card(base: &str) -> Value {
     let base = base.trim_end_matches('/');
+    let endpoint = if matches!(
+        base,
+        "https://cloud.bog.new" | "https://mcp.bog.new" | "https://flower-bog-cloud.fly.dev"
+    ) {
+        "https://mcp.bog.new/mcp".to_owned()
+    } else {
+        format!("{base}/mcp")
+    };
     json!({
         "$schema":"https://static.modelcontextprotocol.io/schemas/v1/server-card.schema.json",
         "name":"io.fly.flower-bog-cloud/bog-cloud", "title":"Bog Cloud",
         "version":env!("CARGO_PKG_VERSION"),
         "description":"Hosted JSON databases for small prototypes, with HTTP and MCP access.",
         "websiteUrl":format!("{base}/docs"),
-        "remotes":[{"type":"streamable-http", "url":format!("{base}/mcp"),
+        "remotes":[{"type":"streamable-http", "url":endpoint,
             "supportedProtocolVersions":["2025-11-25"],
             "headers":[{"name":"Authorization", "isRequired":true,"isSecret":true,
                 "description":format!("Bearer token. Read {base}/auth.md for approval instructions; never paste credentials into chat.")}]}],
@@ -73,6 +81,19 @@ pub fn public_document(path: &str, base: &str) -> Option<(&'static str, String)>
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn public_alias_cards_advertise_canonical_remote() {
+        for origin in [
+            "https://cloud.bog.new",
+            "https://mcp.bog.new",
+            "https://flower-bog-cloud.fly.dev",
+        ] {
+            assert_eq!(
+                server_card(origin)["remotes"][0]["url"],
+                "https://mcp.bog.new/mcp"
+            );
+        }
+    }
     #[test]
     fn skill_digest_and_frontmatter_match_the_published_artifact() {
         let index = skills_index();
