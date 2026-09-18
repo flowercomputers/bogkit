@@ -1,0 +1,128 @@
+{
+  "outcome": "passed",
+  "entry_origin": "http://127.0.0.1:55949",
+  "created_bog_id": "02e46c28-4536-4f1a-98e0-b755f7281b01",
+  "service_requests": 12,
+  "response_bytes": 27704,
+  "service_elapsed_ms": 1796,
+  "polling_requests": 0,
+  "wrong_turn_service_requests": 0,
+  "local_failures": [
+    {
+      "stage": "initial root fetch",
+      "reason": "sandbox denied local network before HTTP response",
+      "count": 1,
+      "resolution": "authorized execution outside sandbox"
+    }
+  ],
+  "ledger": [
+    {
+      "method": "GET",
+      "path": "/",
+      "status": 200,
+      "bytes": 8746,
+      "elapsed_ms": 11
+    },
+    {
+      "method": "GET",
+      "path": "/v1",
+      "status": 200,
+      "bytes": 1446,
+      "elapsed_ms": 10
+    },
+    {
+      "method": "GET",
+      "path": "/docs.md",
+      "status": 200,
+      "bytes": 3123,
+      "elapsed_ms": 874
+    },
+    {
+      "method": "GET",
+      "path": "/v1/components",
+      "status": 200,
+      "bytes": 9049,
+      "elapsed_ms": 11
+    },
+    {
+      "method": "POST",
+      "path": "/v1/bogs",
+      "status": 201,
+      "bytes": 2770,
+      "elapsed_ms": 835
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/bogs/02e46c28-4536-4f1a-98e0-b755f7281b01/docs/n1",
+      "status": 200,
+      "bytes": 190,
+      "elapsed_ms": 24
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/bogs/02e46c28-4536-4f1a-98e0-b755f7281b01/docs/n2",
+      "status": 200,
+      "bytes": 190,
+      "elapsed_ms": 12
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/bogs/02e46c28-4536-4f1a-98e0-b755f7281b01/docs/n3",
+      "status": 200,
+      "bytes": 190,
+      "elapsed_ms": 11
+    },
+    {
+      "method": "POST",
+      "path": "/v1/bogs/02e46c28-4536-4f1a-98e0-b755f7281b01/resources/notes/query",
+      "status": 200,
+      "bytes": 592,
+      "elapsed_ms": 5
+    },
+    {
+      "method": "POST",
+      "path": "/v1/bogs/02e46c28-4536-4f1a-98e0-b755f7281b01/resources/text/search",
+      "status": 200,
+      "bytes": 337,
+      "elapsed_ms": 1
+    },
+    {
+      "method": "POST",
+      "path": "/v1/bogs/02e46c28-4536-4f1a-98e0-b755f7281b01/resources/semantic/search",
+      "status": 200,
+      "bytes": 722,
+      "elapsed_ms": 1
+    },
+    {
+      "method": "POST",
+      "path": "/v1/bogs/02e46c28-4536-4f1a-98e0-b755f7281b01/resources/recent/query",
+      "status": 200,
+      "bytes": 349,
+      "elapsed_ms": 1
+    }
+  ],
+  "verified": {
+    "three_notes_round_trip": true,
+    "lexical_invoice_result": [
+      "n2"
+    ],
+    "semantic_query": "relaxing vacation in nature",
+    "semantic_top_result": "n1: Forest weekend",
+    "recent_descending": [
+      "n2: Invoice follow-up (300)",
+      "n3: Kitchen shopping (200)"
+    ]
+  },
+  "friction": [
+    "Root and docs.md advertise hard-coded production origins and remote MCP despite localhost entry; all trial requests stayed on the supplied origin.",
+    "docs.md says workspace_id defaults personal, while /v1 and root say legacy workspace with account workspaces unavailable. No explicit workspace was required.",
+    "include_fields returns literal JSON Pointer keys such as /title rather than title. Responses were usable but this shape was not explicit in the short guide."
+  ],
+  "limits": [
+    "Authorization was preinstalled; no human signup, approval, or credential issuance was exercised.",
+    "No browser frontend built or visually inspected; actual HTTP read and search output verified.",
+    "Semantic result demonstrates one relevant ranking among three notes, not a broad quality evaluation.",
+    "Created database retained for parent inspection in temporary local service."
+  ],
+  "follow_up": "Documentation corrected after trial: explicit operator deployment origin, legacy workspace wording, and pointer-keyed selected fields. No rerun or external host claim implied."
+}

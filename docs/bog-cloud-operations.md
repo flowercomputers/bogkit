@@ -75,6 +75,10 @@ The initial encrypted 3 GiB volume has Fly's automatic snapshots enabled with fi
 
 A restart uses the same volume and credentials. For rollback, stop the new service, retain the volume and backups, and deploy a previously verified compatible image. Never roll back across unknown storage/template versions in place. Template changes use a new instance with validated record transfer and preserve the source.
 
+Sandbox metadata and cleanup previews are additive extensions of registry schema 5. A schema-5 binary rollback is compatible only before sandbox creation is enabled or used: an older binary does not enforce sandbox expiry or its separate allowance. After sandbox use, keep a sandbox-aware binary until every sandbox has expired or been deleted and its filesystem cleanup is complete. Alternatively, restore a verified pre-sandbox snapshot into a separate recovery volume. Do not downgrade in place merely because the registry version still reads 5.
+
+Sandbox creation is off by default; set `BOG_CLOUD_SANDBOXES=true` only after verifying the initial rollout. Turning that switch off prevents new sandboxes but keeps expiry enforcement and cleanup running for existing ones.
+
 Actual deployment, client and recovery evidence is recorded in [acceptance](verification/bog-cloud-acceptance.md). Prepared configuration alone does not establish a live deployment.
 
 ## Connect to the deployed service
@@ -90,3 +94,10 @@ export BOG_CLOUD_URL=https://flower-bog-cloud.fly.dev
 Use the [MCP connection instructions](bog-cloud-mcp.md#tested-codex-cli-workflow) for Codex. Ordinary application clients should receive a scoped credential for their Bog through the owner-only token endpoint. The owner token can create resources and access all Bogs.
 
 The first deployment retains five synthetic acceptance Bogs, leaving three of the initial eight slots available. Their IDs are in the acceptance report. Instance deletion, additional templates and off-host backup scheduling remain follow-up work; the running service currently supports the fixed records template and its document/count Fold views.
+
+
+Operator-only test or private deployments can set `BOG_CLOUD_PUBLIC_ORIGIN` to
+their actual HTTPS origin (loopback HTTP is allowed). Discovery and OpenAPI links
+then stay on that deployment instead of the default public service. This value is
+explicit configuration, never inferred from an untrusted Host header. Native and
+external identity deployments use their configured authentication origins.

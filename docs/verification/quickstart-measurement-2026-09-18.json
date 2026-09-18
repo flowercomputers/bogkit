@@ -1,0 +1,193 @@
+{
+  "scope": "deterministic disposable localhost; operator auth; no browser approval or fresh agent",
+  "server_restarts": 0,
+  "first_default_write_and_read": {
+    "requests": 6,
+    "response_bytes": 10175,
+    "elapsed_ms": 1103.073
+  },
+  "one_guide_default_subset": {
+    "requests": 4,
+    "response_bytes": 5982,
+    "note": "Subset of same run; excludes root/index, auth and defined recipe; not an independent fresh-agent trial"
+  },
+  "totals": {
+    "requests": 21,
+    "response_bytes": 18728,
+    "expected_4xx": 3
+  },
+  "requests": [
+    {
+      "stage": "discovery-root",
+      "method": "GET",
+      "path": "/",
+      "status": 200,
+      "response_bytes": 3164,
+      "elapsed_ms": 3.264
+    },
+    {
+      "stage": "discovery-llms",
+      "method": "GET",
+      "path": "/llms.txt",
+      "status": 200,
+      "response_bytes": 1029,
+      "elapsed_ms": 0.389
+    },
+    {
+      "stage": "discovery-agent",
+      "method": "GET",
+      "path": "/agent.md",
+      "status": 200,
+      "response_bytes": 3164,
+      "elapsed_ms": 0.726
+    },
+    {
+      "stage": "default-create",
+      "method": "POST",
+      "path": "/v1/bogs",
+      "status": 201,
+      "response_bytes": 2345,
+      "elapsed_ms": 1051.655
+    },
+    {
+      "stage": "default-write",
+      "method": "PUT",
+      "path": "/v1/bogs/6cf04a2b-7f15-4a72-a05c-8cb04deef7eb/docs/note-1",
+      "status": 200,
+      "response_bytes": 190,
+      "elapsed_ms": 23.858
+    },
+    {
+      "stage": "default-read",
+      "method": "POST",
+      "path": "/v1/bogs/6cf04a2b-7f15-4a72-a05c-8cb04deef7eb/resources/docs/query",
+      "status": 200,
+      "response_bytes": 283,
+      "elapsed_ms": 23.181
+    },
+    {
+      "stage": "notes-recipe",
+      "method": "GET",
+      "path": "/examples/notes.json",
+      "status": 200,
+      "response_bytes": 1213,
+      "elapsed_ms": 0.529
+    },
+    {
+      "stage": "notes-create",
+      "method": "POST",
+      "path": "/v1/bogs",
+      "status": 201,
+      "response_bytes": 2761,
+      "elapsed_ms": 1363.481
+    },
+    {
+      "stage": "notes-route-put-example",
+      "method": "PUT",
+      "path": "/v1/bogs/13502f5f-5077-4da7-a1ce-1a901fe045e2/docs/note-1",
+      "status": 200,
+      "response_bytes": 190,
+      "elapsed_ms": 15.289
+    },
+    {
+      "stage": "notes-write",
+      "method": "PUT",
+      "path": "/v1/bogs/13502f5f-5077-4da7-a1ce-1a901fe045e2/docs/note-1",
+      "status": 200,
+      "response_bytes": 189,
+      "elapsed_ms": 10.086
+    },
+    {
+      "stage": "notes-keyword-search",
+      "method": "POST",
+      "path": "/v1/bogs/13502f5f-5077-4da7-a1ce-1a901fe045e2/resources/text/search",
+      "status": 200,
+      "response_bytes": 227,
+      "elapsed_ms": 5.793
+    },
+    {
+      "stage": "notes-top",
+      "method": "POST",
+      "path": "/v1/bogs/13502f5f-5077-4da7-a1ce-1a901fe045e2/resources/recent/query",
+      "status": 200,
+      "response_bytes": 242,
+      "elapsed_ms": 4.414
+    },
+    {
+      "stage": "notes-wait",
+      "method": "POST",
+      "path": "/v1/bogs/13502f5f-5077-4da7-a1ce-1a901fe045e2/resources/notes/query",
+      "status": 200,
+      "response_bytes": 203,
+      "elapsed_ms": 4.938
+    },
+    {
+      "stage": "notes-batch-get",
+      "method": "POST",
+      "path": "/v1/bogs/13502f5f-5077-4da7-a1ce-1a901fe045e2/resources/notes/query",
+      "status": 200,
+      "response_bytes": 267,
+      "elapsed_ms": 10.028
+    },
+    {
+      "stage": "notes-key-bounds",
+      "method": "POST",
+      "path": "/v1/bogs/13502f5f-5077-4da7-a1ce-1a901fe045e2/resources/notes/query",
+      "status": 200,
+      "response_bytes": 267,
+      "elapsed_ms": 4.42
+    },
+    {
+      "stage": "expected-docs-404",
+      "method": "GET",
+      "path": "/v1/bogs/13502f5f-5077-4da7-a1ce-1a901fe045e2/docs",
+      "status": 404,
+      "response_bytes": 232,
+      "elapsed_ms": 5.466
+    },
+    {
+      "stage": "expected-default-docs-404",
+      "method": "GET",
+      "path": "/v1/bogs/6cf04a2b-7f15-4a72-a05c-8cb04deef7eb/docs",
+      "status": 404,
+      "response_bytes": 377,
+      "elapsed_ms": 4.655
+    },
+    {
+      "stage": "repaired-docs-list",
+      "method": "POST",
+      "path": "/v1/bogs/6cf04a2b-7f15-4a72-a05c-8cb04deef7eb/resources/docs/query",
+      "status": 200,
+      "response_bytes": 310,
+      "elapsed_ms": 6.467
+    },
+    {
+      "stage": "expected-invalid-query",
+      "method": "POST",
+      "path": "/v1/bogs/13502f5f-5077-4da7-a1ce-1a901fe045e2/resources/notes/query",
+      "status": 400,
+      "response_bytes": 282,
+      "elapsed_ms": 15.333
+    },
+    {
+      "stage": "request-lookup",
+      "method": "GET",
+      "path": "/v1/requests/4a4ca7c3-241e-4560-82e6-b5bff7b80758",
+      "status": 200,
+      "response_bytes": 357,
+      "elapsed_ms": 4.615
+    },
+    {
+      "stage": "inventory",
+      "method": "GET",
+      "path": "/v1/bogs",
+      "status": 200,
+      "response_bytes": 1436,
+      "elapsed_ms": 4.498
+    }
+  ],
+  "authentication_requests": 0,
+  "human_wait_ms": null,
+  "readiness_poll_requests": 0,
+  "startup_health_checks_excluded": "not counted in this recorded run; the harness now reports attempts"
+}
