@@ -15,6 +15,11 @@ import urllib.request
 import uuid
 
 OWNER = 'capacity-local-fixture-not-a-production-secret'
+NATIVE_FIXTURE = {
+    'BOG_GITHUB_CLIENT_ID': 'capacity-local-fixture-client',
+    'BOG_GITHUB_CLIENT_SECRET': 'capacity-local-fixture-not-a-github-secret',
+    'BOG_GITHUB_REDIRECT_URI': 'https://cloud.bog.new/auth/callback',
+}
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SAMPLE = r'''
 for f in memory.current memory.peak memory.events memory.max cpu.max cpu.stat; do
@@ -59,6 +64,11 @@ def seed(root):
     return tokens
 
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise RuntimeError('local capacity requests must not redirect')
+
+
 class Harness:
     def __init__(self, args):
         self.args = args
@@ -68,7 +78,7 @@ class Harness:
         self.report = {'scope': {'records_per_bog': args.records, 'total_bogs': 9,
                        'resident_limit': 8, 'not_maximum_capacity_certification': True,
                        'latency_is_local_docker_not_fly': True}, 'samples': [], 'requests': []}
-        self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
 
     def request(self, method, path, token, body=None):
         started = time.monotonic()
@@ -144,6 +154,10 @@ class Harness:
             raise ValueError('container must have --label bog.capacity=local')
         if env.get('BOG_CLOUD_OWNER_TOKEN') != OWNER or env.get('BOG_CLOUD_COMPOSABLE') != 'true':
             raise ValueError('container must use fixed local fixture owner and composable=true')
+        if any(env.get(name) != value for name, value in NATIVE_FIXTURE.items()):
+            raise ValueError('container must use the exact dummy native-auth fixture configuration')
+        if any(name.startswith('BOG_WORKOS_') for name in env):
+            raise ValueError('external authentication configuration is not permitted in this fixture')
         if env.get('BOG_CLOUD_MAX_ACTIVE', '8') != '8':
             raise ValueError('resident limit must be 8')
         mounted = any(pathlib.Path(m['Source']).resolve() == self.args.fixture_root.resolve()
