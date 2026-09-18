@@ -15,6 +15,8 @@ kill_timeout = 120
   BOG_CLOUD_ROOT = "/data/bog"
   BOG_WORKER_BINARY = "/usr/local/bin/bog-records-worker"
   BOG_CLOUD_BIND = "0.0.0.0:8080"
+  # Activated only after the hosted composition canary passes.
+  BOG_CLOUD_COMPOSABLE = "false"
   BOG_CLOUD_MAX_ACTIVE = "8"
   BOG_CLOUD_MAX_STARTS = "2"
   BOG_CLOUD_MIN_FREE_BYTES = "67108864"
