@@ -17,6 +17,8 @@ kill_timeout = 120
   BOG_CLOUD_BIND = "0.0.0.0:8080"
   # Enabled after the hosted composition and recovery canary passed.
   BOG_CLOUD_COMPOSABLE = "true"
+  # Enabled after the agent-experience rollout and persistence canary passed.
+  BOG_CLOUD_SANDBOXES = "true"
   BOG_CLOUD_MAX_ACTIVE = "8"
   BOG_CLOUD_MAX_STARTS = "2"
   BOG_CLOUD_MIN_FREE_BYTES = "67108864"
