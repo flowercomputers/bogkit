@@ -45,7 +45,7 @@ class Probe:
         self.state = json.loads(self.path.read_text()) if self.path.exists() else {}
         self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
         self.session = None
-        self.protocol = '2025-03-26'
+        self.protocol = '2025-11-25'
         self.requests = []
         self.credentials = {}
         self.isolation_bog = None
@@ -80,7 +80,11 @@ class Probe:
             response = error
         with response:
             raw = response.read(2 * 1024 * 1024 + 1)
-            self.requests.append({'request_id': rid, 'status': response.status})
+            self.requests.append({'method': method, 'path': '/mcp' if mcp else path,
+                                  'operation': body.get('method') if mcp and isinstance(body, dict) else None,
+                                  'client_request_id': rid,
+                                  'server_request_id': response.headers.get('X-Request-Id'),
+                                  'status': response.status})
             check(response.status in expected, 'unexpected HTTP status')
             check(len(raw) <= 2 * 1024 * 1024, 'response too large')
             if mcp and response.headers.get('Mcp-Session-Id'):
