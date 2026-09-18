@@ -27,6 +27,57 @@ $ curl localhost:7877/views/total
 $ curl -N localhost:7877/watch        # server-sent events, one per commit
 ```
 
+## Bog Cloud infrastructure
+
+This branch also contains [Bog Cloud](https://cloud.bog.new), an agent-first hosted prototype with HTTP, MCP, and a browser console. It runs on one shared Fly.io machine: a public server manages authentication, permissions, provisioning, and separate Bog worker processes. It does **not** provision Bogs through systemd or create a VM/container for each Bog.
+
+```text
+Browser / HTTP client / MCP agent
+                |
+         Bog Cloud server
+  Authentication, permissions, registry
+         and worker supervisor
+                |
+      Private Unix-socket connections
+         /             |             \
+     Bog A          Bog B          Bog C
+     worker         worker         worker
+       |              |              |
+     Separate data directories on one persistent volume
+```
+
+### Provisioning and lifecycle
+
+Creating a Bog checks workspace permissions, allowance, and available capacity. The service registers its identity and configuration, allocates storage, and starts a worker. Creation idempotency keys make retries safe without creating duplicate Bogs.
+
+Each worker runs the platform's worker executable with the target Bog's data directory and definition. The application supervisor starts and monitors these processes directly. Idle workers stop after ten minutes; unused workers can also be reclaimed when another Bog needs capacity. A later request reopens the Bog from its saved data. Stopping a worker does not delete the Bog.
+
+The current deployment configuration allows eight resident workers and two concurrent starts. An uncapped account or workspace removes its Bog-count allowance; it does not remove host capacity or per-Bog storage limits, and it does not purchase additional infrastructure.
+
+### Isolation and its limits
+
+- **Authorization:** the public server checks workspace membership and credential scope before routing operations. Single-Bog app credentials are restricted to their target Bog.
+- **Processes:** each running Bog has a separate worker process and address space.
+- **Storage and connections:** each Bog uses a separate data directory and private Unix socket rather than a publicly exposed worker port. Workers start with a cleared environment and receive only the configured worker variables.
+
+This is **process separation, not a strong sandbox between tenants**. Workers share the host, operating-system user, and underlying volume. There are no separate per-Bog containers, filesystem namespaces, or individual CPU/memory budgets. A compromised worker could affect resources beyond its own Bog, and expensive workloads compete for shared host resources. The service runs trusted platform worker code; its process model should not be treated as a sandbox for arbitrary tenant executables.
+
+### Persistence, supervision, and deployment
+
+A SQLite registry under `/data/bog` stores management information. Bog data lives separately on the persistent Fly volume mounted at `/data`. The container entrypoint prepares the private application directory and drops privileges to the `bog` user before starting the server.
+
+Fly's restart policy restarts the service when it exits; the application's supervisor manages individual Bog workers. There is no systemd dependency in this serving path.
+
+As configured in this branch, the service uses one shared CPU and 1 GB RAM, with no automatic expansion. This is a single-host prototype, not a highly available fleet of independently isolated database servers. Deployment settings can change; the configuration below is the source of truth rather than a promise about supported user counts.
+
+Implementation references:
+
+- [Fly deployment configuration](deploy/bog-cloud/fly.toml)
+- [Container image](deploy/bog-cloud/Dockerfile) and [entrypoint](deploy/bog-cloud/entrypoint.sh)
+- [Worker supervisor](cloud/src/supervisor.rs) and [lifecycle defaults](cloud/src/config.rs)
+- [Private worker client](cloud/src/worker_client.rs)
+- [Service](cloud/src/service.rs), [registry](cloud/src/registry.rs), and [workspace permissions](cloud/src/workspace.rs)
+
 ## Documentation
 
 The fold crate is internally documented; to view the doc site, run:
