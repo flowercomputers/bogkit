@@ -50,52 +50,51 @@ async function api(path, options = {}, retried = false) {
 const selected = path => path + (path.includes('?') ? '&' : '?') + 'workspace_id=' + encodeURIComponent(workspace);
 function element(tag, text, className) { const node = document.createElement(tag); node.textContent = text; if (className) node.className = className; return node; }
 function action(text, run) { const button = element('button', text); button.type = 'button'; button.onclick = () => task(button, run); return button; }
-async function task(button, run) { button.disabled = true; try { await run(); } catch (error) { status(error.message, true); } finally { button.disabled = false; } }
+async function task(button, run) { button.disabled = true; const errorBox = button.closest?.('dialog')?.querySelector('.dialog-error'); if (errorBox) errorBox.hidden = true; try { await run(); } catch (error) { if (errorBox) { errorBox.textContent = error.message; errorBox.hidden = false; } else status(error.message, true); } finally { button.disabled = false; } }
 function reveal(label, secret) { $('secret-label').textContent = label; $('secret').textContent = secret; $('secret-panel').hidden = false; $('secret-panel').scrollIntoView({ block: 'center' }); }
 $('hide-secret').onclick = () => { $('secret').textContent = ''; $('secret-panel').hidden = true; };
 async function refresh() {
   $('hide-secret').click();
   const [bogData, memberData] = await Promise.all([api(selected('/v1/bogs')), api('/v1/workspaces/' + workspace + '/members')]);
   const bogs = bogData.bogs || []; $('bogs').replaceChildren(); $('token-bog').replaceChildren(); $('tokens').replaceChildren();
-  const current = workspaceItems.find(item => item.id === workspace);
-  const allowance = current?.bog_limit === null ? 'Uncapped Bogs (host capacity still applies)' : `${current?.bog_limit ?? 3} Bogs allowed`;
-  $('allowance').textContent = `${bogs.length} ${bogs.length === 1 ? 'Bog' : 'Bogs'} · ${allowance} · 16 MiB of JSON records each`;
-  if (!bogs.length) $('bogs').append(element('p', 'Your first project can start here. Create a Bog above.'));
+  const bogRows = makeTable($('bogs'), ['Name', 'Status', 'Storage', 'Actions'], 'No Bogs yet. Create your first Bog above.');
+  const keyRows = makeTable($('tokens'), ['Name', 'Bog', 'Permissions', 'Actions'], 'No application API keys yet.');
   for (const bog of bogs) {
-    const row = element('div', '', 'row'), info = element('div', bog.name);
-    info.append(element('small', `${bog.id} · ${bog.status || 'saved'}`)); row.append(info);
-    try { const usage = await api(selected('/v1/bogs/' + bog.id + '/usage')); const data = usage.data || usage; info.append(element('small', `${(data.logical_bytes / 1048576).toFixed(2)} MiB used of ${(data.limit_bytes / 1048576).toFixed(0)} MiB`)); } catch { info.append(element('small', 'Usage temporarily unavailable')); }
+    const row = element('tr', ''), info = element('td', bog.name), storage = element('td', ''), controls = element('td', '');
+    info.append(element('small', bog.id)); row.append(info, element('td', bog.status || 'saved'), storage, controls);
+    try { const usage = await api(selected('/v1/bogs/' + bog.id + '/usage')); const data = usage.data || usage; storage.append(element('span', `${(data.logical_bytes / 1048576).toFixed(2)} MiB used of ${(data.limit_bytes / 1048576).toFixed(0)} MiB`)); } catch { storage.append(element('span', 'Unavailable')); }
     const option = element('option', bog.name); option.value = bog.id; $('token-bog').append(option);
-    if (owner) row.append(action('Delete Bog', async () => {
+    if (owner) controls.append(action('Delete Bog', async () => {
       const confirm = prompt(`Permanently delete ${bog.name} and its records? Type its ID to confirm:\n${bog.id}`);
       if (confirm !== bog.id) return;
       await api(selected('/v1/bogs/' + bog.id), { method: 'DELETE', body: JSON.stringify({ confirm }) }); await refresh(); status('Bog deleted.');
     }));
-    $('bogs').append(row);
+    addTableRow(bogRows, row);
     const tokenData = await api(selected('/v1/bogs/' + bog.id + '/tokens'));
     for (const token of tokenData.tokens || []) {
       if (token.revoked_at) continue;
-      const line = element('div', '', 'row'); line.append(element('span', `${bog.name} · ${token.label || 'App credential'} · ${token.scope} · ${token.id}`));
-      if (owner) line.append(action('Revoke', async () => { await api(selected('/v1/bogs/' + bog.id + '/tokens/' + token.id), { method: 'DELETE' }); await refresh(); status('Credential revoked.'); }));
-      $('tokens').append(line);
+      const line = element('tr', ''), label = element('td', token.label || 'App credential'), actions = element('td', ''); label.append(element('small', token.id)); line.append(label, element('td', bog.name), element('td', token.scope === 'write' ? 'Read and write' : 'Read only'), actions);
+      if (owner) actions.append(action('Revoke', async () => { await api(selected('/v1/bogs/' + bog.id + '/tokens/' + token.id), { method: 'DELETE' }); await refresh(); status('Credential revoked.'); }));
+      addTableRow(keyRows, line);
     }
   }
-  $('members').replaceChildren();
+  const memberRows = makeTable($('members'), ['Account', 'Role', 'Status', 'Actions'], 'No members.');
   for (const member of memberData.members || []) {
-    const row = element('div', '', 'row'); row.append(element('span', `${member.account_id}${member.account_id === account ? ' (you)' : ''} · ${member.role}`));
-    if (owner && member.account_id !== account) row.append(action('Remove', async () => {
+    const row = element('tr', ''), actions = element('td', ''); row.append(element('td', `${member.account_id.slice(0,8)}${member.account_id === account ? ' (you)' : ''}`), element('td', member.role), element('td', 'Active'), actions);
+    if (owner && member.account_id !== account) actions.append(action('Remove', async () => {
       if (!confirm('Remove this person and revoke the app credentials they issued in this workspace?')) return;
       await api('/v1/workspaces/' + workspace + '/members/' + member.account_id, { method: 'DELETE' }); await refresh(); status('Member removed.');
-    })); $('members').append(row);
+    })); addTableRow(memberRows, row);
   }
-  $('invite').hidden = !owner;
-  $('invitations').replaceChildren();
+  $('invite').hidden = !owner; $('new-invite').hidden = !owner;
   if (owner) {
     const pending = await api('/v1/workspaces/' + workspace + '/invitations');
     for (const invite of pending.invitations || []) {
       if (invite.revoked_at || invite.accepted_at) continue;
-      const row = element('div', '', 'row'); row.append(element('span', `Invitation · ${invite.role} · expires ${new Date(invite.expires_at * 1000).toLocaleDateString()}`));
-      row.append(action('Revoke invitation', async () => { await api('/v1/workspaces/' + workspace + '/invitations/' + invite.id, { method: 'DELETE' }); await refresh(); status('Invitation revoked.'); })); $('invitations').append(row);
+      const row = element('tr', ''), actions = element('td', ''); const identity = element('td', 'Invitation link'); identity.append(element('small', invite.id.slice(0, 8)));
+      const state = element('td', invite.expires_at * 1000 <= Date.now() ? 'Expired' : 'Pending'); state.append(element('small', 'Expires ' + new Date(invite.expires_at * 1000).toLocaleDateString()));
+      row.append(identity, element('td', invite.role), state, actions);
+      actions.append(action('Revoke invitation', async () => { await api('/v1/workspaces/' + workspace + '/invitations/' + invite.id, { method: 'DELETE' }); await refresh(); status('Invitation revoked.'); })); addTableRow(memberRows, row);
     }
   }
 }
@@ -140,14 +139,14 @@ for (const id of ['create', 'issue', 'invite']) $(id).onsubmit = event => {
   event.preventDefault(); task(event.submitter, async () => {
     if (id === 'create') {
       const label = workspace + ':' + $('name').value; if (!createKeys.has(label)) createKeys.set(label, crypto.randomUUID());
-      await api(selected('/v1/bogs'), { method: 'POST', headers: { 'Idempotency-Key': createKeys.get(label) }, body: JSON.stringify({ name: $('name').value }) }); createKeys.delete(label); $('name').value = ''; await refresh(); status('Bog created. Your app can start using it.');
+      await api(selected('/v1/bogs'), { method: 'POST', headers: { 'Idempotency-Key': createKeys.get(label) }, body: JSON.stringify({ name: $('name').value }) }); createKeys.delete(label); $('name').value = ''; $('new-bog-dialog').close(); await refresh(); status('Bog created. Your app can start using it.');
     } else if (id === 'issue') {
       const prepared = await api(selected('/v1/bogs/' + $('token-bog').value + '/app-access'), { method: 'POST', body: JSON.stringify({ scope: $('scope').value, label: $('app-label').value }) });
       showAppHandoff(prepared); status('Private access prepared. Download explicitly within ten minutes.');
     } else {
       const invite = await api('/v1/workspaces/' + workspace + '/invitations', { method: 'POST', body: JSON.stringify({ role: $('role').value }) });
+      $('new-invite-dialog').close(); await refresh();
       reveal('Share this single-use invitation. It expires in seven days.', location.origin + '/console#invite=' + encodeURIComponent(invite.secret));
-      const row = element('div', '', 'row'); row.append(element('span', 'Invitation · ' + invite.id)); row.append(action('Revoke invitation', async () => { await api('/v1/workspaces/' + workspace + '/invitations/' + invite.id, { method: 'DELETE' }); row.remove(); $('hide-secret').click(); status('Invitation revoked.'); })); $('invitations').append(row);
     }
   });
 };
@@ -163,11 +162,13 @@ async function start() {
     const session = await api('/console-session'); csrf = session.csrf_token; account = session.account?.id || session.account_id || '';
     if (session.authentication_mode === 'github_native') { $('agent-access-option').hidden = false; $('agent-access-option').disabled = false; await refreshAgents(); }
     $('app').hidden = false; $('logout').hidden = false;
-    const identity = session.account?.display_name || session.account?.username || session.account?.name || account.slice(0, 8);
+    const identity = account.slice(0, 8);
     const userMenu = document.createElement('details'); userMenu.className = 'user-menu';
-    const userLabel = element('summary', identity || 'Account'); userLabel.setAttribute('aria-label', 'Account: ' + (identity || 'signed in'));
+    const userLabel = element('summary', ''); userLabel.setAttribute('aria-label', 'Account: ' + (identity || 'signed in'));
+    const avatar = element('span', '', 'account-avatar'); avatar.setAttribute('aria-hidden', 'true');
+    userLabel.append(avatar, element('span', identity || 'Account'));
     $('logout').before(userMenu); userMenu.append(userLabel, $('logout'));
-    for (const link of document.querySelectorAll('.site-header a[href="/connect"], .site-header a[href="/console"], #mobile-navigation a[href="/connect"], #mobile-navigation a[href="/console"]')) link.remove();
+    for (const link of document.querySelectorAll('.site-header a[href="/docs"], .site-header a[href="/connect"], .site-header a[href="/console"], #mobile-navigation a[href="/docs"], #mobile-navigation a[href="/connect"], #mobile-navigation a[href="/console"]')) link.remove();
     document.addEventListener('click', event => { if (!userMenu.contains(event.target)) userMenu.open = false; });
     document.addEventListener('keydown', event => { if (event.key === 'Escape' && userMenu.open) { userMenu.open = false; userLabel.focus(); } });
     await loadWorkspaces();
@@ -192,10 +193,17 @@ function selectAccess(kind) {
 }
 $('access-kind').onchange = () => selectAccess($('access-kind').value);
 async function refreshAgents() {
-  const data = await api('/v1/agent-tokens'); $('agent-tokens').replaceChildren();
-  for (const token of data.tokens || []) { if (token.revoked_at) continue; const row=element('div','','row'); row.append(element('span', `${token.name} · expires ${new Date(token.expires_at*1000).toLocaleDateString()}`)); row.append(action('Revoke',async()=>{await api('/v1/agent-tokens/'+token.id,{method:'DELETE'});await refreshAgents();status('Agent credential revoked.');}));$('agent-tokens').append(row); }
+  const data = await api('/v1/agent-tokens');
+  const rows = makeTable($('agent-tokens'), ['Agent', 'Access', 'Expires', 'Actions'], 'No agent credentials yet.');
+  for (const token of data.tokens || []) {
+    if (token.revoked_at) continue;
+    const row = element('tr', ''), actions = element('td', '');
+    row.append(element('td', token.name), element('td', 'Your permitted workspaces'), element('td', new Date(token.expires_at * 1000).toLocaleDateString()), actions);
+    actions.append(action('Revoke', async () => { await api('/v1/agent-tokens/' + token.id, {method:'DELETE'}); await refreshAgents(); status('Agent credential revoked.'); }));
+    addTableRow(rows, row);
+  }
 }
-$('agent-issue').onsubmit = event => { event.preventDefault();task(event.submitter,async()=>{const token=await api('/v1/agent-tokens',{method:'POST',body:JSON.stringify({name:$('agent-name').value})});await refreshAgents();$('agent-name').value='';reveal('Save this agent credential in a secret store. It is shown once and expires in 30 days.',token.token);status('Agent credential created.');}); };
+$('agent-issue').onsubmit = event => { event.preventDefault();task(event.submitter,async()=>{const token=await api('/v1/agent-tokens',{method:'POST',body:JSON.stringify({name:$('agent-name').value})});await refreshAgents();$('agent-name').value='';$('new-access-dialog').close();reveal('Save this agent credential in a secret store. It is shown once and expires in 30 days.',token.token);status('Agent credential created.');}); };
 async function loadWorkspaces(preferred = workspace) {
   const data = await api('/v1/workspaces'); workspaceItems = data.workspaces || [];
   $('workspace').replaceChildren();
@@ -217,7 +225,7 @@ $('create-workspace').onsubmit = event => {
     createKeys.delete(label); $('workspace-name').value = ''; $('organizations').close();
     await loadWorkspaces(result.workspace.id); await refresh();
     if (platformOperator) await refreshPlatform();
-    status('Organization created. Invite your team through People.');
+    status('Organization created. Invite your team through Workspace.');
   });
 };
 async function refreshPlatform() {
@@ -241,6 +249,8 @@ function showAppHandoff(prepared) {
   rememberHandoff(prepared.handoff_id);
   pendingAppAccess = prepared;
   $('handoff-description').textContent = `${prepared.label} · ${prepared.scope} access to Bog ${prepared.bog_id} in workspace ${prepared.workspace_id}. Expires ${new Date(prepared.expires_at * 1000).toLocaleTimeString()}.`;
+  selectAccess('application');
+  if (!$('new-access-dialog').open) $('new-access-dialog').showModal();
   $('app-handoff').hidden = false;
   $('download-app').disabled = false;
 }
@@ -273,3 +283,17 @@ document.addEventListener('bog-tool-status', async event => {
     catch (error) { status(error.message, true); }
   }
 });
+
+function makeTable(container, headings, emptyText) {
+  container.replaceChildren(); container.className = 'table-card';
+  const table = element('table', ''), head = element('thead', ''), header = element('tr', ''), body = element('tbody', '');
+  for (const title of headings) { const cell = element('th', title); cell.setAttribute('scope', 'col'); header.append(cell); }
+  head.append(header); const empty = element('tr', ''), cell = element('td', emptyText, 'empty-state'); cell.colSpan = headings.length; empty.append(cell); body.append(empty); body.emptyRow = empty;
+  table.append(head, body); container.append(table); return body;
+}
+function addTableRow(body, row) { if (body.emptyRow) { body.emptyRow.remove(); body.emptyRow = null; } body.append(row); }
+for (const [buttonId, dialogId, focusId] of [['new-bog','new-bog-dialog','name'], ['new-access','new-access-dialog','access-kind'], ['new-invite','new-invite-dialog','role']]) {
+  $(buttonId).onclick = () => { const dialog = $(dialogId); dialog.querySelector('.dialog-error').hidden = true; dialog.showModal(); $(focusId).focus(); };
+  $(dialogId).addEventListener('close', () => $(buttonId).focus());
+}
+for (const button of document.querySelectorAll('[data-close]')) button.onclick = () => $(button.dataset.close).close();

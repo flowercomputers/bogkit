@@ -39,3 +39,46 @@
 .console-status:empty,.console-status[hidden]{display:none}
 .site-header .user-menu{position:relative;padding:0;border:0}.site-header .user-menu summary{margin:0;cursor:pointer;max-width:16ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .site-header .user-menu #logout{position:absolute;right:0;top:calc(100% + .6em);white-space:nowrap;background:var(--paper);border:1px solid var(--line);padding:.6em 1em;border-radius:8px}
+
+.site-header .user-menu summary{display:flex;align-items:center;gap:.45em;list-style:none;max-width:none}
+.site-header .user-menu summary::-webkit-details-marker{display:none}
+.site-header .user-menu summary::marker{content:""}
+.account-avatar{display:inline-block;width:24px;height:24px;flex:0 0 24px;border-radius:50%;background:var(--code);border:1px solid var(--line);box-sizing:border-box}
+/* Shared creation and collection layout, using Flower's existing palette. */
+.section-heading{display:flex;align-items:center;justify-content:space-between;gap:1em;margin-bottom:1.2em;flex-wrap:wrap}
+.section-heading h2{margin:0}.heading-links{display:flex;align-items:baseline;gap:1em;flex-wrap:wrap}.heading-links a{font-size:.75em}
+.table-card{overflow:auto;border:1px solid var(--line);border-radius:20px;margin:0 0 1em;background:var(--code)}
+.table-card table{width:100%;border-collapse:collapse;margin:0;font:inherit;font-size:.8em;text-align:left}
+.table-card th,.table-card td{padding:1em;vertical-align:middle;border:0;border-bottom:1px solid var(--line);font-weight:400}
+.table-card th{background:color-mix(in srgb,var(--ink) 5%,transparent);color:var(--muted)}
+.table-card th+th,.table-card td+td{border-left:1px solid var(--line)}
+.table-card tbody tr:last-child td{border-bottom:0}.table-card td:last-child{width:1%;white-space:nowrap}
+.table-card small{display:block;color:var(--muted);font-size:.75em;margin-top:.3em;overflow-wrap:anywhere}
+.table-card .empty-state{text-align:center;padding:2.5em 1em;color:var(--muted);white-space:normal;width:auto}
+.list-heading{font-size:.85em;color:var(--muted);font-weight:400;margin:1.5em 0 .75em}
+.creation-dialog{width:min(540px,calc(100vw - 2rem));max-height:85dvh;overflow:auto;box-sizing:border-box;padding:1.5em;background:var(--paper);color:var(--ink);border:1px solid var(--line);border-radius:20px;font:inherit}
+.creation-dialog::backdrop{background:#0005;backdrop-filter:blur(3px)}
+.dialog-heading{display:flex;align-items:center;justify-content:space-between;gap:1em;margin-bottom:1.2em}.dialog-heading h2{margin:0;font-size:1.1em;color:var(--ink)}
+.dialog-heading button{background:none;border:0;padding:0 .2em;font-size:1.3em}
+.creation-dialog form{display:flex;flex-direction:column;align-items:stretch;gap:.6em;margin:1em 0}
+.creation-dialog label{font-size:.85em}.creation-dialog p{font-size:.85em}.creation-dialog input,.creation-dialog select{width:100%;box-sizing:border-box;min-width:0}
+.dialog-actions{display:flex;justify-content:flex-end;gap:.6em;margin-top:.8em}.dialog-error{color:#b54537}
+#credentials-list>div:empty{display:none}
+@media(max-width:640px){.console-sections{display:flex;flex-wrap:wrap}.console-sections a{flex:1;white-space:nowrap}.section-heading{align-items:flex-start}.table-card{border-radius:16px}.table-card table{min-width:480px}.creation-dialog{padding:1em}.dialog-actions button{width:auto}}
+.creation-dialog form label{align-self:flex-start;text-align:left}.creation-dialog .access-choice{flex-direction:column;align-items:stretch}.creation-dialog .access-choice label{text-align:left}
+/* Console uses one text size and the full shared shell width. */
+.site-shell main:has(#app),.site-shell main #app{width:100%;max-width:none;max-inline-size:none;box-sizing:border-box}
+.site-shell:has(#app) :is(main,.site-header,.site-footer) *{font-size:inherit!important}
+.site-shell main #app .section-heading,.site-shell main #app .heading-links{align-items:center}
+.site-shell main #app .section-heading :is(h2,button),.site-shell main #app .heading-links :is(h2,a){margin-block:0;line-height:1.2}
+.site-shell main #app .table-card,.site-shell main #app .table-card :is(table,tbody,tr,td){background:transparent}
+.site-shell main #app .table-card th{background:color-mix(in srgb,var(--ink) 5%,transparent)}
+.site-shell main #app>section{border-bottom:0;padding-bottom:0;margin-bottom:calc(2 * var(--site-inset))}
+.site-shell main #app>section:not([hidden]){display:flow-root}
+.site-shell main #app>section>:last-child{margin-bottom:0}
+.site-shell main #app>section>#credentials-list>:last-child{margin-bottom:0}
+/* Keep top-layer dialogs centered regardless of the page's scroll position. */
+.site-shell main dialog.creation-dialog,.site-shell main dialog#organizations{position:fixed;inset:0;margin:auto;max-height:calc(100dvh - 2rem)}
+.site-shell main #app .console-sections{border-radius:10px}
+.site-shell main #app .console-sections a{padding:.33em .77em;line-height:1.33;display:flex;align-items:center;justify-content:center;box-sizing:border-box}
+@supports(corner-shape:superellipse(2)){.site-shell main #app .console-sections{border-radius:20px;corner-shape:superellipse(2)}}
