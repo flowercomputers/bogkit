@@ -56,6 +56,7 @@ impl Drop for WorkerLease {
 pub struct Supervisor {
     pub(crate) config: Config,
     observability: Option<Arc<crate::observability::Observability>>,
+    recovered_definition_jobs: Vec<BogId>,
     pub(crate) registry: Arc<Registry>,
     _lock: File,
     running: AsyncMutex<HashMap<BogId, Running>>,
@@ -110,10 +111,26 @@ impl Supervisor {
             .map_err(|_| unavailable("cannot open manager lock"))?;
         lock.try_lock()
             .map_err(|_| unavailable("another manager owns this service root"))?;
+        let recovered_definition_jobs = {
+            let db = registry.connection()?;
+            let mut statement = db.prepare("SELECT bog_id FROM definition_jobs WHERE status IN ('building','activating','recovery_required')").map_err(crate::registry::db_error)?;
+            let rows = statement
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(crate::registry::db_error)?;
+            rows.map(|row| {
+                row.map_err(crate::registry::db_error).and_then(|id| {
+                    uuid::Uuid::parse_str(&id)
+                        .map(BogId)
+                        .map_err(|_| unavailable("invalid build identity"))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?
+        };
         registry.recover_definition_jobs()?;
         crate::definitions::recover_candidates(&config.root.join("instances"), &registry)?;
         Ok(Self {
             observability: None,
+            recovered_definition_jobs,
             start_slots: Arc::new(Semaphore::new(config.max_starts)),
             active_slots: Arc::new(Semaphore::new(config.max_active)),
             admission: AsyncMutex::new(()),
@@ -127,10 +144,18 @@ impl Supervisor {
         })
     }
     pub fn with_observability(mut self, obs: Arc<crate::observability::Observability>) -> Self {
+        for id in self.recovered_definition_jobs.drain(..) {
+            obs.event(
+                id,
+                "definition_build_recovered",
+                None,
+                Some("manager_restarted_before_activation"),
+            );
+        }
         self.observability = Some(obs);
         self
     }
-    fn event(&self, id: BogId, kind: &str, reason: Option<&str>) {
+    pub(crate) fn event(&self, id: BogId, kind: &str, reason: Option<&str>) {
         if let Some(obs) = &self.observability {
             obs.event(id, kind, None, reason);
         }

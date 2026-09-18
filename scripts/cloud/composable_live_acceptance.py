@@ -146,6 +146,7 @@ class Probe:
         check(self.http('POST', '/v1/definitions/validate', {'definition': definition})['valid'], 'invalid definition')
         body = {'name': 'composable-live-' + run, 'definition': definition}
         created = self.http('POST', '/v1/bogs', body, expected=(202,), key=run)
+        check(created.get('kind') == 'defined' and created.get('template') is None, 'defined Bog identity is misleading')
         self.state['bog_id'] = str(uuid.UUID(created['id']))
         self.save()
         repeated = self.http('POST', '/v1/bogs', body, expected=(202,), key=run)
@@ -157,8 +158,9 @@ class Probe:
         else:
             raise RuntimeError('Bog readiness timeout')
         writer = self.mint('write')
-        self.http('POST', self.base + '/batch', fixture('todo-records.json'), token=writer)
+        self.http('POST', self.base + '/batch', {'ops': fixture('todo-records.json')}, token=writer)
         self.connect()
+        self.tool('batch', bog_id=self.state['bog_id'], ops=fixture('todo-records.json'))
         check(self.tool('validate_definition', definition=definition)['valid'], 'MCP validation failed')
         for name, via_mcp in [('todo-search.json', False), ('todo-semantic.json', True)]:
             active = self.http('GET', self.base + '/definition')
@@ -194,7 +196,9 @@ class Probe:
         self.http('POST', self.base + '/resources/private_stats/query', {}, token=reader, expected=(404,))
         for resource in ['open', 'open_count', 'priority', 'text_search', 'semantic_search']:
             search = resource.endswith('search')
-            query = {'query': 'release changelog', 'limit': 3} if search else {}
+            query = {'query': 'release changelog', 'limit': 3, 'include_fields': ['/title']} if search else {}
+            if resource == 'semantic_search':
+                query['max_distance'] = 2
             rest = self.http('POST', self.base + '/resources/' + resource + ('/search' if search else '/query'), query, token=reader)['data']
             remote = self.tool('search_resource' if search else 'query_resource', bog_id=self.state['bog_id'], resource=resource, query=query)['data']
             check(rest == remote, 'REST/MCP disagreement')
@@ -206,8 +210,16 @@ class Probe:
                 check(len(rest) == 2 and 'notes' not in json.dumps(rest), 'filter/projection mismatch')
             else:
                 check(bool(rest), 'empty search')
+                check(all('value' in hit for hit in rest), 'search projection missing')
+                if resource == 'semantic_search':
+                    check(all(abs(hit['score'] - (1 - hit['distance'])) < 1e-6 for hit in rest), 'semantic score mismatch')
         resources = self.tool('list_resources', bog_id=self.state['bog_id'])
         check('private_stats' not in json.dumps(resources), 'private resource exposed')
+        check(all('response_schema' in op for resource in resources['resources'] for op in resource['operations']), 'missing response schema')
+        metrics = self.http('GET', self.base + '/metrics', token=reader)
+        check(bool(metrics), 'scoped metrics missing')
+        self.http('POST', '/v1/bogs', {}, token=reader, expected=(403,))
+        self.http('POST', self.base + '/tokens', {}, token=reader, expected=(403,))
         definition = self.tool('describe_definition', bog_id=self.state['bog_id'])
         rest_definition = self.http('GET', self.base + '/definition')
         rest_definition.pop('request_id', None)
@@ -220,6 +232,7 @@ class Probe:
         for job in self.state['job_ids']:
             status = self.tool('definition_update_status', bog_id=self.state['bog_id'], job_id=job)
             check(status['status'] in ('succeeded', 'completed', 'active'), 'job not complete')
+            check(status.get('finished_at') and 'processed_records' in status and not status.get('writes_paused'), 'job progress missing')
 
     def cleanup(self):
         bog = self.http('GET', self.base)

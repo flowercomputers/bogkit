@@ -9,11 +9,11 @@ pub(crate) fn schema(name: &str) -> serde_json::Map<String, Value> {
     let boolean = json!({"type":"boolean"});
     let nullable_integer = json!({"type":["integer","null"]});
     let bog = object(
-        json!({"id":string,"name":string,"template":string,"template_version":string,"status":string,"desired_state":string,"generation":integer,"failure_code":{"type":["string","null"]},"created_at":integer,"schema":{"type":"object"},"api_url":string}),
+        json!({"id":string,"name":string,"template":{"type":["string","null"]},"template_version":{"type":["string","null"]},"kind":{"enum":["template","defined"]},"writes_paused":boolean,"active_definition_job":{"type":["object","null"]},"status":string,"desired_state":string,"generation":integer,"failure_code":{"type":["string","null"]},"created_at":integer,"schema":{"type":"object"},"api_url":string}),
         &["id", "name", "template", "status", "generation"],
     );
     let workspace = object(
-        json!({"id":string,"name":string,"role":string,"personal":boolean,"uncapped_bogs":boolean,"bog_limit":nullable_integer}),
+        json!({"id":string,"name":string,"role":string,"personal":boolean,"uncapped_bogs":boolean,"effective_uncapped_bogs":boolean,"bog_limit_source":{"enum":["legacy","workspace","account","default"]},"bog_limit":nullable_integer}),
         &["id", "name", "role", "personal", "bog_limit"],
     );
     let workspaces = json!({"type":"array","items":workspace});
@@ -33,7 +33,7 @@ pub(crate) fn schema(name: &str) -> serde_json::Map<String, Value> {
             ],
         ),
         "validate_definition" => object(
-            json!({"valid":boolean,"definition":{"type":"object"},"digest":string,"operations":{"type":"array","items":{"type":"object"}}}),
+            json!({"valid":boolean,"definition":{"type":"object"},"digest":string,"operations":{"type":"array","items":bog_cloud::contract::operation_metadata_schema()}}),
             &["valid", "definition", "digest", "operations"],
         ),
         "create_bog_from_definition" => bog.clone(),
@@ -42,11 +42,14 @@ pub(crate) fn schema(name: &str) -> serde_json::Map<String, Value> {
             &["definition", "digest", "revision"],
         ),
         "list_resources" => object(
-            json!({"resources":{"type":"array","items":object(json!({"name":string,"stages":{"type":"array","items":{"type":"object"}},"terminal":{"type":"object"},"operations":{"type":"array","items":{"type":"object"}}}), &["name","stages","terminal","operations"])},"revision":integer,"digest":string}),
+            json!({"resources":{"type":"array","items":object(json!({"name":string,"stages":{"type":"array","items":{"type":"object"}},"terminal":{"type":"object"},"operations":{"type":"array","items":bog_cloud::contract::operation_metadata_schema()}}), &["name","stages","terminal","operations"])},"revision":integer,"digest":string}),
             &["resources", "revision", "digest"],
         ),
-        "query_resource" | "search_resource" => object(
-            json!({"seq":integer,"data":{"description":"Result shape depends on the exposed action; list_resources returns its response_schema."}}),
+        "query_resource" => {
+            json!({"anyOf":[object(json!({"seq":integer,"data":bog_cloud::contract::resource_query_response_schema()}), &["seq","data"]), object(json!({"seq":integer,"changed":boolean,"reset":boolean,"cursor":string}), &["seq","changed","reset","cursor"])]})
+        }
+        "search_resource" => object(
+            json!({"seq":integer,"data":bog_cloud::contract::resource_search_response_schema()}),
             &["seq", "data"],
         ),
         "plan_definition_update" => object(
@@ -62,10 +65,7 @@ pub(crate) fn schema(name: &str) -> serde_json::Map<String, Value> {
             json!({"job_id":string,"bog_id":string,"status":string}),
             &["job_id", "bog_id", "status"],
         ),
-        "definition_update_status" => object(
-            json!({"job_id":string,"bog_id":string,"status":string,"error":{"type":["string","null"]},"expected_revision":integer,"definition":{"type":"object"},"target_digest":string,"revision":nullable_integer}),
-            &["job_id", "bog_id", "status"],
-        ),
+        "definition_update_status" => bog_cloud::contract::definition_job_schema(),
         "bog_metrics" => bog_cloud::contract::metrics_schema(),
         "bog_events" => bog_cloud::contract::events_schema(),
         "create_bog" | "describe_bog" => bog.clone(),

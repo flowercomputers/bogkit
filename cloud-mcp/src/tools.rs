@@ -118,7 +118,8 @@ enum Mutation {
 #[serde(deny_unknown_fields)]
 struct Batch {
     bog_id: String,
-    operations: Vec<Mutation>,
+    #[serde(alias = "operations")]
+    ops: Vec<Mutation>,
 }
 
 fn schema<T: JsonSchema>() -> Arc<Map<String, Value>> {
@@ -144,6 +145,15 @@ fn definition<T: JsonSchema>(
         .as_object_mut()
     {
         properties.insert("workspace_id".into(), json!({"type":"string","format":"uuid","description":"Explicit workspace selection; defaults to personal workspace for accounts or legacy workspace for legacy management credentials."}));
+    }
+    if name == "batch" {
+        input["properties"]["operations"] = input["properties"]["ops"].clone();
+        input["properties"]["operations"]["deprecated"] = json!(true);
+        input.insert("required".into(), json!(["bog_id"]));
+        input.insert(
+            "oneOf".into(),
+            json!([{ "required": ["ops"] }, { "required": ["operations"] }]),
+        );
     }
     if name == "bog_metrics" {
         input["properties"]["window"] = json!({"type":"string","enum":["5m","1h"],"default":"1h"});
@@ -643,7 +653,7 @@ pub(crate) fn operation(name: &str, args: Value) -> Result<Operation, ErrorData>
             let a: Batch = parse(args)?;
             Operation::Batch {
                 bog_id: id(a.bog_id)?,
-                operations: serde_json::to_value(a.operations).expect("serializable mutations"),
+                operations: serde_json::to_value(a.ops).expect("serializable mutations"),
             }
         }
         _ => return Err(ErrorData::invalid_params("unknown tool", None)),
@@ -652,6 +662,15 @@ pub(crate) fn operation(name: &str, args: Value) -> Result<Operation, ErrorData>
 const MAX_RESULT_BYTES: usize = 1024 * 1024;
 fn tool_error(error: CloudError, request_id: &str) -> CallToolResult {
     let next = match error.code.as_str() {
+        "not_found" if error.message.contains("resource operation") => {
+            "Call list_resources and choose an exposed action from that resource request_schema. Use the resource name, not the operation name."
+        }
+        "writes_paused" => {
+            "Poll definition_update_status using the update job ID; retry writes after activation or failure. describe_bog includes active_definition_job."
+        }
+        "revision_conflict" => {
+            "Read describe_definition, then plan the update again using its current revision."
+        }
         "forbidden" => {
             "Check get_current_context and your workspace membership; supply workspace_id for shared Bogs. Account administration requires an owner in the console."
         }
@@ -746,6 +765,9 @@ impl ServerHandler for Handler {
                 .ok_or_else(|| {
                     ErrorData::internal_error("request authentication unavailable", None)
                 })?;
+            if principal.kind() == bog_cloud::PrincipalKind::App && matches!(request.name.as_ref(), "create_bog" | "create_bog_from_definition" | "issue_token" | "prepare_app_access" | "revoke_token" | "list_tokens") {
+                return Ok(tool_error(CloudError::new("forbidden", "app credentials cannot provision Bogs or manage credentials; use an authorized management connection"), &request_id).into());
+            }
             let mut args = request.arguments.unwrap_or_default();
             let principal = if let Some(workspace) = args.remove("workspace_id") {
                 let workspace = workspace

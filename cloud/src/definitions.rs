@@ -99,21 +99,63 @@ impl Registry {
     pub fn definition_job(&self, id: BogId, job: &str) -> Result<Value, CloudError> {
         self.get(id)?;
         let db = self.connection()?;
-        let row: Option<(String, String)> = db
+        let row: Option<(String, String, i64)> = db
             .query_row(
-                "SELECT status,payload FROM definition_jobs WHERE id=?1 AND bog_id=?2",
+                "SELECT status,payload,created_at FROM definition_jobs WHERE id=?1 AND bog_id=?2",
                 params![job, id.to_string()],
-                |r| Ok((r.get(0)?, r.get(1)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .optional()
             .map_err(crate::registry::db_error)?;
-        let (status, payload) =
+        let (status, payload, created_at) =
             row.ok_or_else(|| CloudError::new("not_found", "definition job not found"))?;
         let mut value: Value = serde_json::from_str(&payload).map_err(invalid)?;
+        for (key, default) in [
+            ("created_at", json!(created_at)),
+            ("started_at", Value::Null),
+            ("updated_at", Value::Null),
+            ("finished_at", Value::Null),
+            ("stage", json!(status)),
+            ("processed_records", Value::Null),
+            ("total_records", Value::Null),
+            ("recovery_guidance", Value::Null),
+        ] {
+            if value.get(key).is_none() {
+                value[key] = default;
+            }
+        }
+        value["writes_paused"] = json!(matches!(
+            status.as_str(),
+            "building" | "activating" | "recovery_required"
+        ));
         value["job_id"] = json!(job);
         value["bog_id"] = json!(id);
         value["status"] = json!(status);
         Ok(value)
+    }
+    /// Current journal state for readiness/discovery, without the submitted definition.
+    pub fn active_definition_job(&self, id: BogId) -> Result<Option<Value>, CloudError> {
+        self.get(id)?;
+        let job: Option<String> = self.connection()?.query_row(
+            "SELECT id FROM definition_jobs WHERE bog_id=?1 AND status IN ('building','activating','recovery_required') ORDER BY created_at DESC,id DESC LIMIT 1",
+            [id.to_string()], |r| r.get(0)).optional().map_err(crate::registry::db_error)?;
+        job.map(|job| {
+            let mut value = self.definition_job(id, &job)?;
+            value.as_object_mut().unwrap().remove("definition");
+            Ok(value)
+        })
+        .transpose()
+    }
+    pub(crate) fn job_progress(
+        &self,
+        job: &str,
+        stage: &str,
+        processed: Option<usize>,
+        total: Option<usize>,
+    ) -> Result<(), CloudError> {
+        self.connection()?.execute("UPDATE definition_jobs SET payload=json_set(payload,'$.stage',?2,'$.updated_at',?3,'$.processed_records',?4,'$.total_records',?5) WHERE id=?1 AND status IN ('building','activating')",
+            params![job,stage,crate::registry::now(),processed.map(|n|n as i64),total.map(|n|n as i64)]).map_err(crate::registry::db_error)?;
+        Ok(())
     }
     pub(crate) fn building(&self, id: BogId) -> Result<bool, CloudError> {
         self.connection()?.query_row("SELECT EXISTS(SELECT 1 FROM definition_jobs WHERE bog_id=?1 AND status IN ('building','activating','recovery_required'))",[id.to_string()],|r|r.get(0)).map_err(crate::registry::db_error)
@@ -125,13 +167,13 @@ impl Registry {
         error: Option<&str>,
     ) -> Result<(), CloudError> {
         let db = self.connection()?;
-        db.execute("UPDATE definition_jobs SET status=?2,payload=json_set(payload,'$.error',?3) WHERE id=?1",params![job,status,error]).map_err(crate::registry::db_error)?;
+        db.execute("UPDATE definition_jobs SET status=?2,payload=json_set(payload,'$.error',?3,'$.stage',?2,'$.updated_at',?4,'$.finished_at',?5,'$.recovery_guidance',?6) WHERE id=?1",params![job,status,error,crate::registry::now(),if status == "failed" {Some(crate::registry::now())} else {None}, if status == "recovery_required" {Some("Writes remain paused. Recover or restart the manager before retrying the definition update.")} else if status == "failed" {Some("The previous definition remains active. Inspect the error and retry the update.")} else {None}]).map_err(crate::registry::db_error)?;
         Ok(())
     }
     pub(crate) fn recover_definition_jobs(&self) -> Result<(), CloudError> {
         // Activation and the active pointer commit together. Everything left in progress
         // therefore never activated; retain the old source and release paused writes.
-        self.connection()?.execute("UPDATE definition_jobs SET status='failed',payload=json_set(payload,'$.error','manager_restarted_before_activation') WHERE status IN ('building','activating','recovery_required')",[]).map_err(crate::registry::db_error)?;
+        self.connection()?.execute("UPDATE definition_jobs SET status='failed',payload=json_set(payload,'$.error','manager_restarted_before_activation','$.stage','failed','$.updated_at',?1,'$.finished_at',?1,'$.recovery_guidance','The interrupted build was discarded; the previous definition remains active. Retry the update.') WHERE status IN ('building','activating','recovery_required')",[crate::registry::now()]).map_err(crate::registry::db_error)?;
         Ok(())
     }
 }
@@ -140,9 +182,52 @@ pub fn resources(active: &ActiveDefinition) -> Value {
 }
 pub fn resources_with_limits(active: &ActiveDefinition, limits: &bog_definition::Limits) -> Value {
     let operations = active.definition.operation_metadata_with_limits(limits);
-    let resources:Vec<_>=active.definition.resources.iter().filter_map(|(name,r)|{
-        let exposed:Vec<_>=operations.iter().filter(|o|o.target==*name).collect();
-        if exposed.is_empty(){None}else{Some(json!({"name":name,"stages":r.stages,"terminal":r.terminal,"operations":exposed}))}
+    let resources: Vec<_> = active.definition.resources.iter().filter_map(|(name, resource)| {
+        let exposed: Vec<_> = operations.iter().filter(|op| op.target == *name).map(|op| {
+            let mut value = serde_json::to_value(op).expect("operation metadata serializes");
+            let (path, body, envelope) = match op.action {
+                bog_definition::Action::Put => ("/v1/bogs/{bog_id}/docs/{key}".to_owned(), "document", "none"),
+                bog_definition::Action::Remove => ("/v1/bogs/{bog_id}/docs/{key}".to_owned(), "none", "none"),
+                bog_definition::Action::Batch => ("/v1/bogs/{bog_id}/batch".to_owned(), "{ops:[...]}", "none"),
+                bog_definition::Action::Search => (format!("/v1/bogs/{{bog_id}}/resources/{name}/search"), "request_schema", "data"),
+                bog_definition::Action::Wait => (format!("/v1/bogs/{{bog_id}}/resources/{name}/query"), "request_schema plus action:wait", "none"),
+                _ => (format!("/v1/bogs/{{bog_id}}/resources/{name}/query"), "request_schema plus action", "data"),
+            };
+            let method = match op.action { bog_definition::Action::Put => "PUT", bog_definition::Action::Remove => "DELETE", _ => "POST" };
+            value["hosted"] = json!({"method":method,"path":path,"request_body":body,"response_envelope":envelope});
+            if op.action == bog_definition::Action::Wait {
+                value["request_schema"] = json!({"type":"object","properties":{"cursor":{"type":"string"},"timeout":{"type":"integer","minimum":0,"maximum":25,"default":25}},"additionalProperties":false});
+            }
+            let mut hosted_schema = value["request_schema"].clone();
+            if matches!(op.action, bog_definition::Action::Get | bog_definition::Action::List | bog_definition::Action::Read | bog_definition::Action::Top | bog_definition::Action::Wait) {
+                hosted_schema["properties"]["action"] = json!({"const":op.action});
+                let default = match resource.terminal { bog_definition::Terminal::Table => bog_definition::Action::List, bog_definition::Terminal::Ranked {..} => bog_definition::Action::Top, _ => bog_definition::Action::Read };
+                if op.action != default {
+                    let required = hosted_schema.as_object_mut().unwrap().entry("required").or_insert_with(|| json!([]));
+                    required.as_array_mut().unwrap().push(json!("action"));
+                }
+            }
+            if op.action == bog_definition::Action::Put { hosted_schema = json!({"type":"object"}); }
+            if op.action == bog_definition::Action::Remove { hosted_schema = Value::Null; }
+            value["hosted"]["request_schema"] = hosted_schema;
+            value["hosted"]["response_schema"] = if op.mutation {
+                let (field, schema) = match op.action {
+                    bog_definition::Action::Put => ("replaced", json!({"type":"boolean"})),
+                    bog_definition::Action::Remove => ("removed", json!({"type":"boolean"})),
+                    _ => ("applied", json!({"type":"integer","minimum":0})),
+                };
+                let mut properties = json!({"seq":{"type":"integer","minimum":0},"cursor":{"type":"string"}});
+                properties[field] = schema;
+                json!({"type":"object","properties":properties,"required":["seq","cursor",field],"additionalProperties":false})
+            } else if op.action == bog_definition::Action::Wait { value["response_schema"].clone() } else {
+                json!({"type":"object","properties":{"seq":{"type":"integer","minimum":0},"data":value["response_schema"],"cursor":{"type":"string"}},"required":["seq","data","cursor"],"additionalProperties":false})
+            };
+            value
+        }).collect();
+        if exposed.is_empty() { None } else {
+            let default_action = match resource.terminal { bog_definition::Terminal::Table => "list", bog_definition::Terminal::Ranked {..} => "top", _ => "read" };
+            Some(json!({"name":name,"stages":resource.stages,"terminal":resource.terminal,"operations":exposed,"default_query_action":default_action}))
+        }
     }).collect();
     json!({"resources":resources,"revision":active.revision,"digest":active.digest})
 }
@@ -311,8 +396,11 @@ impl crate::CloudService {
         self.supervisor.start_locked(id).await?;
         let candidate_slot = self.supervisor.reserve_build_candidate(id).await?;
         let job = uuid::Uuid::new_v4().to_string();
-        let payload = json!({"expected_revision":expected,"definition":definition,"target_digest":definition.digest().map_err(invalid)?});
+        let now = crate::registry::now();
+        let payload = json!({"created_at":now,"started_at":now,"updated_at":now,"finished_at":null,"stage":"pausing","processed_records":null,"total_records":null,"recovery_guidance":null,"expected_revision":expected,"definition":definition,"target_digest":definition.digest().map_err(invalid)?});
         self.registry.connection()?.execute("INSERT INTO definition_jobs(id,bog_id,status,payload,created_at) VALUES (?1,?2,'building',?3,?4)",params![job,id.to_string(),payload.to_string(),crate::registry::now()]).map_err(crate::registry::db_error)?;
+        self.observability
+            .event(id, "definition_build_started", None, None);
         drop(guard);
         let supervisor = self.supervisor.clone();
         let registry = self.registry.clone();
@@ -330,6 +418,15 @@ impl crate::CloudService {
                     "failed"
                 };
                 let _ = registry.set_job_status(&job_for_task, status, Some(&error.code));
+                supervisor.event(
+                    id,
+                    if status == "recovery_required" {
+                        "definition_build_recovery_required"
+                    } else {
+                        "definition_build_failed"
+                    },
+                    Some(&error.code),
+                );
             }
         });
         Ok(crate::OperationResult {
@@ -353,6 +450,7 @@ impl crate::supervisor::Supervisor {
         let result=async {
             // The persistent write pause was installed under the exclusive gate;
             // every earlier write drained before this stable export begins.
+            self.event(id,"definition_build_pausing",None);
             let lease=self.lease(id).await?;
             // Freeze within the worker as well: a canceled manager request may
             // have released its lease while its worker mutation is still queued.
@@ -365,6 +463,7 @@ impl crate::supervisor::Supervisor {
                 return Err(CloudError::new("unavailable","source worker must be restarted before definition builds are supported"));
             }
             if status!=200 {return Err(CloudError::new("unavailable","worker cannot freeze source writes"));}
+            self.registry.job_progress(job,"exporting",None,None)?;
             let mut offset=0usize; let mut records=Vec::new(); let mut expected_snapshot=None;
             loop {
                 if std::time::Instant::now()>=deadline {return Err(CloudError::new("timeout","definition build exceeded the configured deadline"));}
@@ -380,13 +479,17 @@ impl crate::supervisor::Supervisor {
             let snapshot=expected_snapshot.ok_or_else(||invalid("missing source snapshot"))?;
             if records.len()!=snapshot.0 {return Err(invalid("source export count mismatch"));}
             let path=candidate.clone(); let target=definition.clone(); let reserve=self.config.min_free_bytes; let limits=self.config.composable_limits.clone();
-            tokio::task::spawn_blocking(move || rebuild(&path,target,&records,&snapshot,deadline,reserve,limits)).await.map_err(|_|CloudError::new("unavailable","candidate build task failed"))??;
+            self.registry.job_progress(job,"rebuilding",Some(0),Some(snapshot.0))?;
+            self.event(id,"definition_build_rebuilding",None);
+            let registry=self.registry.clone(); let progress_job=job.to_owned();
+            tokio::task::spawn_blocking(move || rebuild_with_progress(&path,target,&records,&snapshot,deadline,reserve,limits, |processed| registry.job_progress(&progress_job,"rebuilding",Some(processed),Some(snapshot.0)))).await.map_err(|_|CloudError::new("unavailable","candidate build task failed"))??;
             if std::time::Instant::now()>=deadline {return Err(CloudError::new("timeout","definition build exceeded the configured deadline"));}
             let _guard=tokio::time::timeout(deadline.saturating_duration_since(std::time::Instant::now()),self.gate(id)?.write_owned()).await.map_err(|_|CloudError::new("timeout","definition activation exceeded the configured deadline"))?;
             check_deadline(deadline)?;
             let active=self.registry.definition(id)?;
             if active.revision!=expected {return Err(CloudError::new("conflict","active definition changed during build"));}
             self.registry.set_job_status(job,"activating",None)?;
+            self.event(id,"definition_build_activation",None);
             self.stop_locked(id,false).await?;
             check_deadline(deadline)?;
             // A single durable transaction switches data identity, definition and job state.
@@ -395,9 +498,10 @@ impl crate::supervisor::Supervisor {
                 let mut db=self.registry.connection()?;
                 let tx=db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(crate::registry::db_error)?;
                 tx.execute("INSERT INTO bog_definitions(bog_id,definition,digest,revision,storage_dir) VALUES (?1,?2,?3,?4,?5) ON CONFLICT(bog_id) DO UPDATE SET definition=excluded.definition,digest=excluded.digest,revision=excluded.revision,storage_dir=excluded.storage_dir",params![id.to_string(),definition.normalized_json().map_err(invalid)?,definition.digest().map_err(invalid)?,(expected+1) as i64,format!("candidate-{job}")]).map_err(crate::registry::db_error)?;
-                tx.execute("UPDATE definition_jobs SET status='succeeded',payload=json_set(payload,'$.revision',?2) WHERE id=?1",params![job,(expected+1) as i64]).map_err(crate::registry::db_error)?;
+                tx.execute("UPDATE definition_jobs SET status='succeeded',payload=json_set(payload,'$.revision',?2,'$.stage','succeeded','$.updated_at',?3,'$.finished_at',?3) WHERE id=?1",params![job,(expected+1) as i64,crate::registry::now()]).map_err(crate::registry::db_error)?;
                 tx.commit().map_err(crate::registry::db_error)?;
             }
+            self.event(id,"definition_build_succeeded",None);
             // The activation already committed. A failed wake does not undo the
             // revision or mislabel a committed job; normal worker recovery retries.
             let _ = self.start_locked(id).await;
@@ -450,6 +554,28 @@ pub(crate) fn rebuild(
     reserve: u64,
     limits: bog_definition::Limits,
 ) -> Result<(), CloudError> {
+    rebuild_with_progress(
+        path,
+        definition,
+        records,
+        snapshot,
+        deadline,
+        reserve,
+        limits,
+        |_| Ok(()),
+    )
+}
+#[allow(clippy::too_many_arguments)]
+fn rebuild_with_progress(
+    path: &std::path::Path,
+    definition: Definition,
+    records: &[bog_runtime::Record],
+    snapshot: &(usize, String),
+    deadline: std::time::Instant,
+    reserve: u64,
+    limits: bog_definition::Limits,
+    mut progress: impl FnMut(usize) -> Result<(), CloudError>,
+) -> Result<(), CloudError> {
     check_deadline(deadline)?;
     let storage_root = path
         .parent()
@@ -467,7 +593,8 @@ pub(crate) fn rebuild(
     .map_err(invalid)?;
     // One-record replay accepts the largest legal source record without envelope
     // expansion pushing a multi-record import over the runtime request bound.
-    for record in records {
+    let mut last_progress = std::time::Instant::now();
+    for (index, record) in records.iter().enumerate() {
         if std::time::Instant::now() >= deadline {
             return Err(CloudError::new(
                 "timeout",
@@ -481,7 +608,12 @@ pub(crate) fn rebuild(
                 data: record.value.clone(),
             }])
             .map_err(invalid)?;
+        if last_progress.elapsed() >= std::time::Duration::from_secs(1) {
+            progress(index + 1)?;
+            last_progress = std::time::Instant::now();
+        }
     }
+    progress(records.len())?;
     crate::config::require_free_space(storage_root, reserve)?;
     runtime.checkpoint().map_err(invalid)?;
     let actual = runtime.export(0);
@@ -648,6 +780,63 @@ mod tests {
         assert!(active.exists());
         assert!(!orphan.exists());
     }
+    #[test]
+    fn job_progress_is_persisted_and_old_payloads_remain_readable() {
+        let (temp, registry, p) = registry();
+        let bog = registry
+            .create_defined(&p, "progress", "progress", &Definition::records_v1(), 8)
+            .unwrap();
+        registry.connection().unwrap().execute("INSERT INTO definition_jobs(id,bog_id,status,payload,created_at) VALUES ('progress',?1,'building','{}',42)",[bog.id.to_string()]).unwrap();
+        let old = registry.definition_job(bog.id, "progress").unwrap();
+        assert_eq!(old["created_at"], 42);
+        assert!(old["started_at"].is_null());
+        assert!(old["processed_records"].is_null());
+        assert_eq!(old["writes_paused"], true);
+        registry
+            .job_progress("progress", "rebuilding", Some(7), Some(12))
+            .unwrap();
+        let reopened = Registry::open(&temp.path().join("registry.sqlite")).unwrap();
+        let progress = reopened.active_definition_job(bog.id).unwrap().unwrap();
+        assert_eq!(progress["stage"], "rebuilding");
+        assert_eq!(progress["processed_records"], 7);
+        assert_eq!(progress["total_records"], 12);
+        assert!(progress["updated_at"].is_number());
+        assert!(progress.get("definition").is_none());
+        reopened
+            .set_job_status("progress", "recovery_required", Some("recovery_required"))
+            .unwrap();
+        let frozen = reopened.definition_job(bog.id, "progress").unwrap();
+        assert_eq!(frozen["writes_paused"], true);
+        assert!(frozen["finished_at"].is_null());
+        assert!(frozen["recovery_guidance"].is_string());
+        reopened.recover_definition_jobs().unwrap();
+        let recovered = reopened.definition_job(bog.id, "progress").unwrap();
+        assert_eq!(recovered["stage"], "failed");
+        assert_eq!(recovered["writes_paused"], false);
+        assert_eq!(recovered["processed_records"], 7);
+        assert!(recovered["finished_at"].is_number());
+        assert!(reopened.active_definition_job(bog.id).unwrap().is_none());
+    }
+
+    #[test]
+    fn manager_recovery_emits_safe_lifecycle_event() {
+        let (temp, registry, p) = registry();
+        let bog = registry
+            .create_defined(&p, "recovered", "recovered", &Definition::records_v1(), 8)
+            .unwrap();
+        registry.connection().unwrap().execute("INSERT INTO definition_jobs(id,bog_id,status,payload,created_at) VALUES ('interrupted',?1,'building','{}',0)",[bog.id.to_string()]).unwrap();
+        let obs =
+            std::sync::Arc::new(crate::observability::Observability::open(temp.path()).unwrap());
+        let config = crate::config::Config::new(temp.path().into(), "/unused-worker".into());
+        let _supervisor = crate::supervisor::Supervisor::open(config, registry.clone())
+            .unwrap()
+            .with_observability(obs.clone());
+        let events = obs.events(bog.id, None, 100).unwrap().to_string();
+        assert!(events.contains("definition_build_recovered"));
+        assert!(events.contains("manager_restarted_before_activation"));
+        assert!(!registry.building(bog.id).unwrap());
+    }
+
     #[test]
     fn expired_candidate_build_never_changes_source() {
         let temp = tempfile::tempdir().unwrap();
@@ -1010,6 +1199,49 @@ mod tests {
             )
             .await
             .unwrap();
+        let applied = service
+            .apply_definition(
+                bog.id,
+                serde_json::to_value(Definition::records_v1()).unwrap(),
+                1,
+            )
+            .await
+            .unwrap();
+        let job_id = applied.body["job_id"].as_str().unwrap();
+        let completed = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+            loop {
+                let job = service.registry.definition_job(bog.id, job_id).unwrap();
+                if job["status"] != "building" && job["status"] != "activating" {
+                    break job;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(completed["status"], "succeeded", "{completed}");
+        assert_eq!(completed["stage"], "succeeded");
+        assert_eq!(completed["processed_records"], 1);
+        assert_eq!(completed["total_records"], 1);
+        assert_eq!(completed["writes_paused"], false);
+        for key in ["created_at", "started_at", "updated_at", "finished_at"] {
+            assert!(completed[key].is_number());
+        }
+        let events = service
+            .observability
+            .events(bog.id, None, 100)
+            .unwrap()
+            .to_string();
+        for kind in [
+            "definition_build_started",
+            "definition_build_pausing",
+            "definition_build_rebuilding",
+            "definition_build_activation",
+            "definition_build_succeeded",
+        ] {
+            assert!(events.contains(kind), "missing {kind}: {events}");
+        }
+        assert!(!events.contains("\"value\""));
         service.supervisor.shutdown().await.unwrap();
     }
 }
