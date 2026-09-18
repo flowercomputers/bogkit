@@ -661,29 +661,7 @@ pub(crate) fn operation(name: &str, args: Value) -> Result<Operation, ErrorData>
 }
 const MAX_RESULT_BYTES: usize = 1024 * 1024;
 fn tool_error(error: CloudError, request_id: &str) -> CallToolResult {
-    let next = match error.code.as_str() {
-        "not_found" if error.message.contains("resource operation") => {
-            "Call list_resources and choose an exposed action from that resource request_schema. Use the resource name, not the operation name."
-        }
-        "writes_paused" => {
-            "Poll definition_update_status using the update job ID; retry writes after activation or failure. describe_bog includes active_definition_job."
-        }
-        "revision_conflict" => {
-            "Read describe_definition, then plan the update again using its current revision."
-        }
-        "forbidden" => {
-            "Check get_current_context and your workspace membership; supply workspace_id for shared Bogs. Account administration requires an owner in the console."
-        }
-        "not_found" => {
-            "Check the Bog or credential ID and select its workspace explicitly. Other workspaces remain hidden."
-        }
-        "capacity" => {
-            "Check get_current_context for allowances; retry later if the host is busy. No infrastructure expands automatically."
-        }
-        _ => {
-            "Correct the reported argument or operation requirement and retry; reuse a creation key only with the identical body."
-        }
-    };
+    let next = error.next_action();
     CallToolResult::structured_error(
         json!({"error":{"code":error.code,"message":error.message,"next_action":next},"request_id":request_id}),
     )
@@ -765,7 +743,7 @@ impl ServerHandler for Handler {
                 .ok_or_else(|| {
                     ErrorData::internal_error("request authentication unavailable", None)
                 })?;
-            if principal.kind() == bog_cloud::PrincipalKind::App && matches!(request.name.as_ref(), "create_bog" | "create_bog_from_definition" | "issue_token" | "prepare_app_access" | "revoke_token" | "list_tokens") {
+            if principal.kind() == bog_cloud::PrincipalKind::App && matches!(request.name.as_ref(), "create_bog" | "create_bog_from_definition" | "issue_token" | "prepare_app_access" | "revoke_token" | "list_tokens" | "validate_definition" | "describe_definition" | "plan_definition_update" | "apply_definition_update" | "definition_update_status") {
                 return Ok(tool_error(CloudError::new("forbidden", "app credentials cannot provision Bogs or manage credentials; use an authorized management connection"), &request_id).into());
             }
             let mut args = request.arguments.unwrap_or_default();

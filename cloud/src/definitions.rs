@@ -185,6 +185,7 @@ pub fn resources_with_limits(active: &ActiveDefinition, limits: &bog_definition:
     let resources: Vec<_> = active.definition.resources.iter().filter_map(|(name, resource)| {
         let exposed: Vec<_> = operations.iter().filter(|op| op.target == *name).map(|op| {
             let mut value = serde_json::to_value(op).expect("operation metadata serializes");
+            value["response_schema_scope"] = json!("internal_runtime_data; use hosted.response_schema for HTTP and MCP operation bodies");
             let (path, body, envelope) = match op.action {
                 bog_definition::Action::Put => ("/v1/bogs/{bog_id}/docs/{key}".to_owned(), "document", "none"),
                 bog_definition::Action::Remove => ("/v1/bogs/{bog_id}/docs/{key}".to_owned(), "none", "none"),

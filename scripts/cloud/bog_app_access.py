@@ -150,20 +150,20 @@ def main(argv=None):
     parser.add_argument('--handoff', required=True)
     parser.add_argument('--output', required=True, help='Private JSON file for the application; never printed')
     parser.add_argument('--replace', action='store_true', help='Explicitly replace the selected output file')
-    parser.add_argument('--auth-file', default=str(Path.home() / '.config/bog-cloud/helper-auth.json'), help='Owned regular mode-600 JSON file containing origin, access_token and expires_at (Unix seconds). Reuses your own device authorization for the selected origin; otherwise saves a new approval here. Never select Codex or Claude private storage.')
+    parser.add_argument('--auth-file', default=None, help='Owned regular mode-600 JSON file containing origin, access_token and expires_at (Unix seconds). Explicitly reuses your own device authorization for the selected origin. Without this flag a new approval is required and saved in ~/.config/bog-cloud/helper-auth.json. Never select Codex or Claude private storage.')
     args = parser.parse_args(argv)
     base = origin(args.origin)
     try:
         handoff = str(uuid.UUID(args.handoff))
     except ValueError as error:
         raise Failure('Handoff must be a UUID returned by prepare_app_access.') from error
-    output, auth_file = Path(args.output).absolute(), Path(args.auth_file).absolute()
+    output, auth_file = Path(args.output).absolute(), Path(args.auth_file or Path.home() / '.config/bog-cloud/helper-auth.json').absolute()
     if output == auth_file:
         raise Failure('App output and helper authorization must be different files.')
     if not output.parent.is_dir() or output.is_symlink() or (output.exists() and not args.replace):
         raise Failure('Choose an existing directory and a new output file, or explicitly use --replace.')
     auth_file.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    token = read_auth(auth_file, base) or authorize(base, auth_file)
+    token = (read_auth(auth_file, base) if args.auth_file is not None else None) or authorize(base, auth_file)
     status, _ = request(base, '/v1/app-access/' + handoff, token=token)
     if status == 401:
         token = authorize(base, auth_file)

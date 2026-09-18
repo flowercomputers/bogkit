@@ -303,7 +303,13 @@ async fn app_management_forbidden_before_body_validation_and_metrics_are_scoped(
     let other = svc.registry.create("b", "records-v1", "b").unwrap();
     let app = svc.auth.issue(&owner, bog.id, Scope::Write).unwrap();
     let router = build_rest_router(svc.clone());
-    for path in ["/v1/bogs".into(), format!("/v1/bogs/{}/tokens", bog.id)] {
+    for path in [
+        "/v1/bogs".into(),
+        format!("/v1/bogs/{}/tokens", bog.id),
+        format!("/v1/bogs/{}/app-access", bog.id),
+        format!("/v1/bogs/{}/definition/plan", bog.id),
+        format!("/v1/bogs/{}/definition/apply", bog.id),
+    ] {
         assert_eq!(
             request(&router, "POST", &path, Some(&app.secret), None)
                 .await
@@ -356,4 +362,22 @@ async fn app_management_forbidden_before_body_validation_and_metrics_are_scoped(
     )
     .await;
     assert_eq!(events.to_string().matches("credential_revoked").count(), 1);
+}
+
+#[tokio::test]
+async fn http_resource_errors_include_shared_recovery_hint() {
+    let response = bog_cloud::http::error_response(
+        bog_cloud::CloudError::new("not_found", "resource operation is not exposed"),
+        "fixture-request",
+    );
+    assert_eq!(response.status(), 404);
+    let body: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 10000).await.unwrap()).unwrap();
+    assert_eq!(body["request_id"], "fixture-request");
+    assert!(
+        body["error"]["next_action"]
+            .as_str()
+            .unwrap()
+            .contains("list_resources")
+    );
 }

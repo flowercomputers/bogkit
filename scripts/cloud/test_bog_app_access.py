@@ -68,6 +68,16 @@ class InstallerTests(unittest.TestCase):
         authorize.assert_not_called()
         self.assertTrue(all(call.args[0] == self.base for call in request.call_args_list))
 
+    def test_default_cache_requires_new_explicit_approval(self):
+        default = self.path / '.config/bog-cloud/helper-auth.json'
+        default.parent.mkdir(parents=True)
+        helper.write_private(default, {'origin': self.base, 'access_token': 'old-secret', 'expires_at': time.time()+600})
+        args = self.args()[:-2]
+        with patch.object(helper.Path, 'home', return_value=self.path), patch.object(helper, 'read_auth') as read, patch.object(helper, 'authorize', return_value='new-secret') as authorize, patch.object(helper, 'request', return_value=(200, {'bog_id':'bog','id':'id','token':'app'})), contextlib.redirect_stdout(io.StringIO()):
+            helper.main(args)
+        read.assert_not_called()
+        authorize.assert_called_once_with(self.base, default)
+
     def test_invalid_cache_fails_without_network_or_secret_output(self):
         for value in [[], {'origin':self.base, 'access_token':'secret', 'expires_at':'later'}, {'origin':self.base, 'access_token':'secret', 'expires_at':float('nan')}]:
             helper.write_private(self.auth, value, replace=True)

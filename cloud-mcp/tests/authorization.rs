@@ -69,6 +69,10 @@ async fn read_scope_cross_database_and_connected_client_revocation() {
         ("list_bogs", json!({}), "forbidden"),
         // App credentials are rejected before parsing even malformed owner-only requests.
         ("create_bog", json!({}), "forbidden"),
+        ("prepare_app_access", json!({}), "forbidden"),
+        ("plan_definition_update", json!({}), "forbidden"),
+        ("apply_definition_update", json!({}), "forbidden"),
+        ("validate_definition", json!({}), "forbidden"),
         (
             "create_bog_from_definition",
             json!({"definition":null}),

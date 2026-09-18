@@ -7,6 +7,32 @@ pub struct CloudError {
     pub message: String,
 }
 impl CloudError {
+    pub fn next_action(&self) -> &'static str {
+        match self.code.as_str() {
+            "not_found" if self.message.contains("resource operation") => {
+                "Call list_resources and choose an exposed action from that resource request_schema. Use the resource name, not the operation name."
+            }
+            "writes_paused" => {
+                "Poll definition_update_status using the update job ID; retry writes after activation or failure. describe_bog includes active_definition_job."
+            }
+            "revision_conflict" => {
+                "Read describe_definition, then plan the update again using its current revision."
+            }
+            "forbidden" => {
+                "Check get_current_context and your workspace membership; supply workspace_id for shared Bogs. Account administration requires an owner in the console."
+            }
+            "not_found" => {
+                "Check the Bog or credential ID and select its workspace explicitly. Other workspaces remain hidden."
+            }
+            "capacity" => {
+                "Check get_current_context for allowances; retry later if the host is busy. No infrastructure expands automatically."
+            }
+            _ => {
+                "Correct the reported argument or operation requirement and retry; reuse a creation key only with the identical body."
+            }
+        }
+    }
+
     pub fn new(code: &str, message: &str) -> Self {
         Self {
             code: code.into(),

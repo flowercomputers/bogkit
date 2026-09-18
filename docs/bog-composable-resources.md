@@ -174,3 +174,11 @@ Semantic hits include cosine `distance` (lower is closer) and `score = 1 - dista
 Definition jobs report `created_at`, `started_at`, `updated_at`, and `finished_at` as Unix seconds, `stage`, `processed_records`, `total_records`, `writes_paused`, and `recovery_guidance`. Unknown timestamps or counts are null; a null count is not zero. Poll until the job reaches a terminal state, then confirm the active revision and worker readiness. Application credentials can read their own Bog's worker state and their own traffic through metrics; operational events require management authority.
 
 The private app-access helper defaults to `https://cloud.bog.new`. Pass `--auth-file` explicitly to reuse an existing, owned private authorization cache for the same service origin. Without that option it starts an additional approval. Keep this authorization cache separate from the single-Bog application credential file and never print either file's contents. The advertised remote MCP endpoint is `https://mcp.bog.new/mcp`; OAuth discovery remains specific to its host.
+
+### Round-two contract clarifications
+
+For hosted HTTP and MCP operations, use `hosted.request_schema` and `hosted.response_schema` from resource discovery. The top-level `request_schema` and `response_schema` describe internal runtime action data; mutation `{ok:true}` is an internal acknowledgement, not an HTTP or MCP result. `response_schema_scope` labels this boundary explicitly.
+
+Hosted resource waits use `timeout` seconds (0–25). Deprecated `timeout_seconds` and `timeout_ms` aliases remain accepted for compatibility; only one timeout spelling may appear. Milliseconds are rounded up to whole seconds and may not exceed 25000. Other unknown fields are rejected.
+
+The private installer requires an explicit `--auth-file PATH` to reuse authorization. Without that flag it starts a fresh device approval, even if its default cache exists.

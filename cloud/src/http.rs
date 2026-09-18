@@ -151,7 +151,7 @@ pub fn error_response(error: CloudError, request_id: &str) -> Response {
     };
     let mut response = (
         StatusCode::from_u16(status).unwrap(),
-        Json(json!({"error":error,"request_id":request_id})),
+        Json(json!({"error":{"code":error.code,"message":error.message,"next_action":error.next_action()},"request_id":request_id})),
     )
         .into_response();
     if status == 503 {
@@ -348,6 +348,18 @@ async fn dispatch_inner(
         .trim();
     if matches!(method.as_str(), "POST" | "PUT") && content_type != "application/json" {
         return Err(bad("content-type must be application/json"));
+    }
+    // Management authority precedes JSON parsing, including empty/malformed bodies.
+    let management_post = method == "POST"
+        && (path.as_slice() == ["v1", "bogs"]
+            || path.as_slice() == ["v1", "definitions", "validate"]
+            || (path.get(1).is_some_and(|s| s == "bogs")
+                && ((path.len() == 4 && matches!(path[3].as_str(), "tokens" | "app-access"))
+                    || (path.len() == 5
+                        && path[3] == "definition"
+                        && matches!(path[4].as_str(), "plan" | "apply")))));
+    if management_post && principal.kind() == crate::PrincipalKind::App {
+        service.auth.authorize(&principal, None, true)?;
     }
     let bytes = to_bytes(request.into_body(), 1024 * 1024)
         .await
