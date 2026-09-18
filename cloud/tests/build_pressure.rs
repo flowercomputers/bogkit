@@ -193,6 +193,16 @@ async fn configured_restore_reclaims_warm_workers_but_counts_pre_socket_survivor
             .await
             .unwrap();
         let id = serde_json::from_value(created.body["id"].clone()).unwrap();
+        svc.execute(
+            &owner,
+            Operation::UpsertRecord {
+                bog_id: id,
+                key: "saved".into(),
+                data: json!({"value":42}),
+            },
+        )
+        .await
+        .unwrap();
         let archive = svc.supervisor.backup(id).await.unwrap();
         svc.supervisor.ensure_running(id).await.unwrap();
         let lease = if survivor {
@@ -211,30 +221,54 @@ async fn configured_restore_reclaims_warm_workers_but_counts_pre_socket_survivor
             lock.try_lock().unwrap();
             Some(lock)
         } else {
-            let b = svc.registry.create("b", "records-v1", "b").unwrap();
+            // Separate workspace keeps the legacy retained quota independent
+            // from a globally full resident pool.
+            let workspace = bog_cloud::WorkspaceId(uuid::Uuid::new_v4());
+            let db = rusqlite::Connection::open(temp.path().join("r/registry.sqlite")).unwrap();
+            db.execute(
+                "INSERT INTO workspaces(id,name,created_at) VALUES (?1,'other',0)",
+                [workspace.to_string()],
+            )
+            .unwrap();
+            let b = svc
+                .registry
+                .create_scoped(workspace, "b", "records-v1", "b")
+                .unwrap();
             svc.supervisor.ensure_running(b.id).await.unwrap();
             None
         };
         let before = svc.registry.list().unwrap().len();
-        let error = svc
-            .supervisor
-            .restore(&archive, "blocked")
-            .await
-            .err()
-            .unwrap();
-        assert_eq!(error.code, "capacity");
-        assert_eq!(svc.registry.list().unwrap().len(), before);
-        if survivor {
+        let restored = if survivor {
+            let error = svc
+                .supervisor
+                .restore(&archive, "blocked")
+                .await
+                .err()
+                .unwrap();
+            assert_eq!(error.code, "capacity");
+            assert_eq!(svc.registry.list().unwrap().len(), before);
             assert!(error.message.contains("surviving workers"));
             drop(orphan_lock);
             drop(lease);
-            svc.supervisor.restore(&archive, "retry").await.unwrap();
+            svc.supervisor.restore(&archive, "retry").await.unwrap()
         } else {
-            // Allocation reclaimed a warm worker; the independent existing
-            // legacy retained-database quota must still reject the new Bog.
-            assert_eq!(svc.supervisor.resident_count().await, 1);
-            assert!(error.message.contains("active database limit"));
-        }
+            svc.supervisor
+                .restore(&archive, "restored")
+                .await
+                .expect("restore reclaims unrelated warm capacity")
+        };
+        assert!(svc.supervisor.resident_count().await <= 2);
+        let result = svc
+            .execute(
+                &owner,
+                Operation::GetRecord {
+                    bog_id: restored.id,
+                    key: "saved".into(),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.body["data"], json!({"value":42}));
         svc.supervisor.shutdown().await.unwrap();
     }
 }
