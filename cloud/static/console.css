@@ -1,1 +1,41 @@
 .hero{min-height:0;padding:calc(var(--site-inset)/2) 0 1.5em;gap:.65em}.hero h1{order:-1}.hero .eyebrow{color:var(--muted);font-style:normal}.console-sections{display:flex;flex-wrap:wrap;gap:0;margin:0 0 2em;border:1px solid var(--line);border-radius:10px;overflow:hidden;width:fit-content;max-width:100%}.console-sections a{padding:.5em .8em;text-decoration:none;font-family:'Arizona Sans',sans-serif;font-size:.85em}.console-sections a+a{border-left:1px solid var(--line)}.console-sections a:hover{background:var(--code);color:var(--ink)}#app{max-width:72ch}#app section{padding:0 0 2em;margin-bottom:2em;border-bottom:1px solid var(--line);scroll-margin-top:6em}#app h2{margin-top:0}#app p{max-width:60ch}form{display:flex;align-items:end;gap:.7em;flex-wrap:wrap;margin:1em 0 1.5em}input,select{font:inherit;border:1px solid var(--line);border-radius:8px;background:transparent;padding:.4em .65em;color:var(--ink);max-width:100%;min-width:0}input{flex:1}label{font-size:.85em;color:var(--muted);align-self:center}#workspace{display:block;margin:.5em 0}#allowance{margin-bottom:2em}.row{display:flex;gap:1em;align-items:center;justify-content:space-between;padding:1em 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}.row>div,.row>span{min-width:0}.row p{margin:0}.row small{color:var(--muted);display:block;overflow-wrap:anywhere;font-family:'Arizona Sans',sans-serif;font-size:.75em;margin-top:.3em}.row button{font-size:.8em;flex-shrink:0}.row:last-child{border-bottom:0}#secret-panel{background:var(--code);padding:1em;border:1px solid var(--line);border-radius:10px}#secret{white-space:pre-wrap;overflow-wrap:anywhere;padding:0;border:0}#status[data-error]{color:#a33228}#platform{font-size:.9em}#platform .row span{font-size:.9em}@media(max-width:640px){.row{align-items:start;flex-direction:column}form{align-items:stretch;flex-direction:column}form label{align-self:start}form button{width:100%}.console-sections{width:100%;display:grid;grid-template-columns:repeat(6,1fr)}.console-sections a{text-align:center;font-size:.8em;grid-column:span 2}.console-sections a:nth-child(4){border-left:0}.console-sections a:nth-child(n+4){border-top:1px solid var(--line);grid-column:span 3}}@media(prefers-color-scheme:dark){#status[data-error]{color:#ffaaa0}}
+/* Compact organization control inside the shared Flower header. */
+.site-brand:has(.organization-switcher)>span{display:none}
+.organization-switcher{position:relative;margin-left:.7em;padding-left:.7em;border-left:1px solid var(--line);font:inherit;min-width:0}
+.organization-switcher[hidden],#workspace[hidden]{display:none}
+.organization-switcher summary{display:flex;align-items:center;gap:.5em;cursor:pointer;list-style:none;white-space:nowrap}
+.organization-switcher summary::-webkit-details-marker{display:none}
+#organization-name{overflow:hidden;text-overflow:ellipsis;max-width:12ch}
+.organization-switcher summary svg{flex-shrink:0;transition:transform .15s}
+.organization-switcher[open] summary svg{transform:rotate(180deg)}
+.organization-menu{position:absolute;top:calc(100% + .7em);left:0;min-width:260px;width:max-content;max-width:min(360px,calc(100vw - 2 * var(--site-inset)));padding:.5em;background:var(--paper);border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 28px #0002;font-family:'Arizona Sans',sans-serif;font-size:16px;white-space:normal}
+.organization-menu-label{margin:.3em .6em .6em;color:var(--muted);font-size:.8em}
+.site-shell .organization-menu button{display:flex;align-items:center;gap:.65em;width:100%;text-align:left;padding:.65em .6em;background:none;border:0;border-radius:5px;font:inherit;color:var(--ink);margin:0}
+.organization-menu button>span:first-child{width:1em;flex-shrink:0}
+.organization-menu button>span:last-child{overflow-wrap:anywhere;min-width:0}
+.organization-menu small{display:block;color:var(--muted);font-size:.75em;margin-top:.15em}
+.site-shell .organization-menu button:hover,.organization-menu button:focus-visible{background:var(--code)}
+.site-shell #new-organization{border-top:1px solid var(--line);border-radius:0;margin-top:.4em;padding-top:.85em}
+#organizations{width:min(480px,calc(100vw - 2rem));box-sizing:border-box;padding:1.5em;background:var(--paper);color:var(--ink);border:1px solid var(--line);border-radius:12px;font:inherit}
+#organizations::backdrop{background:#0006;backdrop-filter:blur(3px)}
+.organization-dialog-heading{display:flex;align-items:center;justify-content:space-between;gap:1em}
+#organizations h2{margin:0;font-size:1.3em;color:var(--ink)}
+#organizations p{font-size:.9em;color:var(--muted)}
+#organizations #close-organization{background:none;border:0;padding:0 .2em;font-size:1.4em}
+#create-workspace{display:flex;flex-direction:column;align-items:stretch;margin:1.5em 0 0}
+#create-workspace label{align-self:start}
+.organization-dialog-actions{display:flex;justify-content:flex-end;gap:.6em;margin-top:.5em}
+#organization-error{color:#b54537!important;margin:0}
+@media(max-width:900px){.organization-menu{left:auto;right:0}.site-brand:has(.organization-switcher){min-width:0}.organization-switcher{margin-left:.4em;padding-left:.4em}.site-brand:has(.organization-switcher) .site-home-link{gap:.35em}#organization-name{max-width:9ch}}
+@media(max-width:640px){.organization-menu{position:fixed;top:calc(var(--site-inset) + 3em);left:var(--site-inset);right:var(--site-inset);width:auto;max-width:none}.organization-dialog-actions button{width:auto}.console-sections{grid-template-columns:repeat(4,1fr)}.console-sections a,.console-sections a:nth-child(n+4){grid-column:auto;border-top:0}.console-sections a:nth-child(4){border-left:1px solid var(--line)}}
+.site-header .organization-switcher{padding-block:0;border-top:0}
+.site-header .organization-switcher summary{margin:0}
+.organization-menu{font-family:inherit;font-size:.85em;min-width:280px}
+
+.access-choice{display:flex;align-items:center;gap:.7em;margin-bottom:1em}
+@media(max-width:640px){.console-sections{grid-template-columns:repeat(3,1fr)}}
+
+.access-heading{display:flex;align-items:baseline;gap:1.5em;flex-wrap:wrap;margin-bottom:1em}.access-heading h2{margin:0}.access-heading a{font-size:.8em}
+.console-status:empty,.console-status[hidden]{display:none}
+.site-header .user-menu{position:relative;padding:0;border:0}.site-header .user-menu summary{margin:0;cursor:pointer;max-width:16ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.site-header .user-menu #logout{position:absolute;right:0;top:calc(100% + .6em);white-space:nowrap;background:var(--paper);border:1px solid var(--line);padding:.6em 1em;border-radius:8px}

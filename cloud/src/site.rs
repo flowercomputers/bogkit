@@ -18,11 +18,22 @@ pub(crate) fn shell(mut html: String) -> String {
         html = html.replace("</html>", "</body></html>");
     }
     html = html.replacen("</head>", "<link rel=\"stylesheet\" href=\"/flower-site.css\"><link rel=\"stylesheet\" href=\"/flower-header.css\"><link rel=\"stylesheet\" href=\"/flower-footer.css\"><link rel=\"stylesheet\" href=\"/cloud.css\"><meta name=\"is-agentic-site-type\" content=\"app\"><script src=\"/site.js\" defer></script><script src=\"/webmcp.js\" defer></script></head>", 1);
+    let mut header = include_str!("../static/header.html").to_owned();
+    if html.contains("id=\"create-workspace\"") {
+        header = header.replacen(
+            "</div><div class=\"site-nav-list\">",
+            &format!(
+                "{}</div><div class=\"site-nav-list\">",
+                include_str!("../static/workspace-switcher.html")
+            ),
+            1,
+        );
+    }
     html = html.replacen(
         "<body>",
         &format!(
             "<body class=\"site-body\"><div class=\"site-shell\">{}",
-            include_str!("../static/header.html")
+            header
         ),
         1,
     );

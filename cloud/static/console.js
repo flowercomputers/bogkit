@@ -33,7 +33,7 @@ function restoreHandoffReference() {
 const requestedHandoff = restoreHandoffReference();
 const fragment = new URLSearchParams(location.hash.slice(1));
 if (fragment.has('invite')) { invitation = fragment.get('invite'); history.replaceState(null, '', location.pathname); }
-function status(message, error = false) { $('status').textContent = message; $('status').toggleAttribute('data-error', error); }
+function status(message, error = false) { $('status').hidden = !error && (message === 'Signed in. Your workspace is ready.' || message.endsWith(' is ready.'));  $('status').textContent = message; $('status').toggleAttribute('data-error', error); }
 async function api(path, options = {}, retried = false) {
   const headers = { ...options.headers };
   if (options.body) headers['Content-Type'] = 'application/json';
@@ -99,7 +99,43 @@ async function refresh() {
     }
   }
 }
-$('workspace').onchange = async () => { workspace = $('workspace').value; owner = $('workspace').selectedOptions[0].dataset.role === 'owner'; try { await refresh(); status('Workspace ready.'); } catch (e) { status(e.message, true); } };
+function renderOrganizationSwitcher() {
+  const current = workspaceItems.find(item => item.id === workspace);
+  $('organization-name').textContent = current?.name || 'Select organization';
+  $('organization-switcher').hidden = !workspaceItems.length;
+  $('organization-options').replaceChildren();
+  for (const item of workspaceItems) {
+    const button = action('', async () => {
+      if (item.id === workspace) { $('organization-switcher').open = false; return; }
+      const previous = workspace;
+      workspace = item.id; owner = item.role === 'owner'; $('workspace').value = workspace;
+      $('organization-switcher').open = false;
+      $('organization-switcher').querySelector('summary').focus();
+      renderOrganizationSwitcher();
+      try { await refresh(); status(`${item.name} is ready.`); }
+      catch (error) { workspace = previous; $('workspace').value = previous; owner = workspaceItems.find(w => w.id === previous)?.role === 'owner'; renderOrganizationSwitcher(); throw error; }
+    });
+    button.setAttribute('aria-current', String(item.id === workspace));
+    const check = element('span', item.id === workspace ? '✓' : ''); check.setAttribute('aria-hidden', 'true');
+    const name = element('span', item.name); if (item.personal) name.append(element('small', 'Personal workspace'));
+    button.append(check, name); $('organization-options').append(button);
+  }
+}
+$('new-organization').onclick = () => {
+  $('organization-switcher').open = false; $('organization-error').hidden = true;
+  $('organizations').showModal(); $('workspace-name').focus();
+};
+for (const id of ['close-organization', 'cancel-organization']) $(id).onclick = () => $('organizations').close();
+$('organizations').addEventListener('close', () => $('organization-switcher').querySelector('summary').focus());
+document.addEventListener('click', event => {
+  if (!$('organization-switcher').contains(event.target)) $('organization-switcher').open = false;
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && $('organization-switcher').open) {
+    $('organization-switcher').open = false; $('organization-switcher').querySelector('summary').focus();
+  }
+});
+$('workspace').onchange = async () => { workspace = $('workspace').value; owner = workspaceItems.find(item => item.id === workspace)?.role === 'owner'; renderOrganizationSwitcher(); try { await refresh(); status('Workspace ready.'); } catch (e) { status(e.message, true); } };
 for (const id of ['create', 'issue', 'invite']) $(id).onsubmit = event => {
   event.preventDefault(); task(event.submitter, async () => {
     if (id === 'create') {
@@ -125,20 +161,36 @@ async function start() {
       return;
     }
     const session = await api('/console-session'); csrf = session.csrf_token; account = session.account?.id || session.account_id || '';
-    if (session.authentication_mode === 'github_native') { $('agent-access').hidden = false; await refreshAgents(); }
+    if (session.authentication_mode === 'github_native') { $('agent-access-option').hidden = false; $('agent-access-option').disabled = false; await refreshAgents(); }
     $('app').hidden = false; $('logout').hidden = false;
+    const identity = session.account?.display_name || session.account?.username || session.account?.name || account.slice(0, 8);
+    const userMenu = document.createElement('details'); userMenu.className = 'user-menu';
+    const userLabel = element('summary', identity || 'Account'); userLabel.setAttribute('aria-label', 'Account: ' + (identity || 'signed in'));
+    $('logout').before(userMenu); userMenu.append(userLabel, $('logout'));
+    for (const link of document.querySelectorAll('.site-header a[href="/connect"], .site-header a[href="/console"], #mobile-navigation a[href="/connect"], #mobile-navigation a[href="/console"]')) link.remove();
+    document.addEventListener('click', event => { if (!userMenu.contains(event.target)) userMenu.open = false; });
+    document.addEventListener('keydown', event => { if (event.key === 'Escape' && userMenu.open) { userMenu.open = false; userLabel.focus(); } });
     await loadWorkspaces();
     const me = await api('/v1/me'); if (me.workspace_id) $('workspace').value = me.workspace_id;
     platformOperator = me.platform_operator === true; $('platform').hidden = !platformOperator; if (platformOperator) await refreshPlatform();
     workspace = $('workspace').value; owner = $('workspace').selectedOptions[0]?.dataset.role === 'owner';
-    await refresh(); status('Signed in. Your workspace is ready.');
-    if (requestedHandoff) {
+    renderOrganizationSwitcher(); await refresh(); status('Signed in. Your workspace is ready.');
+    if (location.hash === '#agent-access') selectAccess('agent');
+    if (requestedHandoff) { selectAccess('application');
       try { showAppHandoff(await api('/v1/app-access/' + encodeURIComponent(requestedHandoff))); }
       catch (error) { if (error.status !== 401) clearHandoffReference(); throw error; }
     }
     if (invitation) { const preview = await api('/v1/invitations/preview', { method: 'POST', body: JSON.stringify({ secret: invitation }) }); $('invite-description').textContent = `You have been invited to join ${preview.workspace_name || preview.name} as ${preview.role}.`; $('invitation').hidden = false; }
   } catch (e) { status(e.status === 401 ? 'Sign in with GitHub to open your workspace.' : e.message, e.status !== 401); $('login').hidden = false; if (invitation) status('Sign in with GitHub, then open your invitation link again.'); }
 }
+function selectAccess(kind) {
+  const agent = kind === 'agent' && !$('agent-access-option').disabled;
+  $('access-kind').value = agent ? 'agent' : 'application';
+  $('application-access').hidden = agent;
+  $('agent-access').hidden = !agent;
+  $('hide-secret').click();
+}
+$('access-kind').onchange = () => selectAccess($('access-kind').value);
 async function refreshAgents() {
   const data = await api('/v1/agent-tokens'); $('agent-tokens').replaceChildren();
   for (const token of data.tokens || []) { if (token.revoked_at) continue; const row=element('div','','row'); row.append(element('span', `${token.name} · expires ${new Date(token.expires_at*1000).toLocaleDateString()}`)); row.append(action('Revoke',async()=>{await api('/v1/agent-tokens/'+token.id,{method:'DELETE'});await refreshAgents();status('Agent credential revoked.');}));$('agent-tokens').append(row); }
@@ -153,13 +205,16 @@ async function loadWorkspaces(preferred = workspace) {
   }
   if (workspaceItems.some(item => item.id === preferred)) $('workspace').value = preferred;
   workspace = $('workspace').value; owner = $('workspace').selectedOptions[0]?.dataset.role === 'owner';
+  renderOrganizationSwitcher();
 }
 $('create-workspace').onsubmit = event => {
   event.preventDefault(); task(event.submitter, async () => {
     const name = $('workspace-name').value, label = 'workspace:' + name;
     if (!createKeys.has(label)) createKeys.set(label, crypto.randomUUID());
-    const result = await api('/v1/workspaces', {method:'POST', headers:{'Idempotency-Key':createKeys.get(label)}, body:JSON.stringify({name})});
-    createKeys.delete(label); $('workspace-name').value = '';
+    let result; $('organization-error').hidden = true;
+    try { result = await api('/v1/workspaces', {method:'POST', headers:{'Idempotency-Key':createKeys.get(label)}, body:JSON.stringify({name})}); }
+    catch (error) { $('organization-error').textContent = error.message; $('organization-error').hidden = false; return; }
+    createKeys.delete(label); $('workspace-name').value = ''; $('organizations').close();
     await loadWorkspaces(result.workspace.id); await refresh();
     if (platformOperator) await refreshPlatform();
     status('Organization created. Invite your team through People.');
