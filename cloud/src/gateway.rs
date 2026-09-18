@@ -69,6 +69,25 @@ impl CloudService {
             native.config.origin()
         ))
     }
+    pub fn rest_authentication_challenge(&self) -> String {
+        self.native_auth.as_ref().map(|native| format!(
+            "Bearer resource_metadata=\"{}/.well-known/oauth-protected-resource\", scope=\"bog:read\"", native.config.origin()
+        )).unwrap_or_else(|| self.authentication_challenge())
+    }
+    pub async fn authenticate_rest_bearer(
+        &self,
+        token: &str,
+        workspace: Option<WorkspaceId>,
+    ) -> Result<Principal, CloudError> {
+        if token.starts_with("bog_oauth_") {
+            return self
+                .native_auth
+                .as_ref()
+                .ok_or_else(denied)?
+                .authenticate_oauth_for_transport(self, token, workspace, true);
+        }
+        self.authenticate_bearer(token, workspace).await
+    }
     pub async fn authenticate_bearer(
         &self,
         token: &str,

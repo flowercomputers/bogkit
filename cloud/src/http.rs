@@ -219,7 +219,7 @@ async fn dispatch(State(service): State<Arc<CloudService>>, request: Request) ->
         }
     }
     if response.status() == StatusCode::UNAUTHORIZED
-        && let Ok(v) = header::HeaderValue::from_str(&service.authentication_challenge())
+        && let Ok(v) = header::HeaderValue::from_str(&service.rest_authentication_challenge())
     {
         response.headers_mut().insert(header::WWW_AUTHENTICATE, v);
     }
@@ -277,7 +277,7 @@ async fn dispatch_inner(
         return Err(CloudError::new("unauthorized", "invalid bearer credential"));
     }
     let principal = if let Some(token) = token {
-        service.authenticate_bearer(token, workspace).await?
+        service.authenticate_rest_bearer(token, workspace).await?
     } else if let Some(native) = &service.native_auth {
         let session = cookie_value(request.headers(), crate::browser_auth::SESSION_COOKIE)
             .ok_or_else(|| CloudError::new("unauthorized", "sign in required"))?;

@@ -205,6 +205,8 @@ Use Authorization: Bearer <Bog credential> for REST and bearer-capable MCP clien
 
 ## OAuth 2.0 for MCP clients
 
+REST OAuth clients use this service origin (without a trailing slash) as their resource and discover /.well-known/oauth-protected-resource. Origin-bound tokens work only on REST; MCP keeps its distinct /mcp resource. The authorization and token requests must name the identical resource. Existing /mcp-bound credentials retain their REST compatibility.
+
 Read /connect for client connection guidance. Discover /.well-known/oauth-protected-resource/mcp (resource is this origin plus /mcp), then /.well-known/oauth-authorization-server. Register a public client at POST /oauth/register with application/json, client_name, redirect_uris, and token_endpoint_auth_method "none". Registration lasts 30 days. HTTPS redirects match exactly. Desktop client metadata may use a temporary port on an otherwise matching HTTP loopback callback (127.0.0.1, [::1], or localhost); the literal host, path and query must match. Dynamically registered redirects still match exactly. HTTPS Client ID Metadata Documents are supported alongside dynamic registration. The document client_id must exactly match its HTTPS URL and the redirect must match its declared redirect_uris. Metadata fetches are bounded and restricted to public addresses without redirects. Refresh tokens, OIDC ID tokens, and the separate Auth.md identity-assertion registration protocol are not implemented.
 
 Open /oauth/authorize with response_type=code, client_id, redirect_uri, resource, scope, state, code_challenge and code_challenge_method=S256. The human signs in through GitHub and explicitly approves or denies the named client and callback destination. Check state and the returned iss before exchanging the code. Exchange within 60 seconds at POST /oauth/token using application/x-www-form-urlencoded: grant_type=authorization_code, code, code_verifier, client_id, the exact redirect_uri and resource. Codes are one-use; pending requests expire after ten minutes and are lost on server restart. Access tokens persist across restart, expire after 30 days, and remain subject to current membership and account suspension.
@@ -237,7 +239,7 @@ pub fn discovery(service: &CloudService, path: &str) -> Option<Response> {
             .into_response(),
         "/.well-known/oauth-protected-resource" => (
             [(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")],
-            Json(service.native_auth.as_ref()?.resource_metadata()),
+            Json(service.native_auth.as_ref()?.api_resource_metadata()),
         )
             .into_response(),
         "/openapi.json" => {

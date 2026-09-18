@@ -100,6 +100,18 @@ async fn pkce_consent_scopes_replay_revocation_and_restart_over_real_rest_and_mc
             "Bearer resource_metadata=\"{base}/.well-known/oauth-protected-resource/mcp\", scope=\"bog:read\""
         )
     );
+    assert_eq!(
+        metadata["protected_resources"],
+        json!([base, format!("{base}/mcp")])
+    );
+    let rest_challenge = http.get(format!("{base}/v1/bogs")).send().await.unwrap();
+    assert_eq!(rest_challenge.status(), 401);
+    assert_eq!(
+        rest_challenge.headers()["www-authenticate"],
+        format!(
+            "Bearer resource_metadata=\"{base}/.well-known/oauth-protected-resource\", scope=\"bog:read\""
+        )
+    );
     for path in [
         "/.well-known/oauth-protected-resource",
         "/.well-known/oauth-protected-resource/mcp",
@@ -112,7 +124,14 @@ async fn pkce_consent_scopes_replay_revocation_and_restart_over_real_rest_and_mc
             .json()
             .await
             .unwrap();
-        assert_eq!(resource["resource"], format!("{base}/mcp"));
+        assert_eq!(
+            resource["resource"],
+            if path.ends_with("/mcp") {
+                format!("{base}/mcp")
+            } else {
+                base.clone()
+            }
+        );
     }
     // Invalid CIMD locations fail closed over the authorization transport.
     for client_id in [
@@ -190,12 +209,22 @@ async fn pkce_consent_scopes_replay_revocation_and_restart_over_real_rest_and_mc
     service.auth.provision_identity(&session.identity).unwrap();
     let cookie = session.set_cookie.split(';').next().unwrap();
     let mut issued = Vec::new();
-    for scope in ["bog:read", "bog:write"] {
+    for (scope, rest_only) in [
+        ("bog:read", false),
+        ("bog:write", false),
+        ("bog:read", true),
+        ("bog:write", true),
+    ] {
+        let resource = if rest_only {
+            base.clone()
+        } else {
+            format!("{base}/mcp")
+        };
         let params = [
             ("client_id", client),
             ("redirect_uri", redirect),
             ("response_type", "code"),
-            ("resource", &format!("{base}/mcp")),
+            ("resource", resource.as_str()),
             ("scope", scope),
             ("state", "fixture-state"),
             ("code_challenge", CHALLENGE),
@@ -315,7 +344,7 @@ async fn pkce_consent_scopes_replay_revocation_and_restart_over_real_rest_and_mc
             ("grant_type", "authorization_code"),
             ("client_id", client),
             ("redirect_uri", redirect),
-            ("resource", &format!("{base}/mcp")),
+            ("resource", resource.as_str()),
             ("code", query["code"].as_str()),
             ("code_verifier", VERIFIER),
         ];
@@ -332,10 +361,16 @@ async fn pkce_consent_scopes_replay_revocation_and_restart_over_real_rest_and_mc
         );
         // A valid code cannot be exchanged by another client, at another
         // callback, or for another service. Failed attempts do not consume it.
+        let alternate_resource = if rest_only {
+            format!("{base}/mcp")
+        } else {
+            base.clone()
+        };
         for (index, value) in [
             (1, "other-client"),
             (2, "http://127.0.0.1:9998/callback"),
             (3, "https://another.example/mcp"),
+            (3, alternate_resource.as_str()),
         ] {
             let mut wrong = form.to_vec();
             wrong[index].1 = value;
@@ -398,6 +433,31 @@ async fn pkce_consent_scopes_replay_revocation_and_restart_over_real_rest_and_mc
                 .status(),
             403
         );
+        if rest_only {
+            assert_eq!(
+                http.post(format!("{base}/mcp"))
+                    .bearer_auth(&secret)
+                    .send()
+                    .await
+                    .unwrap()
+                    .status(),
+                401
+            );
+            let created = http
+                .post(format!("{base}/v1/bogs"))
+                .bearer_auth(&secret)
+                .header("Idempotency-Key", "oauth-create")
+                .json(&json!({"name":"oauth-test"}))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(
+                created.status().as_u16(),
+                if scope == "bog:read" { 403 } else { 202 }
+            );
+            issued.push(secret);
+            continue;
+        }
         let sdk = ()
             .serve(StreamableHttpClientTransport::with_client(
                 http.clone(),
@@ -638,6 +698,26 @@ async fn pkce_consent_scopes_replay_revocation_and_restart_over_real_rest_and_mc
             .status(),
         200
     );
+    for token in &issued[2..] {
+        assert_eq!(
+            http.post(format!("{base}/oauth/revoke"))
+                .form(&[("token", token.as_str()), ("client_id", client)])
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            200
+        );
+        assert_eq!(
+            http.get(format!("{base}/v1/bogs"))
+                .bearer_auth(token)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            401
+        );
+    }
     let agent_list: Value = http
         .get(format!("{base}/v1/agent-tokens"))
         .header("cookie", cookie)

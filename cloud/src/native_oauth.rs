@@ -32,6 +32,7 @@ pub(crate) struct OauthState {
     registrations: HashMap<IpAddr, (i64, u32)>,
 }
 struct Grant {
+    resource: String,
     client: String,
     redirect: String,
     state: String,
@@ -89,10 +90,16 @@ impl NativeAuth {
     }
     pub(crate) fn oauth_metadata(&self) -> Value {
         let b = self.config.origin();
-        json!({"issuer":b,"authorization_endpoint":format!("{b}/oauth/authorize"),"token_endpoint":format!("{b}/oauth/token"),"registration_endpoint":format!("{b}/oauth/register"),"revocation_endpoint":format!("{b}/oauth/revoke"),"response_types_supported":["code"],"grant_types_supported":["authorization_code"],"token_endpoint_auth_methods_supported":["none"],"revocation_endpoint_auth_methods_supported":["none"],"code_challenge_methods_supported":["S256"],"scopes_supported":[READ,WRITE],"authorization_response_iss_parameter_supported":true,"client_id_metadata_document_supported":true,"service_documentation":format!("{b}/auth.md")})
+        json!({"issuer":b,"protected_resources":[b,self.resource()],"authorization_endpoint":format!("{b}/oauth/authorize"),"token_endpoint":format!("{b}/oauth/token"),"registration_endpoint":format!("{b}/oauth/register"),"revocation_endpoint":format!("{b}/oauth/revoke"),"response_types_supported":["code"],"grant_types_supported":["authorization_code"],"token_endpoint_auth_methods_supported":["none"],"revocation_endpoint_auth_methods_supported":["none"],"code_challenge_methods_supported":["S256"],"scopes_supported":[READ,WRITE],"authorization_response_iss_parameter_supported":true,"client_id_metadata_document_supported":true,"service_documentation":format!("{b}/auth.md")})
     }
     pub(crate) fn resource_metadata(&self) -> Value {
         json!({"resource":self.resource(),"resource_name":"Bog Cloud HTTP and MCP API","authorization_servers":[self.config.origin()],"scopes_supported":[READ,WRITE],"bearer_methods_supported":["header"],"resource_documentation":format!("{}/docs",self.config.origin())})
+    }
+    pub(crate) fn api_resource_metadata(&self) -> Value {
+        let mut metadata = self.resource_metadata();
+        metadata["resource"] = json!(self.config.origin());
+        metadata["resource_name"] = json!("Bog Cloud REST API");
+        metadata
     }
     fn register_client(&self, peer: IpAddr, body: Value) -> Result<Value, CloudError> {
         let name = body["client_name"].as_str().unwrap_or("MCP client");
@@ -215,10 +222,12 @@ impl NativeAuth {
         if field(&p, "response_type")? != "code" || field(&p, "code_challenge_method")? != "S256" {
             return Err(invalid("response_type code and PKCE S256 required"));
         }
-        if field(&p, "resource")? != self.resource() {
+        if field(&p, "resource")? != self.resource()
+            && field(&p, "resource")? != self.config.origin()
+        {
             return Err(CloudError::new(
                 "invalid_target",
-                "resource must be this service's /mcp URL",
+                "resource must be this service origin (REST) or its /mcp URL",
             ));
         }
         let scope = p.get("scope").map(String::as_str).unwrap_or(READ);
@@ -254,6 +263,7 @@ impl NativeAuth {
         grants.pending.insert(
             public.into(),
             Grant {
+                resource: field(&p, "resource")?.into(),
                 client: client.into(),
                 redirect: redirect.into(),
                 state,
@@ -273,7 +283,7 @@ impl NativeAuth {
         public: &str,
     ) -> Result<Option<String>, CloudError> {
         let state = self.oauth.lock().map_err(|_| unavailable())?;
-        Ok(state.pending.get(public).filter(|g|g.expires>now()).map(|g|format!("{} for 30 days in your current workspaces. Cannot manage members, delete Bogs, or create account credentials. Client registration is self-service, not a verification of the app's identity. Return to: {}",if g.scope==READ {"Read-only access to Bogs and records (bog:read)"}else{"Create Bogs, read/write records, and issue app credentials (bog:write)"},g.redirect)))
+        Ok(state.pending.get(public).filter(|g|g.expires>now()).map(|g|format!("{} for 30 days in your current workspaces. Cannot manage members, delete Bogs, or create account credentials. Client registration is self-service, not a verification of the app's identity. Resource: {}. Return to: {}",if g.scope==READ {"Read-only access to Bogs and records (bog:read)"}else{"Create Bogs, read/write records, and issue app credentials (bog:write)"},g.resource,g.redirect)))
     }
     pub(crate) fn oauth_approved(
         &self,
@@ -342,7 +352,7 @@ impl NativeAuth {
         let challenge = URL_SAFE_NO_PAD.encode(hash(verifier.as_bytes()));
         if field(&p, "client_id")? != grant.client
             || field(&p, "redirect_uri")? != grant.redirect
-            || field(&p, "resource")? != self.resource()
+            || field(&p, "resource")? != grant.resource
             || !bool::from(challenge.as_bytes().ct_eq(grant.challenge.as_bytes()))
         {
             return Err(CloudError::new(
@@ -365,7 +375,7 @@ impl NativeAuth {
                 hash(secret.as_bytes()),
                 agent.id,
                 grant.scope,
-                self.resource(),
+                grant.resource,
                 grant.client,
                 now() + 30 * 86400
             ],
@@ -381,12 +391,29 @@ impl NativeAuth {
         secret: &str,
         workspace: Option<WorkspaceId>,
     ) -> Result<Principal, CloudError> {
+        self.authenticate_oauth_for_transport(service, secret, workspace, false)
+    }
+    pub(crate) fn authenticate_oauth_for_transport(
+        &self,
+        service: &CloudService,
+        secret: &str,
+        workspace: Option<WorkspaceId>,
+        rest: bool,
+    ) -> Result<Principal, CloudError> {
         if secret.len() != 74 {
             return Err(CloudError::new("unauthorized", "invalid OAuth credential"));
         }
-        let row:Option<(String,String)>=self.db.lock().map_err(|_|unavailable())?.query_row("SELECT agent_id,scope FROM oauth_access WHERE secret_hash=?1 AND resource=?2 AND expires>?3",params![hash(secret.as_bytes()),self.resource(),now()],|r|Ok((r.get(0)?,r.get(1)?))).optional().map_err(db_error)?;
-        let (id, scope) =
+        let row:Option<(String,String,String)>=self.db.lock().map_err(|_|unavailable())?.query_row("SELECT agent_id,scope,resource FROM oauth_access WHERE secret_hash=?1 AND expires>?2",params![hash(secret.as_bytes()),now()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(db_error)?;
+        let (id, scope, resource) =
             row.ok_or_else(|| CloudError::new("unauthorized", "invalid OAuth credential"))?;
+        // Preserve existing MCP-token REST access. New origin-bound tokens are
+        // REST-only and never accepted by the MCP transport.
+        if resource != self.resource() && !(rest && resource == self.config.origin()) {
+            return Err(CloudError::new(
+                "unauthorized",
+                "OAuth credential has the wrong resource",
+            ));
+        }
         let mut principal = service.auth.principal_for_agent_id(&id, workspace)?;
         principal.read_only = match scope.as_str() {
             READ => true,
