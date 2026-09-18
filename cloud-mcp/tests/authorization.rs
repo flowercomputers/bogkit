@@ -67,6 +67,18 @@ async fn read_scope_cross_database_and_connected_client_revocation() {
         ),
         ("describe_definition", json!({"bog_id":a.id}), "forbidden"),
         ("list_bogs", json!({}), "forbidden"),
+        // App credentials are rejected before parsing even malformed owner-only requests.
+        ("create_bog", json!({}), "forbidden"),
+        (
+            "create_bog_from_definition",
+            json!({"definition":null}),
+            "forbidden",
+        ),
+        (
+            "issue_token",
+            json!({"bog_id":"not-a-uuid","scope":"invalid"}),
+            "forbidden",
+        ),
     ] {
         let result = call(&client, name, args).await;
         assert_eq!(result.is_error, Some(true));

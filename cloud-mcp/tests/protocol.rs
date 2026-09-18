@@ -70,6 +70,29 @@ async fn sdk_initializes_and_discovers_exact_tools() {
             .idempotent_hint,
         Some(false)
     );
+    let batch_schema = serde_json::to_value(
+        &list
+            .iter()
+            .find(|t| t.name == "batch")
+            .unwrap()
+            .input_schema,
+    )
+    .unwrap();
+    let op = json!([{"op":"upsert","key":"record","data":{}}]);
+    let id = "00000000-0000-4000-8000-000000000001";
+    assert!(jsonschema::is_valid(
+        &batch_schema,
+        &json!({"bog_id":id,"ops":op})
+    ));
+    assert!(jsonschema::is_valid(
+        &batch_schema,
+        &json!({"bog_id":id,"operations":op})
+    ));
+    assert!(!jsonschema::is_valid(&batch_schema, &json!({"bog_id":id})));
+    assert!(!jsonschema::is_valid(
+        &batch_schema,
+        &json!({"bog_id":id,"ops":op,"operations":op})
+    ));
     for name in ["plan_definition_update", "apply_definition_update"] {
         let revision = &list
             .iter()
@@ -183,6 +206,20 @@ async fn sdk_crud_batch_idempotency_and_independent_rest() {
         1
     );
     assert_eq!(data(call(&client,"batch",json!({"bog_id":id,"operations":[{"op":"upsert","key":"new","data":{"v":2}},{"op":"remove","key":"123"}]})).await)["applied"],2);
+    assert_eq!(data(call(&client, "batch", json!({"bog_id":id,"ops":[{"op":"upsert","key":"canonical","data":{}},{"op":"remove","key":"canonical"}]})).await)["applied"], 2);
+    assert!(
+        client
+            .call_tool(
+                rmcp::model::CallToolRequestParams::new("batch").with_arguments(
+                    json!({"bog_id":id,"ops":[],"operations":[]})
+                        .as_object()
+                        .unwrap()
+                        .clone()
+                )
+            )
+            .await
+            .is_err()
+    );
     assert_eq!(
         data(call(&client, "delete_record", json!({"bog_id":id,"key":"new"})).await)["removed"],
         true
@@ -268,9 +305,13 @@ async fn composable_resources_hide_unexposed_resources_and_match_rest() {
     )
     .await;
     assert_eq!(hidden.is_error, Some(true));
-    assert_eq!(
-        hidden.structured_content.unwrap()["error"]["code"],
-        "not_found"
+    let error = hidden.structured_content.unwrap();
+    assert_eq!(error["error"]["code"], "not_found");
+    assert!(
+        error["error"]["next_action"]
+            .as_str()
+            .unwrap()
+            .contains("list_resources")
     );
     client.cancel().await.unwrap();
     h.close().await;
@@ -301,6 +342,10 @@ async fn composable_todo_queries_and_searches_match_http() {
         .await,
     );
 
+    assert_eq!(created["kind"], "defined");
+    assert!(created["template"].is_null());
+    assert!(created["template_version"].is_null());
+    let resource_contracts = data(call(&client, "list_resources", json!({"bog_id":id})).await);
     let http = reqwest::Client::new();
     for (tool, resource, query) in [
         ("query_resource", "open", json!({})),
@@ -309,12 +354,12 @@ async fn composable_todo_queries_and_searches_match_http() {
         (
             "search_resource",
             "text_search",
-            json!({"query":"release notes","limit":10}),
+            json!({"query":"release notes","limit":10,"include_fields":["/title","/missing"]}),
         ),
         (
             "search_resource",
             "semantic_search",
-            json!({"query":"publish the changelog","limit":10}),
+            json!({"query":"publish the changelog","limit":10,"include_fields":["/title"],"max_distance":2}),
         ),
     ] {
         let mcp = data(
@@ -325,6 +370,39 @@ async fn composable_todo_queries_and_searches_match_http() {
             )
             .await,
         );
+        let resource_contract = resource_contracts["resources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["name"] == resource)
+            .unwrap();
+        let action = if tool == "search_resource" {
+            "search"
+        } else {
+            resource_contract["default_query_action"].as_str().unwrap()
+        };
+        let operation = resource_contract["operations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|o| o["action"] == action)
+            .unwrap();
+        assert!(
+            jsonschema::is_valid(&operation["hosted"]["request_schema"], &query),
+            "invalid advertised request for {resource}"
+        );
+        assert!(
+            jsonschema::is_valid(&operation["response_schema"], &mcp["data"]),
+            "invalid advertised response for {resource}: {mcp}"
+        );
+        if tool == "search_resource" {
+            let hits = mcp["data"].as_array().unwrap();
+            assert!(!hits.is_empty());
+            for hit in hits {
+                assert!(hit["value"]["/title"].is_string());
+                assert!(hit["value"].get("/missing").is_none());
+            }
+        }
         let suffix = if tool == "search_resource" {
             "search"
         } else {
