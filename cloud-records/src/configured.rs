@@ -404,6 +404,7 @@ fn physical_bytes(path: &Path) -> Option<u64> {
 struct WaitRequest {
     cursor: Option<String>,
     timeout_ms: Option<u64>,
+    timeout: Option<u64>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -415,11 +416,30 @@ struct WaitCursor {
 }
 async fn wait_operation(s: Arc<Shared>, name: String, body: Value) -> Response {
     use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+    if body
+        .as_object()
+        .is_some_and(|fields| fields.values().any(Value::is_null))
+    {
+        return error(StatusCode::BAD_REQUEST, "wait arguments cannot be null");
+    }
     let request: WaitRequest = match serde_json::from_value(body) {
         Ok(v) => v,
         Err(_) => return error(StatusCode::BAD_REQUEST, "invalid wait request"),
     };
-    let timeout = request.timeout_ms.unwrap_or(25000);
+    if request.timeout.is_some() && request.timeout_ms.is_some() {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "provide timeout or legacy timeout_ms, not both",
+        );
+    }
+    if request.timeout.is_some_and(|seconds| seconds > 25) {
+        return error(StatusCode::BAD_REQUEST, "wait timeout exceeds 25 seconds");
+    }
+    let timeout = request
+        .timeout
+        .map(|seconds| seconds * 1000)
+        .or(request.timeout_ms)
+        .unwrap_or(25000);
     if timeout > 30000 {
         return error(StatusCode::BAD_REQUEST, "wait timeout exceeds 30000 ms");
     }

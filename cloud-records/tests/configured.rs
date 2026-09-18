@@ -300,3 +300,110 @@ async fn local_router_hides_operator_definition_and_controls() {
     assert_eq!(status, StatusCode::OK);
     assert!(!schema.to_string().contains("private-literal"));
 }
+
+#[tokio::test]
+async fn worker_published_contracts_validate_actual_data_and_wait_seconds() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut definition = waiting_definition();
+    definition.resources.insert(
+        "text".into(),
+        serde_json::from_value(json!({"terminal":{"kind":"bm25","fields":["/title"]}})).unwrap(),
+    );
+    definition.expose.insert(
+        "text".into(),
+        bog_definition::Operation {
+            target: "text".into(),
+            action: bog_definition::Action::Search,
+        },
+    );
+    let service =
+        ConfiguredService::open(dir.path(), definition, 1, DEFAULT_LOGICAL_BYTES).unwrap();
+    let router = service.router();
+    let (status, schema) = request(&router, "GET", "/schema", json!({})).await;
+    assert_eq!(status, StatusCode::OK);
+    for (name, body) in [
+        (
+            "put",
+            json!({"key":"a","data":{"title":"bread","secret":"private"}}),
+        ),
+        ("list", json!({})),
+        ("total", json!({})),
+        ("text", json!({"query":"bread"})),
+        ("text", json!({"query":"bread","include_fields":["/title"]})),
+        ("wait", json!({"timeout":0})),
+    ] {
+        let metadata = schema["operations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|op| op["name"] == name)
+            .unwrap();
+        assert!(
+            jsonschema::validator_for(&metadata["request_schema"])
+                .unwrap()
+                .is_valid(&body)
+        );
+        let (status, actual) = request(
+            &router,
+            "POST",
+            &format!("/operations/{name}"),
+            body.clone(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{name}: {actual}");
+        assert!(
+            jsonschema::validator_for(&metadata["response_schema"])
+                .unwrap()
+                .is_valid(&actual["data"]),
+            "{name}: {actual}"
+        );
+        if name == "text" {
+            if body.get("include_fields").is_some() {
+                assert_eq!(actual["data"][0]["value"], json!({"/title":"bread"}));
+            } else {
+                assert!(actual["data"][0].get("value").is_none());
+            }
+        }
+    }
+    let wait = schema["operations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|op| op["name"] == "wait")
+        .unwrap();
+    assert!(
+        wait["request_schema"]["properties"]
+            .get("timeout_ms")
+            .is_none()
+    );
+    assert_eq!(
+        request(&router, "POST", "/operations/wait", json!({"timeout_ms":0}))
+            .await
+            .0,
+        StatusCode::OK
+    );
+    for body in [
+        json!({"timeout":null}),
+        json!({"timeout":26}),
+        json!({"timeout":0,"timeout_ms":0}),
+        json!({"timeout":-1}),
+        json!({"timeout":0.5}),
+        json!({"timeout":0,"extra":true}),
+    ] {
+        assert_eq!(
+            request(&router, "POST", "/operations/wait", body).await.0,
+            StatusCode::BAD_REQUEST
+        );
+    }
+    assert_eq!(
+        request(
+            &router,
+            "POST",
+            "/operations/put",
+            json!({"key":"b","data":{},"extra":true})
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+}

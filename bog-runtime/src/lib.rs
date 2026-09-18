@@ -52,6 +52,8 @@ pub struct Query {
     pub vector: Option<Vec<f32>>,
     pub limit: Option<usize>,
     pub offset: Option<usize>,
+    pub include_fields: Option<Vec<String>>,
+    pub max_distance: Option<f64>,
 }
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Record {
@@ -253,6 +255,31 @@ impl Runtime {
             .get(name)
             .cloned()
             .ok_or_else(|| invalid("operation is not exposed"))?;
+        // Validate operation-specific keys before deserializing shared query types.
+        // Batch's legacy root array remains accepted for compatibility.
+        if !(op.action == Action::Batch && body.is_array()) {
+            let fields = body
+                .as_object()
+                .ok_or_else(|| invalid("operation arguments must be an object"))?;
+            let metadata = self.definition.operation_metadata_with_limits(&self.limits);
+            let schema = &metadata
+                .iter()
+                .find(|m| m.name == name)
+                .unwrap()
+                .request_schema;
+            let properties = schema["properties"].as_object().unwrap();
+            if fields.keys().any(|field| !properties.contains_key(field)) {
+                return Err(invalid("unknown or incompatible operation argument"));
+            }
+            for required in schema["required"].as_array().into_iter().flatten() {
+                if !fields.contains_key(required.as_str().unwrap()) {
+                    return Err(invalid("missing required operation argument"));
+                }
+            }
+            if fields.values().any(Value::is_null) {
+                return Err(invalid("operation arguments cannot be null"));
+            }
+        }
         match op.action {
             Action::Put => {
                 let key = body
@@ -294,6 +321,35 @@ impl Runtime {
     }
     /// Internal read entry point. Transport adapters must enforce exposure before calling.
     pub fn query(&self, target: &str, action: Action, q: &Query) -> Result<Value> {
+        if let Some(fields) = &q.include_fields {
+            if action != Action::Search || fields.is_empty() || fields.len() > 32 {
+                return Err(invalid(
+                    "include_fields requires search and 1 to 32 JSON Pointers",
+                ));
+            }
+            let mut seen = std::collections::BTreeSet::new();
+            for field in fields {
+                bog_definition::validate_pointer(field)?;
+                if !seen.insert(field) {
+                    return Err(invalid("duplicate include_fields pointer"));
+                }
+            }
+        }
+        if let Some(distance) = q.max_distance {
+            if !distance.is_finite()
+                || !(0.0..=2.0).contains(&distance)
+                || action != Action::Search
+                || !self
+                    .definition
+                    .resources
+                    .get(target)
+                    .is_some_and(|r| matches!(r.terminal, Terminal::Semantic { .. }))
+            {
+                return Err(invalid(
+                    "max_distance requires semantic search and a finite cosine distance from 0 to 2",
+                ));
+            }
+        }
         if q.limit.is_some_and(|n| n > 1000) || q.offset.is_some_and(|n| n > 10000) {
             return Err(invalid("page limit exceeded"));
         }
@@ -321,10 +377,51 @@ impl Runtime {
             effective_query.limit = Some(self.limits.hits.min(10));
         }
         self.stream.rtx(|r| {
-            r.resources
+            let mut result = r
+                .resources
                 .get(target)
                 .ok_or_else(|| invalid("unknown resource"))?
-                .query(action, &effective_query)
+                .query(action, &effective_query)?;
+            if let Some(fields) = &q.include_fields {
+                let resource = &self.definition.resources[target];
+                let mut bytes = 2usize;
+                for hit in result
+                    .as_array_mut()
+                    .ok_or_else(|| invalid("search response must be an array"))?
+                {
+                    let key = hit["key"]
+                        .as_str()
+                        .ok_or_else(|| invalid("search result lacks key"))?
+                        .to_owned();
+                    let source = r
+                        .source
+                        .get(&key)
+                        .ok_or_else(|| invalid("search result source missing"))?;
+                    let value = evaluate(resource, source.as_value())?
+                        .ok_or_else(|| invalid("search result no longer matches resource"))?;
+                    let mut selected = serde_json::Map::new();
+                    for pointer in fields {
+                        if let Some(value) = value.pointer(pointer) {
+                            // Check before cloning repeated large values (including root pointers).
+                            bytes += value.to_string().len() + pointer.len() * 6 + 8;
+                            if bytes > 4 * 1024 * 1024 - 4096 {
+                                return Err(invalid(
+                                    "response exceeds 4 MiB; reduce page size or include_fields",
+                                ));
+                            }
+                            selected.insert(pointer.clone(), value.clone());
+                        }
+                    }
+                    hit["value"] = Value::Object(selected);
+                    bytes += key.len() * 6 + 128;
+                    if bytes > 4 * 1024 * 1024 - 4096 {
+                        return Err(invalid(
+                            "response exceeds 4 MiB; reduce page size or include_fields",
+                        ));
+                    }
+                }
+            }
+            Ok(result)
         })
     }
     pub fn export(&self, offset: usize) -> Export {
@@ -498,6 +595,181 @@ mod tests {
             )
             .unwrap(),
         }
+    }
+    #[test]
+    fn operation_response_contracts_and_strict_requests() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut definition = definition();
+        for (name, target, action) in [
+            ("get", "docs", Action::Get),
+            ("remove", "docs", Action::Remove),
+            ("batch", "docs", Action::Batch),
+            ("stats", "stats", Action::Read),
+        ] {
+            definition.expose.insert(
+                name.into(),
+                bog_definition::Operation {
+                    target: target.into(),
+                    action,
+                },
+            );
+        }
+        let metadata = definition.operation_metadata();
+        let mut runtime = Runtime::open(dir.path(), definition).unwrap();
+        for (name, body) in [
+            ("get", json!({"key":"missing"})),
+            ("stats", json!({})),
+            (
+                "batch",
+                json!({"ops":[{"op":"upsert","key":"a","data":{"title":"bread software","priority":2,"done":false}}]}),
+            ),
+            (
+                "put",
+                json!({"key":"b","data":{"title":"bread","priority":1,"done":false}}),
+            ),
+            ("get", json!({"key":"a"})),
+            ("pending", json!({})),
+            ("stats", json!({})),
+            ("total", json!({})),
+            ("rank", json!({})),
+            ("text", json!({"query":"bread"})),
+            ("semantic", json!({"query":"bread"})),
+            (
+                "semantic",
+                json!({"query":"bread","include_fields":["/title"]}),
+            ),
+            ("remove", json!({"key":"b"})),
+            ("batch", json!([])),
+        ] {
+            let actual = runtime.execute(name, body).unwrap();
+            let schema = &metadata
+                .iter()
+                .find(|op| op.name == name)
+                .unwrap()
+                .response_schema;
+            let validator = jsonschema::validator_for(schema).unwrap();
+            assert!(
+                validator.is_valid(&actual),
+                "{name}: {actual}, schema: {schema}"
+            );
+        }
+        for (name, body) in [
+            ("put", json!({"key":"x","data":{},"unexpected":true})),
+            ("batch", json!({"ops":[],"unexpected":true})),
+            ("total", json!({"query":"bread"})),
+            ("text", json!({"query":"bread","max_distance":1})),
+            ("semantic", json!({"query":"bread","max_distance":-1})),
+            ("semantic", json!({"query":"bread","max_distance":2.1})),
+            ("semantic", json!({"query":"bread","include_fields":[]})),
+            ("text", json!({"query":"bread","include_fields":["/bad~"]})),
+            (
+                "text",
+                json!({"query":"bread","include_fields":["/title","/title"]}),
+            ),
+            (
+                "text",
+                json!({"query":"bread","include_fields":vec!["/title";33]}),
+            ),
+            ("text", json!({"query":"bread","include_fields":null})),
+        ] {
+            assert!(
+                runtime.execute(name, body.clone()).is_err(),
+                "accepted {name}: {body}"
+            );
+        }
+    }
+    #[test]
+    fn search_projection_is_opt_in_post_stage_and_distance_filter_is_consistent() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut definition = definition();
+        definition
+            .resources
+            .get_mut("text")
+            .unwrap()
+            .stages
+            .push(Stage::Projection {
+                fields: BTreeMap::from([("title".into(), "/title".into())]),
+            });
+        let mut runtime = Runtime::open(dir.path(), definition).unwrap();
+        runtime
+            .mutate(&[put("a", "bread", 1.), put("b", "software", 2.)])
+            .unwrap();
+        let plain = runtime.execute("text", json!({"query":"bread"})).unwrap();
+        assert_eq!(plain[0].as_object().unwrap().len(), 2);
+        let projected = runtime
+            .execute(
+                "text",
+                json!({"query":"bread","include_fields":["/title","/priority","/missing"]}),
+            )
+            .unwrap();
+        assert_eq!(projected[0]["value"], json!({"/title":"bread"}));
+        assert_eq!(projected[0]["key"], plain[0]["key"]);
+        assert_eq!(projected[0]["score"], plain[0]["score"]);
+        let semantic = runtime
+            .execute("semantic", json!({"query":"bread"}))
+            .unwrap();
+        for hit in semantic.as_array().unwrap() {
+            assert!(hit.get("value").is_none());
+            assert_eq!(
+                hit["score"].as_f64().unwrap(),
+                1. - hit["distance"].as_f64().unwrap()
+            );
+        }
+        let threshold = semantic[0]["distance"].as_f64().unwrap().max(0.);
+        let filtered = runtime
+            .execute(
+                "semantic",
+                json!({"query":"bread","max_distance":threshold}),
+            )
+            .unwrap();
+        assert_eq!(
+            filtered,
+            Value::Array(
+                semantic
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|hit| hit["distance"].as_f64().unwrap() <= threshold)
+                    .cloned()
+                    .collect()
+            )
+        );
+    }
+    #[test]
+    fn search_projection_enforces_total_response_budget() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut definition = definition();
+        definition.resources.remove("semantic");
+        definition.expose.remove("semantic");
+        let mut runtime = Runtime::open(dir.path(), definition).unwrap();
+        let ops: Vec<_> = (0..10)
+            .map(|n| Mutation::Upsert {
+                key: n.to_string(),
+                data: JsonDocument::try_from_value(
+                    json!({"title":"bread","payload":"x".repeat(220_000)}),
+                )
+                .unwrap(),
+            })
+            .collect();
+        for op in ops {
+            runtime.mutate(&[op]).unwrap();
+        }
+        assert_eq!(
+            runtime
+                .execute("text", json!({"query":"bread"}))
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
+            10
+        );
+        let error = runtime
+            .execute(
+                "text",
+                json!({"query":"bread","include_fields":["","/payload"]}),
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("response exceeds 4 MiB"));
     }
     #[test]
     fn shared_encoder_identity() {

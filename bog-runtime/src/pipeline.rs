@@ -279,9 +279,10 @@ impl<R: Readable> Reader<'_, R> {
                 Ok(Value::Array(
                     s.search(&vector)
                         .into_iter()
+                        .filter(|hit| q.max_distance.is_none_or(|max| f64::from(hit.score) <= max))
                         .skip(offset)
                         .take(limit)
-                        .map(|s| json!({"key":s.val,"distance":s.score}))
+                        .map(|s| json!({"key":s.val,"distance":s.score,"score":1.0 - f64::from(s.score)}))
                         .collect(),
                 ))
             }

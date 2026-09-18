@@ -185,6 +185,8 @@ pub struct OperationMetadata {
     pub action: Action,
     pub mutation: bool,
     pub request_schema: Value,
+    /// Successful operation data, before any transport envelope.
+    pub response_schema: Value,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct AdditiveDiff {
@@ -502,6 +504,7 @@ impl Definition {
                 target: op.target.clone(),
                 action: op.action,
                 mutation: matches!(op.action, Action::Put | Action::Remove | Action::Batch),
+                response_schema: response_schema(op.action, self.resources.get(&op.target).map(|r| &r.terminal)),
                 request_schema: {
                     let mut schema = request_schema(op.action);
                     if op.action == Action::Search {
@@ -510,6 +513,7 @@ impl Definition {
                         schema["properties"]["query"]["description"] = json!(format!("At most {} UTF-8 bytes; the runtime enforces this byte limit, including for multibyte text.", limits.query_bytes));
                         schema["properties"]["limit"]["maximum"] = json!(limits.hits);
                         if self.resources.get(&op.target).is_some_and(|r| matches!(r.terminal, Terminal::Semantic{..})) {
+                            schema["properties"]["max_distance"] = json!({"type":"number","minimum":0,"maximum":2,"description":"Optional maximum cosine distance (inclusive). Lower is closer; no universal relevance cutoff is implied."});
                             schema["properties"]["vector"] = json!({"type":"array","minItems":SEMANTIC_DIMENSIONS,"maxItems":SEMANTIC_DIMENSIONS,"items":{"type":"number"},"description":"512 finite f32 values with nonzero finite norm; checked by the runtime."});
                             schema.as_object_mut().unwrap().remove("required");
                             schema["oneOf"] = json!([{"required":["query"]},{"required":["vector"]}]);
@@ -558,16 +562,61 @@ pub fn request_schema(action: Action) -> Value {
             vec![],
         ),
         Action::Search => (
-            json!({"query":{"type":"string","maxLength":MAX_QUERY_BYTES,"x-maxUtf8Bytes":MAX_QUERY_BYTES,"description":"At most 4096 UTF-8 bytes; the runtime enforces this byte limit, including for multibyte text."},"limit":{"type":"integer","minimum":0,"maximum":MAX_HITS},"offset":{"type":"integer","minimum":0,"maximum":10000}}),
+            json!({"query":{"type":"string","maxLength":MAX_QUERY_BYTES,"x-maxUtf8Bytes":MAX_QUERY_BYTES,"description":"At most 4096 UTF-8 bytes; the runtime enforces this byte limit, including for multibyte text."},"limit":{"type":"integer","minimum":0,"maximum":MAX_HITS},"offset":{"type":"integer","minimum":0,"maximum":10000},"include_fields":{"type":"array","minItems":1,"maxItems":32,"uniqueItems":true,"items":{"type":"string","maxLength":1024,"pattern":"^(?:/(?:[^~]|~[01])*)*$"},"description":"Opt in to hit.value: an object keyed by requested JSON Pointers, read after resource stages. Missing fields are omitted. At most 1024 UTF-8 bytes per pointer; total response limited to 4 MiB."}}),
             vec!["query"],
         ),
         Action::Wait => (
-            json!({"cursor":{"type":"string"},"timeout_ms":{"type":"integer","minimum":0,"maximum":30000}}),
+            json!({"cursor":{"type":"string"},"timeout":{"type":"integer","minimum":0,"maximum":25,"description":"Wait timeout in seconds."}}),
             vec![],
         ),
         Action::Read => (json!({}), vec![]),
     };
     json!({"type":"object","properties":properties,"required":required,"additionalProperties":false})
+}
+/// Schema for successful operation data; transports may wrap this in an envelope.
+pub fn response_schema(action: Action, terminal: Option<&Terminal>) -> Value {
+    let object = |properties: Value, required: &[&str]| json!({"type":"object","properties":properties,"required":required,"additionalProperties":false});
+    let hit = |semantic: bool, projection: bool| {
+        let mut properties = json!({"key":{"type":"string"},"score":{"type":"number"}});
+        let mut required = vec!["key", "score"];
+        if semantic {
+            properties["distance"] = json!({"type":"number","description":"Cosine distance; lower is closer. score = 1 - distance is cosine similarity; higher is closer."});
+            required.push("distance");
+        }
+        if projection {
+            properties["value"] = json!({"type":"object","description":"Only present when include_fields is requested; keys are requested JSON Pointers, missing fields omitted."});
+        }
+        json!({"type":"array","items":object(properties, &required)})
+    };
+    match action {
+        Action::Put | Action::Remove | Action::Batch => {
+            object(json!({"ok":{"const":true}}), &["ok"])
+        }
+        Action::Get => json!({"type":["object","null"]}),
+        Action::List => {
+            json!({"type":"array","items":object(json!({"key":{"type":"string"},"value":{"type":"object"}}), &["key","value"])})
+        }
+        Action::Top => hit(false, false),
+        Action::Search => {
+            let semantic = matches!(terminal, Some(Terminal::Semantic { .. }));
+            let mut schema = hit(semantic, true);
+            schema["description"] = json!(if semantic {
+                "Approximate nearest neighbors by cosine distance (lower is closer); score is 1 - distance (higher is closer). No universal relevance threshold."
+            } else {
+                "BM25 score (higher is more relevant). Whitespace tokenization, stripping non-ASCII-alphanumeric bytes within each token, ASCII lowercase, no stemming. Scores are query and corpus dependent."
+            });
+            schema
+        }
+        Action::Read if matches!(terminal, Some(Terminal::Stats { .. })) => object(
+            json!({"count":{"type":"integer"},"sum":{"type":"number"},"mean":{"type":["number","null"]},"variance":{"type":["number","null"]},"stddev":{"type":["number","null"]}}),
+            &["count", "sum", "mean", "variance", "stddev"],
+        ),
+        Action::Read => json!({"type":"integer"}),
+        Action::Wait => object(
+            json!({"seq":{"type":"integer","minimum":0},"cursor":{"type":"string"},"changed":{"type":"boolean"},"reset":{"type":"boolean"}}),
+            &["seq", "cursor", "changed", "reset"],
+        ),
+    }
 }
 pub fn component_catalog() -> Value {
     component_catalog_with_limits(&Limits::default())
@@ -576,7 +625,7 @@ pub fn component_catalog() -> Value {
 pub fn component_catalog_with_limits(limits: &Limits) -> Value {
     json!({"version":DEFINITION_VERSION,"input":{"kind":"keyed_json_object","key_type":"string"},
     "stages":["filter","projection"],"terminals":["table","count","stats","ranked","bm25","semantic"],
-    "bm25":{"tokenizer":BM25_TOKENIZER},"semantic":{"model":SEMANTIC_MODEL,"dimensions":SEMANTIC_DIMENSIONS,"scalar":"f32","metric":"cosine","index":"anny"},
+    "bm25":{"tokenizer":BM25_TOKENIZER,"stemming":false,"score_direction":"higher is more relevant"},"semantic":{"model":SEMANTIC_MODEL,"dimensions":SEMANTIC_DIMENSIONS,"scalar":"f32","metric":"cosine","index":"anny"},
     "limits":{"resources":limits.resources,"stages_per_resource":limits.stages_per_resource,"semantic_indexes":MAX_SEMANTIC_INDEXES,"vectors":limits.vectors,"text_bytes":limits.text_bytes,"query_bytes":limits.query_bytes,"hits":limits.hits,"build_timeout_seconds":limits.build_timeout_seconds},
     "definition_schema":schema(),
     "examples":{

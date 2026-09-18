@@ -15,3 +15,4 @@ sha2 = "0.10"
 thiserror = "2"
 [dev-dependencies]
 tempfile = "3"
+jsonschema = { version = "0.56", default-features = false }
