@@ -80,6 +80,9 @@ Implementation references:
 
 ## Documentation
 
+- [Anatomy of a Bog](docs/anatomy-of-a-bog.md): definitions, resources, provisioning, and application access.
+- [Composable Bogs](docs/bog-composable-resources.md): runnable examples and API details.
+
 The fold crate is internally documented; to view the doc site, run:
 
 ```console
