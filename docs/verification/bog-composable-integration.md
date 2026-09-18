@@ -1,5 +1,7 @@
 # Composable Bog Cloud integration verification
 
+The subsequent live rollout completed on 2026-09-18; see [deployment and live acceptance](bog-composable-live-release.md). This document records the preceding integration-stage checks.
+
 ## Scope and status
 
 Integrated deployed-cloud source `d760757` and composable source `7ed53ea` in `codex/integrated-cloud-capabilities`, preserving both histories and both original worktrees. This report separates source integration from live deployment. No live registry migration, feature activation, customer-record changes, or hosting expansion was performed during integration.

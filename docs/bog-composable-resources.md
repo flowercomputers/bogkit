@@ -12,6 +12,8 @@ MCP offers the same catalog as `discover_capabilities` and the resource `bog://g
 
 When `enabled` is false, do not attempt configurable creation or definition changes. Existing Bogs remain available. Management authority is required to inspect or change definitions; matching app read credentials may discover and query their Bog's exposed resources.
 
+The hosted preview at https://cloud.bog.new has composition enabled as of 2026-09-18. Connect remote agents at https://mcp.bog.new/mcp. Check the live component catalog for effective availability and limits; the local manager default remains disabled.
+
 ## Run locally
 
 The local runner serves the same configured runtime on loopback. Run from the repository root:
