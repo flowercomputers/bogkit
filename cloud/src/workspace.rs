@@ -6,6 +6,17 @@ use crate::{
 };
 use rusqlite::{Connection, OptionalExtension, params};
 use uuid::Uuid;
+// The account override applies only through the personal workspace's account join.
+// Prefer the workspace override when both flags independently remove the limit.
+fn allowance_source(workspace_uncapped: bool, effective_uncapped: bool) -> &'static str {
+    if workspace_uncapped {
+        "workspace"
+    } else if effective_uncapped {
+        "account"
+    } else {
+        "default"
+    }
+}
 fn forbidden() -> CloudError {
     CloudError::new("forbidden", "workspace access denied")
 }
@@ -125,6 +136,8 @@ impl Auth {
                 id: WorkspaceId(Uuid::parse_str(&id).map_err(|_| forbidden())?),
                 name: "Personal".into(),
                 uncapped_bogs: uncapped,
+                effective_uncapped_bogs: effective,
+                bog_limit_source: allowance_source(uncapped, effective).into(),
                 bog_limit: if effective { None } else { Some(3) },
                 personal: true,
                 role: role.unwrap_or_default(),
@@ -177,6 +190,8 @@ impl Auth {
                 id: WorkspaceId::legacy(),
                 name: "Legacy".into(),
                 uncapped_bogs: false,
+                effective_uncapped_bogs: false,
+                bog_limit_source: "legacy".into(),
                 bog_limit: Some(self.legacy_bog_limit),
                 personal: false,
                 role: "owner".into(),
@@ -200,6 +215,14 @@ impl Auth {
                 name: r.get(1)?,
                 role: r.get(2)?,
                 uncapped_bogs: r.get(3)?,
+                effective_uncapped_bogs: id != WorkspaceId::legacy().to_string()
+                    && r.get::<_, bool>(4)?,
+                bog_limit_source: if id == WorkspaceId::legacy().to_string() {
+                    "legacy"
+                } else {
+                    allowance_source(r.get(3)?, r.get(4)?)
+                }
+                .into(),
                 bog_limit: if id == WorkspaceId::legacy().to_string() {
                     Some(self.legacy_bog_limit)
                 } else if r.get::<_, bool>(4)? {
@@ -402,12 +425,23 @@ impl Auth {
         member(&tx, a, w, true)?;
         let n = tx
             .execute(
-                "UPDATE tokens SET revoked_at=?3 WHERE workspace_id=?1 AND id=?2",
+                "UPDATE tokens SET revoked_at=?3 WHERE workspace_id=?1 AND id=?2 AND revoked_at IS NULL",
                 params![w.to_string(), id, now()],
             )
             .map_err(db_error)?;
         if n == 0 {
-            return Err(CloudError::new("not_found", "token not found"));
+            let exists: bool = tx
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM tokens WHERE workspace_id=?1 AND id=?2)",
+                    params![w.to_string(), id],
+                    |r| r.get(0),
+                )
+                .map_err(db_error)?;
+            return if exists {
+                Ok(())
+            } else {
+                Err(CloudError::new("not_found", "token not found"))
+            };
         }
         let bog: String = tx
             .query_row("SELECT bog_id FROM tokens WHERE id=?1", [id], |r| r.get(0))
@@ -553,6 +587,8 @@ mod tests {
         operator.workspace_id = Some(WorkspaceId::legacy());
         let workspace = a.workspaces_for_principal(&operator).unwrap().remove(0);
         assert_eq!(workspace.bog_limit, Some(17));
+        assert!(!workspace.effective_uncapped_bogs);
+        assert_eq!(workspace.bog_limit_source, "legacy");
         assert!(!workspace.uncapped_bogs);
         let owner = person(&a, "owner");
         a.claim_legacy_subject(&operator, "issuer", "owner", "issuer", "owner")
@@ -564,7 +600,125 @@ mod tests {
             .find(|w| w.id == WorkspaceId::legacy())
             .unwrap();
         assert_eq!(legacy.bog_limit, Some(17));
+        assert!(!legacy.effective_uncapped_bogs);
+        assert_eq!(legacy.bog_limit_source, "legacy");
         assert!(!legacy.uncapped_bogs);
+    }
+    #[test]
+    fn concurrent_app_revocation_records_only_one_change() {
+        let (d, r, a) = setup();
+        let obs = Arc::new(crate::observability::Observability::open(d.path()).unwrap());
+        let a = a.with_observability(obs.clone());
+        let owner = person(&a, "revocation-owner");
+        let stranger = person(&a, "revocation-stranger");
+        let bog = r
+            .create_for_principal(&owner, "revocation", "records-v1", "revocation", 32)
+            .unwrap();
+        let token = a.issue_app_token(&owner, bog.id, Scope::Write).unwrap();
+        let barrier = std::sync::Barrier::new(2);
+        std::thread::scope(|scope| {
+            for _ in 0..2 {
+                scope.spawn(|| {
+                    barrier.wait();
+                    a.revoke_app_token(&owner, &token.id).unwrap();
+                });
+            }
+        });
+        a.revoke_app_token(&owner, &token.id).unwrap();
+        assert_eq!(
+            a.revoke_app_token(&stranger, &token.id).unwrap_err().code,
+            "not_found"
+        );
+        assert_eq!(
+            a.revoke_app_token(&owner, "missing-token")
+                .unwrap_err()
+                .code,
+            "not_found"
+        );
+        let db = r.connection().unwrap();
+        let count: i64 = db
+            .query_row(
+                "SELECT COUNT(*) FROM audit_events WHERE action='token.revoked' AND resource_id=?1",
+                [&token.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+        let events = obs.events(bog.id, None, 100).unwrap();
+        assert_eq!(
+            events["events"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|e| e["kind"] == "credential_revoked")
+                .count(),
+            1
+        );
+        drop(db);
+        assert!(a.authenticate(&token.secret).is_err());
+    }
+    #[test]
+    fn allowance_explanations_follow_live_flags_without_crossing_memberships() {
+        let (_d, _r, a) = setup();
+        let owner = person(&a, "allowance-owner");
+        let guest = person(&a, "allowance-guest");
+        let operator = a.authenticate(&"x".repeat(32)).unwrap();
+        a.set_platform_operator(&operator, owner.account_id.as_deref().unwrap(), true)
+            .unwrap();
+        let personal = owner.workspace_id.unwrap();
+        let shared = a
+            .create_workspace(&owner, "Shared", "allowance-shared")
+            .unwrap();
+        assert_eq!(shared.bog_limit_source, "default");
+        assert!(!shared.effective_uncapped_bogs);
+        let selected = a.select_workspace(&owner, shared.id).unwrap();
+        let invite = a.invite(&selected, "member").unwrap();
+        a.accept_invitation_for_principal(&guest, &invite.secret)
+            .unwrap();
+        let check = |id: WorkspaceId, local: bool, effective: bool, source: &str| {
+            let rows = a.workspaces_for_principal(&owner).unwrap();
+            let w = rows.iter().find(|w| w.id == id).unwrap();
+            assert_eq!(w.uncapped_bogs, local);
+            assert_eq!(w.effective_uncapped_bogs, effective);
+            assert_eq!(w.bog_limit_source, source);
+            assert_eq!(w.bog_limit, if effective { None } else { Some(3) });
+            let platform = a.platform_workspaces(&owner).unwrap();
+            let row = platform.iter().find(|w| w["id"] == id.to_string()).unwrap();
+            assert_eq!(row["uncapped_bogs"], local);
+            assert_eq!(row["effective_uncapped_bogs"], effective);
+            assert_eq!(row["bog_limit_source"], source);
+            assert_eq!(row["bog_limit"], serde_json::to_value(w.bog_limit).unwrap());
+        };
+        a.set_account_uncapped(&owner, owner.account_id.as_deref().unwrap(), true)
+            .unwrap();
+        check(personal, false, true, "account");
+        check(shared.id, false, false, "default");
+        let (_, provisioned) = a.provision_subject("issuer", "allowance-owner").unwrap();
+        assert!(!provisioned.uncapped_bogs);
+        assert!(provisioned.effective_uncapped_bogs);
+        assert_eq!(provisioned.bog_limit_source, "account");
+        a.set_workspace_uncapped(&owner, personal, true).unwrap();
+        check(personal, true, true, "workspace");
+        a.set_account_uncapped(&owner, owner.account_id.as_deref().unwrap(), false)
+            .unwrap();
+        check(personal, true, true, "workspace");
+        a.set_workspace_uncapped(&owner, personal, false).unwrap();
+        check(personal, false, false, "default");
+        a.set_workspace_uncapped(&owner, shared.id, true).unwrap();
+        check(shared.id, true, true, "workspace");
+        let replay = a
+            .create_workspace(&owner, "Shared", "allowance-shared")
+            .unwrap();
+        assert!(replay.effective_uncapped_bogs);
+        assert_eq!(replay.bog_limit_source, "workspace");
+        let guest_rows = a.workspaces_for_principal(&guest).unwrap();
+        assert!(!guest_rows.iter().any(|w| w.id == personal));
+        let guest_shared = guest_rows.iter().find(|w| w.id == shared.id).unwrap();
+        assert!(guest_shared.effective_uncapped_bogs);
+        assert_eq!(guest_shared.bog_limit_source, "workspace");
+        assert_eq!(a.platform_workspaces(&guest).unwrap_err().code, "forbidden");
+        a.set_workspace_uncapped(&owner, shared.id, false).unwrap();
+        check(shared.id, false, false, "default");
     }
     #[test]
     fn uncapped_flags_are_scoped_revocable_and_still_globally_bounded() {
@@ -1421,7 +1575,7 @@ impl Auth {
         let db = self.registry.connection()?;
         platform_access(&db, p)?;
         let mut s=db.prepare("SELECT w.id,w.name,w.personal_account_id,w.uncapped_bogs,w.uncapped_bogs OR COALESCE(a.uncapped_bogs,0),(SELECT COUNT(*) FROM bogs b WHERE b.workspace_id=w.id AND (b.deleted_at IS NULL OR b.cleanup_completed_at IS NULL)) FROM workspaces w LEFT JOIN accounts a ON a.id=w.personal_account_id WHERE w.deleted_at IS NULL AND w.id<>'00000000-0000-0000-0000-000000000001' ORDER BY w.created_at,w.id").map_err(db_error)?;
-        s.query_map([],|r| Ok(serde_json::json!({"id":r.get::<_,String>(0)?,"name":r.get::<_,String>(1)?,"personal_account_id":r.get::<_,Option<String>>(2)?,"personal":r.get::<_,Option<String>>(2)?.is_some(),"uncapped_bogs":r.get::<_,bool>(3)?,"bog_limit":if r.get::<_,bool>(4)? {None} else {Some(3)},"bog_count":r.get::<_,i64>(5)?}))).map_err(db_error)?.collect::<Result<Vec<_>,_>>().map_err(db_error)
+        s.query_map([],|r| Ok(serde_json::json!({"id":r.get::<_,String>(0)?,"name":r.get::<_,String>(1)?,"personal_account_id":r.get::<_,Option<String>>(2)?,"personal":r.get::<_,Option<String>>(2)?.is_some(),"uncapped_bogs":r.get::<_,bool>(3)?,"effective_uncapped_bogs":r.get::<_,bool>(4)?,"bog_limit_source":allowance_source(r.get(3)?,r.get(4)?),"bog_limit":if r.get::<_,bool>(4)? {None} else {Some(3)},"bog_count":r.get::<_,i64>(5)?}))).map_err(db_error)?.collect::<Result<Vec<_>,_>>().map_err(db_error)
     }
     pub fn bootstrap_workspace(
         &self,
@@ -1538,6 +1692,8 @@ impl Auth {
             name: name.into(),
             role,
             uncapped_bogs: uncapped,
+            effective_uncapped_bogs: uncapped,
+            bog_limit_source: allowance_source(uncapped, uncapped).into(),
             bog_limit: if uncapped { None } else { Some(3) },
             personal: false,
         })

@@ -82,6 +82,8 @@ pub struct Account {
 #[derive(Clone, Debug, Serialize)]
 pub struct Workspace {
     pub uncapped_bogs: bool,
+    pub effective_uncapped_bogs: bool,
+    pub bog_limit_source: String,
     pub bog_limit: Option<usize>,
     pub personal: bool,
     pub id: WorkspaceId,
