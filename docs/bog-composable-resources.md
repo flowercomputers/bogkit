@@ -158,3 +158,19 @@ cargo test -p bog-cloud --test composable_acceptance
 ```
 
 The process test uses a temporary service root and real worker processes. Backup and restore use the manager's administrative interface directly; they are not public HTTP routes. The acceptance test also adds the semantic fixture and checks actual search before and after restart. Building the model-backed runtime requires the pinned model assets; the resulting binary embeds them. `scripts/cloud/verify_composable.sh` runs the wider regression checks.
+
+### Response shapes and search behavior
+
+Bog descriptions distinguish `kind: "defined"` from `kind: "template"`. A defined Bog has `template: null` and `template_version: null`; clients must accept those nulls. Workspace responses retain `uncapped_bogs` as the workspace's own flag and add `effective_uncapped_bogs` and `bog_limit_source` (`account`, `workspace`, `default`, or `legacy`). An account override applies to its personal workspace, not shared workspaces it joins. `bog_limit: null` means the effective allowance is uncapped; storage and host limits still apply.
+
+The catalog's operation metadata includes `request_schema` and `response_schema`. The latter describes successful operation data before its transport envelope. Resource discovery also supplies hosted request details and `default_query_action`. Omitting `action` intentionally chooses `list` for a table, `top` for a ranked resource, and `read` otherwise. It does not select whichever exposed operation happens to exist: specify another exposed action explicitly. Canonical batch requests use `{"ops":[...]}`. Bare arrays and `{"operations":[...]}` remain compatibility aliases.
+
+Search defaults to keys and scores. To request selected values, pass `"include_fields":["/title","/done"]`; each hit's optional `value` object is keyed by those JSON Pointers, for example `{"/title":"Ship release","/done":false}`. Values come from the resource after its stages; missing fields are omitted. Unrequested source fields are not returned. At most 32 unique pointers are accepted, each at most 1024 UTF-8 bytes, with a 4 MiB response ceiling.
+
+BM25 splits text on whitespace, removes non-ASCII-alphanumeric bytes within each token, and lowercases ASCII. It does not stem: `run` and `running` differ, and punctuation within a token is removed rather than creating a new token. Higher BM25 scores are more relevant, but scores depend on the query and corpus.
+
+Semantic hits include cosine `distance` (lower is closer) and `score = 1 - distance` (higher is closer). The optional semantic-only `max_distance` ranges from 0 through 2 and filters hits by distance. There is no universal relevance cutoff; choose a threshold from examples representative of your data. BM25 rejects `max_distance`.
+
+Definition jobs report `created_at`, `started_at`, `updated_at`, and `finished_at` as Unix seconds, `stage`, `processed_records`, `total_records`, `writes_paused`, and `recovery_guidance`. Unknown timestamps or counts are null; a null count is not zero. Poll until the job reaches a terminal state, then confirm the active revision and worker readiness. Application credentials can read their own Bog's worker state and their own traffic through metrics; operational events require management authority.
+
+The private app-access helper defaults to `https://cloud.bog.new`. Pass `--auth-file` explicitly to reuse an existing, owned private authorization cache for the same service origin. Without that option it starts an additional approval. Keep this authorization cache separate from the single-Bog application credential file and never print either file's contents. The advertised remote MCP endpoint is `https://mcp.bog.new/mcp`; OAuth discovery remains specific to its host.

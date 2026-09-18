@@ -99,7 +99,7 @@ pub async fn homepage(State(service): State<Arc<CloudService>>, request: Request
         guide_asset(
             "text/markdown; charset=utf-8",
             format!(
-                "# Bog Cloud\n\nA working prototype by [Flower Computer](https://flowercomputer.com/) for apps and agents to store JSON records through HTTP or bearer-authenticated MCP.\n\nUse it for a small shared notebook, reading list, or script state. Keep a separate copy of important data. SQL and durable event replay are not supported.\n\n[Connect an agent]({base}/connect) · [Documentation]({base}/docs) · [Authentication]({base}/auth.md) · [API operations]({base}/v1) · [OpenAPI]({base}/openapi.json) · [Console]({base}/console)\n\nRead the authentication guide for this deployment's active mode before connecting.\n\n{}\n",
+                "# Bog Cloud\n\nA working prototype by [Flower Computer](https://flowercomputer.com/) for apps and agents to store JSON records through HTTP or bearer-authenticated MCP.\n\nUse it for a small shared notebook, reading list, or script state. Keep a separate copy of important data. SQL and durable event replay are not supported.\n\n[Connect an agent]({base}/connect) · [Documentation]({base}/docs) · [Authentication]({base}/auth.md) · [API operations]({base}/v1) · [OpenAPI]({base}/openapi.json) · [MCP](https://mcp.bog.new/mcp) · [Console]({base}/console)\n\nRead the authentication guide for this deployment's active mode before connecting.\n\n{}\n",
                 pricing(&service)
             ),
         )
@@ -159,7 +159,7 @@ pub async fn document(State(service): State<Arc<CloudService>>, request: Request
         "/og.svg"=>guide_asset("image/svg+xml",include_str!("../static/og.svg")),
         _ => {
             let (title,body)= match path {
-                "/connect"=>("Connect an agent", if service.native_auth.is_some() { include_str!("../static/connect.html").replace("{{origin}}", &escape(&base)).replace("{{mcp_url}}", &escape(&if base == "https://cloud.bog.new" { "https://mcp.bog.new/mcp".into() } else { format!("{base}/mcp") })) } else { "<p>GitHub agent connection is unavailable on this deployment. An operator must supply an appropriate credential privately. App credentials access one existing Bog; provisioning requires management access.</p><p><a href=\"/auth.md\">Read the active authentication instructions</a></p>".into() }),
+                "/connect"=>("Connect an agent", if service.native_auth.is_some() { include_str!("../static/connect.html").replace("{{origin}}", &escape(&base)).replace("{{mcp_url}}", "https://mcp.bog.new/mcp") } else { "<p>GitHub agent connection is unavailable on this deployment. An operator must supply an appropriate credential privately. App credentials access one existing Bog; provisioning requires management access.</p><p><a href=\"/auth.md\">Read the active authentication instructions</a></p>".into() }),
                 "/docs"=>("Documentation",include_str!("../static/public-docs.html").replace("{{pricing}}", &escape(&pricing(&service)))),
                 "/about"=>("About Bog Cloud",include_str!("../static/about.html").into()),
                 "/contact"=>("Contact Bog Cloud",include_str!("../static/contact.html").into()),
