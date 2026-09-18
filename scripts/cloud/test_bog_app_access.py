@@ -162,4 +162,91 @@ h.authorize('https://cloud.bog.new', pathlib.Path(%r))
             with self.assertRaises(helper.Failure): helper.main(self.args())
             self.assertEqual(request.call_count,1)
 
-if __name__=='__main__': unittest.main()
+
+class ConnectionTests(unittest.TestCase):
+    def test_approval_continues_without_chat_and_verifies_privately(self):
+        with tempfile.TemporaryDirectory() as root:
+            auth=Path(root)/'auth.json'; output=io.StringIO()
+            responses=[(200,{'verification_uri':'https://bog.example/approve','user_code':'PUBLIC','device_code':'PRIVATE','interval':5,'expires_in':600}), (400,{'error':{'code':'authorization_pending'}}), (429,{'error':{'code':'slow_down'}}), (200,{'access_token':'SECRET','expires_in':600}), (200,{'kind':'agent'})]
+            with patch.object(helper,'request',side_effect=responses) as req, patch.object(helper.time,'sleep') as sleep, contextlib.redirect_stdout(output):
+                helper.main(['--origin','https://bog.example','--connect','--auth-file',str(auth)])
+            self.assertIn('Connected',output.getvalue()); self.assertNotIn('SECRET',output.getvalue()); self.assertNotIn('PRIVATE',output.getvalue())
+            self.assertEqual([c.args[0] for c in sleep.call_args_list],[5,5,10])
+            self.assertEqual(req.call_args.args[1],'/v1/me')
+            self.assertEqual(auth.stat().st_mode & 0o777,0o600)
+    def test_denial_expiry_and_cancellation_do_not_connect(self):
+        for code in ['access_denied','expired_token']:
+            with tempfile.TemporaryDirectory() as root, patch.object(helper.time,'sleep'), patch.object(helper,'request',side_effect=[(200,{'verification_uri':'https://bog.example/approve','user_code':'PUBLIC','device_code':'PRIVATE'}),(400,{'error':{'code':code}})]), contextlib.redirect_stdout(io.StringIO()):
+                with self.assertRaises(helper.Failure): helper.main(['--origin','https://bog.example','--connect','--auth-file',root+'/auth.json'])
+                self.assertFalse(Path(root,'auth.json').exists())
+        with tempfile.TemporaryDirectory() as root, patch.object(helper,'authorize',side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt): helper.main(['--connect','--auth-file',root+'/auth.json'])
+
+class DeviceCompatibilityTests(unittest.TestCase):
+    setUp = InstallerTests.setUp
+    tearDown = InstallerTests.tearDown
+    cache = InstallerTests.cache
+    args = InstallerTests.args
+    def device(self):
+        return (200, {'verification_uri': self.base + '/approve', 'user_code': 'PUBLIC', 'device_code': 'PRIVATE', 'interval': 5, 'expires_in': 600})
+
+    def test_flat_and_nested_pending_and_throttle(self):
+        for nested in (False, True):
+            def error(code):
+                return (400, {'error': {'code': code} if nested else code})
+            responses = [self.device(), error('authorization_pending'), error('slow_down'), (200, {'access_token': 'SECRET', 'expires_in': 600})]
+            with patch.object(helper, 'request', side_effect=responses), patch.object(helper.time, 'sleep') as sleep, contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(helper.authorize(self.base, self.auth), 'SECRET')
+            self.assertEqual([c.args[0] for c in sleep.call_args_list], [5, 5, 10])
+            self.assertNotIn('SECRET', output.getvalue())
+            self.assertNotIn('PRIVATE', output.getvalue())
+
+    def test_flat_denial_expiry_and_malformed_error_stop(self):
+        for error in ('access_denied', 'expired_token', None, [], 42):
+            with patch.object(helper, 'request', side_effect=[self.device(), (400, {'error': error})]), patch.object(helper.time, 'sleep'), contextlib.redirect_stdout(io.StringIO()):
+                with self.assertRaises(helper.Failure): helper.authorize(self.base, self.auth)
+            self.assertFalse(self.auth.exists())
+
+    def test_interrupted_poll_does_not_save_or_connect(self):
+        for failure in (KeyboardInterrupt(), helper.Failure('connection interrupted')):
+            output = io.StringIO()
+            with patch.object(helper, 'request', side_effect=[self.device(), failure]), patch.object(helper.time, 'sleep'), contextlib.redirect_stdout(output):
+                with self.assertRaises(type(failure)): helper.main(['--origin', self.base, '--connect', '--auth-file', str(self.auth)])
+            self.assertFalse(self.auth.exists())
+            self.assertNotIn('Connected', output.getvalue())
+
+    def test_connect_reuses_cache_and_renews_rejected_cache(self):
+        self.cache()
+        args = ['--origin', self.base, '--connect', '--auth-file', str(self.auth)]
+        with patch.object(helper, 'request', return_value=(200, {})), patch.object(helper, 'authorize') as authorize, contextlib.redirect_stdout(io.StringIO()):
+            helper.main(args)
+        authorize.assert_not_called()
+        with patch.object(helper, 'request', side_effect=[(401, {}), (200, {})]), patch.object(helper, 'authorize', return_value='fresh') as authorize, contextlib.redirect_stdout(io.StringIO()):
+            helper.main(args)
+        authorize.assert_called_once_with(self.base, self.auth)
+
+    def test_expired_cache_is_renewed_before_verification(self):
+        helper.write_private(self.auth, {'origin': self.base, 'access_token': 'expired', 'expires_at': 0})
+        with patch.object(helper, 'authorize', return_value='fresh') as authorize, patch.object(helper, 'request', return_value=(200, {})) as request, contextlib.redirect_stdout(io.StringIO()):
+            helper.main(['--origin', self.base, '--connect', '--auth-file', str(self.auth)])
+        authorize.assert_called_once_with(self.base, self.auth)
+        self.assertEqual(request.call_args.kwargs['token'], 'fresh')
+
+    def test_dotenv_private_escaping_and_no_overwrite(self):
+        value = "quote' slash\\ $value `command`"
+        helper.write_private(self.output, {'BOG_CLOUD_TOKEN': value}, output_format='dotenv')
+        self.assertEqual(self.output.read_text(), "BOG_CLOUD_TOKEN='quote\\' slash\\\\ $value `command`'\n")
+        self.assertEqual(self.output.stat().st_mode & 0o777, 0o600)
+        with self.assertRaises(helper.Failure): helper.write_private(self.output, {}, output_format='dotenv')
+        for bad in ('line\nvalue', 'line\rvalue', 'null\0value'):
+            with self.assertRaises(helper.Failure): helper.write_private(self.output, {'TOKEN': bad}, True, 'dotenv')
+
+    def test_dotenv_install_and_target_machine_message(self):
+        self.cache()
+        with patch.object(helper, 'request', return_value=(200, {'bog_id': 'bog', 'id': 'id', 'token': 'secret'})), contextlib.redirect_stdout(io.StringIO()) as out:
+            helper.main(self.args() + ['--format', 'dotenv'])
+        self.assertIn("BOG_CLOUD_TOKEN='secret'", self.output.read_text())
+        self.assertIn('target machine', out.getvalue())
+        self.assertNotIn('secret', out.getvalue())
+
+if __name__ == '__main__': unittest.main()

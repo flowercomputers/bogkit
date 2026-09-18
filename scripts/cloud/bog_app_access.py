@@ -86,7 +86,15 @@ def read_auth(path, base):
     return None
 
 
-def write_private(path, value, replace=False):
+def write_private(path, value, replace=False, output_format='json'):
+    if output_format == 'dotenv':
+        # Quote dotenv values and escape backslashes and quotes; never execute this file as a script.
+        if any(not isinstance(v, str) or any(c in v for c in '\r\n\0') for v in value.values()):
+            raise Failure('Dotenv values must be single-line strings.')
+        content = ''.join(k + "='" + v.replace("\\", "\\\\").replace("'", "\\'") + "'\n" for k, v in value.items())
+    else:
+        content = json.dumps(value) + '\n'
+
     path = Path(path)
     if not path.parent.is_dir():
         raise Failure('Output directory must already exist; choose a private directory.')
@@ -97,8 +105,7 @@ def write_private(path, value, replace=False):
         try:
             with os.fdopen(fd, 'w') as handle:
                 os.fchmod(handle.fileno(), 0o600)
-                json.dump(value, handle)
-                handle.write('\n')
+                handle.write(content)
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(temporary, path)
@@ -111,8 +118,8 @@ def write_private(path, value, replace=False):
         except FileExistsError as error:
             raise Failure('Output already exists. Choose another path or explicitly use --replace.') from error
         with os.fdopen(fd, 'w') as handle:
-            json.dump(value, handle)
-            handle.write('\n')
+            os.fchmod(handle.fileno(), 0o600)
+            handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
 
@@ -136,7 +143,8 @@ def authorize(base, auth_file):
             token = result['access_token']
             write_private(auth_file, {'origin': base, 'access_token': token, 'expires_at': int(time.time()) + result.get('expires_in', 2592000)}, replace=True)
             return token
-        code = result.get('error', {}).get('code')
+        error = result.get('error')
+        code = error if isinstance(error, str) else error.get('code') if isinstance(error, dict) else None
         if code == 'slow_down':
             interval += 5
         elif code != 'authorization_pending':
@@ -147,12 +155,30 @@ def authorize(base, auth_file):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--origin', default='https://cloud.bog.new')
-    parser.add_argument('--handoff', required=True)
-    parser.add_argument('--output', required=True, help='Private JSON file for the application; never printed')
+    parser.add_argument('--connect', action='store_true', help='Wait for agent approval, save authorization privately, and verify access')
+    parser.add_argument('--handoff')
+    parser.add_argument('--output', help='Private configuration file on this machine; never printed')
+    parser.add_argument('--format', choices=('json', 'dotenv'), default='json', help='App configuration format (default: json)')
     parser.add_argument('--replace', action='store_true', help='Explicitly replace the selected output file')
     parser.add_argument('--auth-file', default=None, help='Owned regular mode-600 JSON file containing origin, access_token and expires_at (Unix seconds). Explicitly reuses your own device authorization for the selected origin. Without this flag a new approval is required and saved in ~/.config/bog-cloud/helper-auth.json. Never select Codex or Claude private storage.')
     args = parser.parse_args(argv)
     base = origin(args.origin)
+    if args.connect:
+        if args.handoff or args.output or args.replace or not args.auth_file:
+            raise Failure('Use --connect with an explicit --auth-file, without app installation arguments.')
+        auth_file = Path(args.auth_file).absolute()
+        auth_file.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        token = read_auth(auth_file, base) or authorize(base, auth_file)
+        status, _ = request(base, '/v1/me', token=token)
+        if status == 401:
+            token = authorize(base, auth_file)
+            status, _ = request(base, '/v1/me', token=token)
+        if status != 200:
+            raise Failure('Authorization was collected, but connection verification failed. Retry --connect.')
+        print('Connected. Authorization saved privately; continue the original task.', flush=True)
+        return
+    if not args.handoff or not args.output:
+        raise Failure('Installation requires --handoff and --output; connection uses --connect --auth-file.')
     try:
         handoff = str(uuid.UUID(args.handoff))
     except ValueError as error:
@@ -177,10 +203,10 @@ def main(argv=None):
     if status != 200:
         raise Failure('Redemption failed. Check workspace access and prepare a new handoff. Do not reuse a consumed handoff.')
     try:
-        write_private(output, {'BOG_CLOUD_URL': base, 'BOG_ID': result['bog_id'], 'BOG_CLOUD_TOKEN': result['token'], 'credential_id': result['id']}, args.replace)
+        write_private(output, {'BOG_CLOUD_URL': base, 'BOG_ID': result['bog_id'], 'BOG_CLOUD_TOKEN': result['token'], 'credential_id': result['id']}, args.replace, args.format)
     except (OSError, Failure, KeyError) as error:
         raise Failure('Delivery failed after redemption. Ask a workspace owner to revoke the issued credential, then prepare a new handoff.') from error
-    print('App configuration saved privately with mode 600. No credential was printed.', flush=True)
+    print('App configuration saved privately on this machine with mode 600. Run this helper on the target machine to install there. No credential was printed.', flush=True)
 
 
 if __name__ == '__main__':
