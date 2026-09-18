@@ -63,6 +63,7 @@ pub struct Supervisor {
     starts: Mutex<HashMap<BogId, Arc<AsyncMutex<()>>>>,
     start_slots: Arc<Semaphore>,
     active_slots: Arc<Semaphore>,
+    admission: AsyncMutex<()>,
 }
 fn unavailable(message: &str) -> CloudError {
     CloudError::new("unavailable", message)
@@ -108,6 +109,7 @@ impl Supervisor {
             observability: None,
             start_slots: Arc::new(Semaphore::new(config.max_starts)),
             active_slots: Arc::new(Semaphore::new(config.max_active)),
+            admission: AsyncMutex::new(()),
             starts: Mutex::new(HashMap::new()),
             config,
             registry,
@@ -239,11 +241,7 @@ impl Supervisor {
         {
             return Err(unavailable("database is not available"));
         }
-        let slot = self
-            .active_slots
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| CloudError::new("capacity", "all resident database slots are in use; retry after idle workers close or stop an unused database"))?;
+        let slot = self.reserve_resident_slot(id).await?;
         // Surviving but unresponsive workers still consume physical capacity.
         // Their lifetime/store locks are authoritative even before a socket
         // exists; never launch replacement capacity beside those processes.
@@ -469,6 +467,52 @@ impl Supervisor {
         self.event(id, "worker_failed", Some("worker_start_failed"));
         Err(unavailable("database worker failed readiness checks"))
     }
+    /// Warm workers are a cache, not reservations. Under pressure close the
+    /// least recently used worker whose exclusive gate is immediately available.
+    /// Never wait for a victim's gate: callers already hold their target's gate.
+    async fn reserve_resident_slot(
+        &self,
+        target: BogId,
+    ) -> Result<OwnedSemaphorePermit, CloudError> {
+        let _admission = self.admission.lock().await;
+        if let Ok(slot) = self.active_slots.clone().try_acquire_owned() {
+            return Ok(slot);
+        }
+        let mut candidates: Vec<_> = self
+            .running
+            .lock()
+            .await
+            .iter()
+            .filter(|(id, _)| **id != target)
+            .filter_map(|(id, worker)| worker.last_use.lock().ok().map(|last| (*id, *last)))
+            .collect();
+        candidates.sort_by_key(|(_, last)| *last);
+        for (id, observed_last_use) in candidates {
+            let Ok(_guard) = self.gate(id)?.try_write_owned() else {
+                continue;
+            };
+            // A newer request may have completed since the candidate snapshot.
+            let unchanged = self.running.lock().await.get(&id).is_some_and(|worker| {
+                worker
+                    .last_use
+                    .lock()
+                    .is_ok_and(|last| *last == observed_last_use)
+            });
+            if !unchanged {
+                continue;
+            }
+            self.stop_locked(id, false).await?;
+            self.event(id, "worker_sleeping", Some("capacity_pressure"));
+            if let Ok(slot) = self.active_slots.clone().try_acquire_owned() {
+                return Ok(slot);
+            }
+        }
+        Err(CloudError::new(
+            "capacity",
+            "all resident database slots are busy with active operations or startup; retry the same request shortly",
+        ))
+    }
+
     async fn verify_worker(&self, id: BogId, client: &WorkerClient) -> Result<(), CloudError> {
         let nonce = self.registry.startup_nonce(id)?;
         let (status, identity) = client

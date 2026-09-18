@@ -107,8 +107,9 @@ async fn thirty_two_retained_bogs_use_at_most_eight_workers_and_deletion_is_retr
     );
     assert!(svc.supervisor.reconcile().await.unwrap().is_empty());
     assert_eq!(svc.supervisor.resident_count().await, 0);
+    let mut leases = Vec::new();
     for bog in &bogs[..8] {
-        svc.supervisor.ensure_running(bog.id).await.unwrap();
+        leases.push(svc.supervisor.lease(bog.id).await.unwrap());
     }
     assert_eq!(svc.supervisor.resident_count().await, 8);
     assert_eq!(
@@ -120,6 +121,7 @@ async fn thirty_two_retained_bogs_use_at_most_eight_workers_and_deletion_is_retr
             .code,
         "capacity"
     );
+    drop(leases);
     let id = bogs[0].id;
     assert!(svc.supervisor.cleanup_deleted(id).await.is_err());
     // Model the separately tested transactional authorization tombstone.
@@ -400,5 +402,127 @@ async fn a_held_response_keeps_its_generation_when_another_lease_restarts_the_wo
         .unwrap();
     assert_eq!(result.body["reset"], true);
     assert_eq!(result.body["cursor"], new_cursor);
+    svc.supervisor.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn capacity_pressure_reclaims_least_recently_used_worker_and_preserves_records() {
+    let temp = tempfile::Builder::new()
+        .prefix("bc-pressure-")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let mut config = Config::new(temp.path().join("r"), worker());
+    config.max_active = 2;
+    config.idle_timeout = Duration::from_secs(600);
+    let svc = CloudService::open(config, OWNER).unwrap();
+    let owner = svc.auth.authenticate(OWNER).unwrap();
+    let a = svc.registry.create("a", "records-v1", "a").unwrap();
+    let b = svc.registry.create("b", "records-v1", "b").unwrap();
+    let c = svc.registry.create("c", "records-v1", "c").unwrap();
+    for id in [a.id, b.id] {
+        svc.execute(
+            &owner,
+            Operation::UpsertRecord {
+                bog_id: id,
+                key: "saved".into(),
+                data: json!({"durable":true}),
+            },
+        )
+        .await
+        .unwrap();
+    }
+    let old_generation = svc.registry.get(b.id).unwrap().generation;
+    drop(svc.supervisor.lease(a.id).await.unwrap()); // a is now more recently used than b.
+    assert_eq!(svc.supervisor.evict_idle().await.unwrap(), 0);
+    let held = svc
+        .supervisor
+        .lease(c.id)
+        .await
+        .expect("unused warm workers must not block a wake");
+    assert_eq!(
+        svc.supervisor.diagnostic_snapshot(a.id).await.unwrap()["state"],
+        "running"
+    );
+    assert_eq!(
+        svc.supervisor.diagnostic_snapshot(b.id).await.unwrap()["state"],
+        "sleeping"
+    );
+    assert_eq!(svc.supervisor.resident_count().await, 2);
+    assert_eq!(
+        svc.registry.get(b.id).unwrap().desired_state,
+        DesiredState::Running
+    );
+    let result = svc
+        .execute(
+            &owner,
+            Operation::GetRecord {
+                bog_id: b.id,
+                key: "saved".into(),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.body["data"], json!({"durable":true}));
+    assert!(svc.registry.get(b.id).unwrap().generation > old_generation);
+    assert_eq!(
+        svc.supervisor.diagnostic_snapshot(c.id).await.unwrap()["state"],
+        "running",
+        "active lease must survive pressure"
+    );
+    assert_eq!(svc.supervisor.resident_count().await, 2);
+    drop(held);
+    svc.supervisor.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn concurrent_pressure_stays_bounded_and_makes_progress_without_preempting_leases() {
+    let temp = tempfile::Builder::new()
+        .prefix("bc-race-")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let mut config = Config::new(temp.path().join("r"), worker());
+    config.max_active = 2;
+    let svc = CloudService::open(config, OWNER).unwrap();
+    let mut jobs = Vec::new();
+    for i in 0..6 {
+        let id = svc
+            .registry
+            .create(&format!("b{i}"), "records-v1", &format!("k{i}"))
+            .unwrap()
+            .id;
+        let svc = svc.clone();
+        jobs.push(tokio::spawn(async move {
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+            loop {
+                match svc.supervisor.lease(id).await {
+                    Ok(lease) => {
+                        tokio::time::sleep(Duration::from_millis(20)).await;
+                        assert_eq!(
+                            lease
+                                .client
+                                .request(reqwest::Method::GET, "/views/total", None)
+                                .await
+                                .unwrap()
+                                .0,
+                            200
+                        );
+                        assert!(svc.supervisor.resident_count().await <= 2);
+                        break;
+                    }
+                    Err(error) => {
+                        assert_eq!(error.code, "capacity");
+                        assert!(
+                            tokio::time::Instant::now() < deadline,
+                            "concurrent admission stopped making progress"
+                        );
+                        tokio::time::sleep(Duration::from_millis(30)).await;
+                    }
+                }
+            }
+        }));
+    }
+    for job in jobs {
+        job.await.unwrap();
+    }
     svc.supervisor.shutdown().await.unwrap();
 }
