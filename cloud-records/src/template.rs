@@ -33,6 +33,20 @@ pub enum TemplateError {
 struct RecordPage {
     limit: Option<usize>,
     offset: Option<usize>,
+    after: Option<String>,
+    before: Option<String>,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct BatchGet {
+    keys: Vec<String>,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct BatchGetQuery {
+    args: String,
 }
 
 pub fn records_router(path: &Path) -> Result<Router, TemplateError> {
@@ -91,15 +105,30 @@ pub fn records_service_with_limit(path: &Path, limit: u64) -> Result<ServedApp, 
         let next=offset+records.len();
         Ok(json!({"records":records,"record_count":all.len(),"source_digest":format!("{:x}",hash.finalize()),"next_offset":if next<all.len(){Some(next)}else{None}}))
     })
+    .get("/_cloud/batch-get", |(docs, _), query: BatchGetQuery| {
+        let request: BatchGet = serde_json::from_str(&query.args).map_err(|_| (400,"invalid batch_get arguments".into()))?;
+        if request.keys.len() > 100 { return Err((400,"batch_get accepts at most 100 keys".into())); }
+        let mut rows = Vec::new();
+        let mut bytes = 2usize;
+        for key in request.keys {
+            let row = json!({"key":key,"value":docs.get(&key)});
+            bytes += row.to_string().len() + 1;
+            if bytes > 4 * 1024 * 1024 - 4096 { return Err((413,"reduce batch size".into())); }
+            rows.push(row);
+        }
+        Ok(Value::Array(rows))
+    })
     .get("/views/docs", |(docs, _total), page: RecordPage| {
         let mut bytes = 0usize;
         let mut items = Vec::new();
-        for (key, value) in docs
-            .iter()
+        let ordered: std::collections::BTreeSet<_> = docs.iter().map(|(key,_)| key).collect();
+        for key in ordered
+            .into_iter()
+            .filter(|key| page.after.as_ref().is_none_or(|a| key > a) && page.before.as_ref().is_none_or(|b| key < b))
             .skip(page.offset.unwrap_or(0))
             .take(page.limit.unwrap_or(100))
         {
-            let item = json!({"key":key,"value":value});
+            let item = json!({"key":key,"value":docs.get(&key)});
             bytes += serde_json::to_vec(&item)
                 .map_err(|_| (503, "cannot encode view".into()))?
                 .len();
@@ -205,6 +234,11 @@ fn validate_page(uri: &axum::http::Uri) -> Result<(), String> {
     }
     let pairs: Vec<(String, String)> = serde_urlencoded::from_str(uri.query().unwrap_or_default())
         .map_err(|error| format!("invalid query: {error}"))?;
+    if pairs.iter().any(|(k, _)| k == "offset")
+        && pairs.iter().any(|(k, _)| k == "after" || k == "before")
+    {
+        return Err("after/before cannot be combined with offset".into());
+    }
     for (name, value) in pairs {
         let parsed = value.parse::<usize>().ok();
         match (name.as_str(), parsed) {

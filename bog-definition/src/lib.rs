@@ -545,7 +545,11 @@ pub fn schema() -> Value {
 }
 pub fn request_schema(action: Action) -> Value {
     let (properties, required) = match action {
-        Action::Get | Action::Remove => (json!({"key":{"type":"string"}}), vec!["key"]),
+        Action::Get => (
+            json!({"key":{"type":"string"},"keys":{"type":"array","maxItems":100,"items":{"type":"string"},"description":"Batch get in request order, retaining duplicates and returning null for missing keys."}}),
+            vec![],
+        ),
+        Action::Remove => (json!({"key":{"type":"string"}}), vec!["key"]),
         Action::Put => (
             json!({"key":{"type":"string"},"data":{"type":"object"}}),
             vec!["key", "data"],
@@ -571,7 +575,26 @@ pub fn request_schema(action: Action) -> Value {
         ),
         Action::Read => (json!({}), vec![]),
     };
-    json!({"type":"object","properties":properties,"required":required,"additionalProperties":false})
+    let mut schema = json!({"type":"object","properties":properties,"required":required,"additionalProperties":false});
+    if action == Action::Get {
+        schema["oneOf"] = json!([{"required":["key"]},{"required":["keys"]}]);
+    }
+    if action == Action::Top {
+        schema["properties"]["include_fields"] =
+            request_schema(Action::Search)["properties"]["include_fields"].clone();
+    }
+    if action == Action::List {
+        schema["description"] = json!(
+            "Rows ordered by key in ascending lexicographic order. after/before bounds are exclusive; neither can be combined with offset."
+        );
+        schema["properties"]["after"] =
+            json!({"type":"string","description":"Exclusive lower key bound."});
+        schema["properties"]["before"] =
+            json!({"type":"string","description":"Exclusive upper key bound."});
+        schema["not"] =
+            json!({"required":["offset"],"anyOf":[{"required":["after"]},{"required":["before"]}]});
+    }
+    schema
 }
 /// Schema for successful operation data; transports may wrap this in an envelope.
 pub fn response_schema(action: Action, terminal: Option<&Terminal>) -> Value {
@@ -592,11 +615,13 @@ pub fn response_schema(action: Action, terminal: Option<&Terminal>) -> Value {
         Action::Put | Action::Remove | Action::Batch => {
             object(json!({"ok":{"const":true}}), &["ok"])
         }
-        Action::Get => json!({"type":["object","null"]}),
+        Action::Get => {
+            json!({"oneOf":[{"type":["object","null"]},{"type":"array","maxItems":100,"items":object(json!({"key":{"type":"string"},"value":{"type":["object","null"]}}), &["key","value"])}]})
+        }
         Action::List => {
             json!({"type":"array","items":object(json!({"key":{"type":"string"},"value":{"type":"object"}}), &["key","value"])})
         }
-        Action::Top => hit(false, false),
+        Action::Top => hit(false, true),
         Action::Search => {
             let semantic = matches!(terminal, Some(Terminal::Semantic { .. }));
             let mut schema = hit(semantic, true);
@@ -836,7 +861,8 @@ mod tests {
         let list = request_schema(Action::List);
         let validator = jsonschema::validator_for(&list).unwrap();
         assert!(validator.is_valid(&json!({"limit":1000,"offset":10000})));
-        assert!(!validator.is_valid(&json!({"after":"unsupported"})));
+        assert!(validator.is_valid(&json!({"after":"a","before":"z"})));
+        assert!(!validator.is_valid(&json!({"after":"a","offset":0})));
         let put = request_schema(Action::Put);
         let validator = jsonschema::validator_for(&put).unwrap();
         assert!(validator.is_valid(&json!({"key":"a","data":{}})));

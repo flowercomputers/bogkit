@@ -226,8 +226,17 @@ impl<R: Readable> Reader<'_, R> {
             (Self::Table(s), Action::List) => {
                 let mut rows = Vec::new();
                 let mut bytes = 0;
-                for (k, v) in s.iter().skip(offset).take(limit) {
-                    let row = json!({"key":k,"value":v});
+                let ordered: std::collections::BTreeSet<_> = s.iter().map(|(key, _)| key).collect();
+                for k in ordered
+                    .into_iter()
+                    .filter(|k| {
+                        q.after.as_ref().is_none_or(|a| k > a)
+                            && q.before.as_ref().is_none_or(|b| k < b)
+                    })
+                    .skip(offset)
+                    .take(limit)
+                {
+                    let row = json!({"key":k,"value":s.get(&k)});
                     bytes += row.to_string().len();
                     if bytes > 4 * 1024 * 1024 - 4096 {
                         return Err(invalid("response exceeds 4 MiB; reduce page size"));

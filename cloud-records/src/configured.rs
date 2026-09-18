@@ -278,6 +278,8 @@ async fn batch(State(s): State<Arc<Shared>>, Json(ops): Json<Vec<Mutation>>) -> 
 struct Page {
     limit: Option<usize>,
     offset: Option<usize>,
+    after: Option<String>,
+    before: Option<String>,
     query: Option<String>,
 }
 async fn view(
@@ -307,6 +309,8 @@ async fn view(
             &Query {
                 limit: p.limit,
                 offset: p.offset,
+                after: p.after,
+                before: p.before,
                 query: p.query,
                 ..Default::default()
             },
@@ -345,7 +349,7 @@ async fn usage(State(s): State<Arc<Shared>>) -> Response {
         let vectors = i.runtime.vector_count();
         response(
             i,
-            json!({"limits":i.runtime.limits(),"logical_bytes":used,"limit_bytes":i.runtime.limit(),"over_limit":used>i.runtime.limit(),"source_records":count,"resource_count":i.runtime.definition().resources.len(),"vector_count":vectors,"vector_payload_bytes":vectors*512*4,"vector_payload_scope":"raw f32 payload only; excludes graph and storage overhead","physical_store_bytes":physical_bytes(&s.data_dir),"derived_data_bytes":null,"derived_data_bytes_reason":"Fjall shares files across source and derived keyspaces","encoder":if vectors>0{Some(bog_definition::SEMANTIC_MODEL)}else{None}}),
+            json!({"definition_revision":s.revision,"boot_id":s.boot,"search_resources":i.runtime.search_diagnostics(),"sequence_scope":"worker_boot; compare seq only within the same boot_id","limits":i.runtime.limits(),"logical_bytes":used,"limit_bytes":i.runtime.limit(),"over_limit":used>i.runtime.limit(),"source_records":count,"resource_count":i.runtime.definition().resources.len(),"vector_count":vectors,"vector_payload_bytes":vectors*512*4,"vector_payload_scope":"raw f32 payload only; excludes graph and storage overhead","physical_store_bytes":physical_bytes(&s.data_dir),"derived_data_bytes":null,"derived_data_bytes_reason":"Fjall shares files across source and derived keyspaces","encoder":if vectors>0{Some(bog_definition::SEMANTIC_MODEL)}else{None}}),
         )
     })
 }

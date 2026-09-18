@@ -461,3 +461,49 @@ async fn custom_transactions_obey_quota_and_failed_handler_rolls_back() {
     assert_eq!(send(&app, "GET", "/docs/a", None).await.1["data"], "abc");
     service.shutdown().unwrap();
 }
+
+#[tokio::test]
+async fn legacy_bounded_reads_are_ordered_and_explicit() {
+    let dir = tempfile::tempdir().unwrap();
+    let router = records_router(dir.path()).unwrap();
+    for key in ["z", "aa", "b"] {
+        assert_eq!(
+            send(
+                &router,
+                "PUT",
+                &format!("/docs/{key}"),
+                Some(json!({"title":key}))
+            )
+            .await
+            .0,
+            StatusCode::OK
+        );
+    }
+    let args = serde_urlencoded::to_string([(
+        "args",
+        json!({"keys":["b","missing","aa","b"]}).to_string(),
+    )])
+    .unwrap();
+    let (status, body) = send(&router, "GET", &format!("/_cloud/batch-get?{args}"), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["data"],
+        json!([{"key":"b","value":{"title":"b"}},{"key":"missing","value":null},{"key":"aa","value":{"title":"aa"}},{"key":"b","value":{"title":"b"}}])
+    );
+    let (_, body) = send(&router, "GET", "/views/docs?after=a&before=z&limit=1", None).await;
+    assert_eq!(body["data"][0]["key"], "aa");
+    assert_eq!(
+        send(&router, "GET", "/views/docs?after=a&offset=0", None)
+            .await
+            .0,
+        StatusCode::BAD_REQUEST
+    );
+    let args =
+        serde_urlencoded::to_string([("args", json!({"keys":vec!["a";101]}).to_string())]).unwrap();
+    assert_eq!(
+        send(&router, "GET", &format!("/_cloud/batch-get?{args}"), None)
+            .await
+            .0,
+        StatusCode::BAD_REQUEST
+    );
+}

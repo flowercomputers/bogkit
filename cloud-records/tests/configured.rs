@@ -407,3 +407,74 @@ async fn worker_published_contracts_validate_actual_data_and_wait_seconds() {
         StatusCode::BAD_REQUEST
     );
 }
+
+#[tokio::test]
+async fn bounded_reads_use_existing_get_authority_and_cursor_bounds() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = definition();
+    d.expose.insert(
+        "get".into(),
+        bog_definition::Operation {
+            target: "docs".into(),
+            action: bog_definition::Action::Get,
+        },
+    );
+    let service = ConfiguredService::open(dir.path(), d, 1, DEFAULT_LOGICAL_BYTES).unwrap();
+    let router = service.router();
+    for key in ["a", "b", "c"] {
+        assert_eq!(
+            request(
+                &router,
+                "PUT",
+                &format!("/docs/{key}"),
+                json!({"title":key})
+            )
+            .await
+            .0,
+            StatusCode::OK
+        );
+    }
+    let (status, body) = request(
+        &router,
+        "POST",
+        "/operations/get",
+        json!({"keys":["b","missing","a"]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["data"],
+        json!([{"key":"b","value":{"title":"b"}},{"key":"missing","value":null},{"key":"a","value":{"title":"a"}}])
+    );
+    let (status, body) = request(&router, "GET", "/views/docs?after=a&before=c", json!({})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["data"], json!([{"key":"b","value":{"title":"b"}}]));
+    assert_eq!(
+        request(&router, "GET", "/views/docs?after=a&offset=0", json!({}))
+            .await
+            .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        request(
+            &router,
+            "POST",
+            "/operations/get",
+            json!({"keys":vec!["a";101]})
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        request(
+            &router,
+            "POST",
+            "/operations/private",
+            json!({"keys":["a"]})
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+}

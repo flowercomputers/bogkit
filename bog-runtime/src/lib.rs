@@ -48,6 +48,9 @@ pub enum Mutation {
 #[serde(deny_unknown_fields)]
 pub struct Query {
     pub key: Option<String>,
+    pub keys: Option<Vec<String>>,
+    pub after: Option<String>,
+    pub before: Option<String>,
     pub query: Option<String>,
     pub vector: Option<Vec<f32>>,
     pub limit: Option<usize>,
@@ -158,6 +161,26 @@ impl Runtime {
     pub fn vector_count(&self) -> usize {
         self.stream
             .rtx(|r| r.resources.values().map(|v| v.vector_count()).sum())
+    }
+    /// On-demand diagnostic snapshot from the same source transaction as the indexes.
+    /// Only publicly exposed search resources are included; no record contents escape.
+    pub fn search_diagnostics(&self) -> Value {
+        self.stream.rtx(|reader| {
+            let resources: Vec<_> = self.definition.resources.iter().filter_map(|(name, resource)| {
+                if !self.definition.expose.values().any(|op| op.target == *name && op.action == Action::Search) { return None; }
+                let (kind, fields) = match &resource.terminal {
+                    Terminal::Bm25 { fields, .. } => ("bm25", fields),
+                    Terminal::Semantic { fields, .. } => ("semantic", fields),
+                    _ => return None,
+                };
+                let count = reader.source.iter().filter(|(_, doc)| {
+                    evaluate(resource, doc.as_value()).ok().flatten()
+                        .and_then(|value| extracted_text(&value, fields).ok().flatten()).is_some()
+                }).count();
+                Some(json!({"name":name,"kind":kind,"fields":fields,"searchable_records":count,"maintenance":"synchronous_with_source_writes"}))
+            }).collect();
+            json!(resources)
+        })
     }
     pub fn checkpoint(&mut self) -> Result<()> {
         self.stream.try_checkpoint().map_err(Into::into)
@@ -321,10 +344,51 @@ impl Runtime {
     }
     /// Internal read entry point. Transport adapters must enforce exposure before calling.
     pub fn query(&self, target: &str, action: Action, q: &Query) -> Result<Value> {
-        if let Some(fields) = &q.include_fields {
-            if action != Action::Search || fields.is_empty() || fields.len() > 32 {
+        if q.after.is_some() || q.before.is_some() {
+            if action != Action::List || q.offset.is_some() {
                 return Err(invalid(
-                    "include_fields requires search and 1 to 32 JSON Pointers",
+                    "after/before require list and cannot be combined with offset",
+                ));
+            }
+        }
+        if action == Action::Get {
+            if q.key.is_some() == q.keys.is_some() {
+                return Err(invalid("provide exactly one of key or keys"));
+            }
+            if let Some(keys) = &q.keys {
+                if keys.len() > 100 {
+                    return Err(invalid("batch_get accepts at most 100 keys"));
+                }
+                let mut rows = Vec::with_capacity(keys.len());
+                let mut bytes = 2usize;
+                for key in keys {
+                    let value = self.query(
+                        target,
+                        Action::Get,
+                        &Query {
+                            key: Some(key.clone()),
+                            ..Default::default()
+                        },
+                    )?;
+                    let row = json!({"key":key,"value":value});
+                    bytes += row.to_string().len() + 1;
+                    if bytes > 4 * 1024 * 1024 - 4096 {
+                        return Err(invalid("response exceeds 4 MiB; reduce batch size"));
+                    }
+                    rows.push(row);
+                }
+                return Ok(Value::Array(rows));
+            }
+        } else if q.keys.is_some() {
+            return Err(invalid("keys requires get"));
+        }
+        if let Some(fields) = &q.include_fields {
+            if !matches!(action, Action::Search | Action::Top)
+                || fields.is_empty()
+                || fields.len() > 32
+            {
+                return Err(invalid(
+                    "include_fields requires search or top and 1 to 32 JSON Pointers",
                 ));
             }
             let mut seen = std::collections::BTreeSet::new();
@@ -597,6 +661,100 @@ mod tests {
         }
     }
     #[test]
+    fn bounded_reads_project_rank_and_survive_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut d = definition();
+        d.resources.get_mut("rank").unwrap().stages = serde_json::from_value(json!([
+            {"kind":"projection","fields":{"title":"/title","priority":"/priority"}}
+        ]))
+        .unwrap();
+        d.expose.insert(
+            "get_pending".into(),
+            bog_definition::Operation {
+                target: "pending".into(),
+                action: Action::Get,
+            },
+        );
+        {
+            let mut r = Runtime::open(dir.path(), d.clone()).unwrap();
+            r.mutate(&[
+                put("a", "first", 1.0),
+                put("b", "second", 2.0),
+                put("c", "third", 3.0),
+            ])
+            .unwrap();
+            assert!(
+                r.execute("rank", json!({})).unwrap()[0]
+                    .get("value")
+                    .is_none()
+            );
+            let rank = r
+                .execute("rank", json!({"include_fields":["/title","/done"]}))
+                .unwrap();
+            assert_eq!(rank[0]["value"], json!({"/title":"third"}));
+            assert_eq!(
+                r.execute("get_pending", json!({"keys":["b","missing","a","b"]}))
+                    .unwrap(),
+                json!([
+                    {"key":"b","value":{"title":"second"}}, {"key":"missing","value":null},
+                    {"key":"a","value":{"title":"first"}}, {"key":"b","value":{"title":"second"}}
+                ])
+            );
+            assert_eq!(
+                r.execute("pending", json!({"after":"a","before":"c"}))
+                    .unwrap(),
+                json!([{"key":"b","value":{"title":"second"}}])
+            );
+            for body in [
+                json!({"after":"a","offset":0}),
+                json!({"before":"c","offset":1}),
+            ] {
+                assert!(r.execute("pending", body).is_err());
+            }
+            for body in [
+                json!({"keys":vec!["a";101]}),
+                json!({"key":"a","keys":[]}),
+                json!({}),
+            ] {
+                assert!(r.execute("get_pending", body).is_err());
+            }
+            assert_eq!(
+                r.execute("get_pending", json!({"keys":[]})).unwrap(),
+                json!([])
+            );
+            r.mutate(&[
+                put("b", "changed", 4.0),
+                Mutation::Remove { key: "c".into() },
+            ])
+            .unwrap();
+        }
+        let mut r = Runtime::open(dir.path(), d).unwrap();
+        assert_eq!(
+            r.execute("rank", json!({"include_fields":["/title"]}))
+                .unwrap()[0]["value"],
+            json!({"/title":"changed"})
+        );
+        assert_eq!(
+            r.execute("get_pending", json!({"keys":["c","b"]})).unwrap(),
+            json!([{"key":"c","value":null},{"key":"b","value":{"title":"changed"}}])
+        );
+    }
+    #[test]
+    fn diagnostics_track_writes_removals_and_hide_private_resources() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut d = definition();
+        d.expose.remove("text");
+        let mut r = Runtime::open(dir.path(), d).unwrap();
+        assert_eq!(r.search_diagnostics()[0]["searchable_records"], 0);
+        r.mutate(&[put("a", "A cabin among trees", 1.0)]).unwrap();
+        let info = r.search_diagnostics();
+        assert_eq!(info.as_array().unwrap().len(), 1);
+        assert_eq!(info[0]["name"], "semantic");
+        assert_eq!(info[0]["searchable_records"], 1);
+        r.mutate(&[Mutation::Remove { key: "a".into() }]).unwrap();
+        assert_eq!(r.search_diagnostics()[0]["searchable_records"], 0);
+    }
+    #[test]
     fn operation_response_contracts_and_strict_requests() {
         let dir = tempfile::tempdir().unwrap();
         let mut definition = definition();
@@ -628,10 +786,12 @@ mod tests {
                 json!({"key":"b","data":{"title":"bread","priority":1,"done":false}}),
             ),
             ("get", json!({"key":"a"})),
+            ("get", json!({"keys":["a","missing"]})),
             ("pending", json!({})),
             ("stats", json!({})),
             ("total", json!({})),
             ("rank", json!({})),
+            ("rank", json!({"include_fields":["/title"]})),
             ("text", json!({"query":"bread"})),
             ("semantic", json!({"query":"bread"})),
             (
