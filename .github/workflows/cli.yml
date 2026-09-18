@@ -2,10 +2,10 @@ name: cli
 
 on:
   pull_request:
-    paths: ["cli/**", "serve/**", "fold/**", "cloud/**", "cloud-records/**", "cloud-mcp/**", "deploy/bog-cloud/**", "scripts/cloud/**", "Cargo.toml", "Cargo.lock", ".github/workflows/cli.yml"]
+    paths: ["cli/**", "serve/**", "fold/**", "bog-definition/**", "bog-runtime/**", "clients/**", "starters/**", "cloud/**", "cloud-records/**", "cloud-mcp/**", "deploy/bog-cloud/**", "scripts/cloud/**", "Cargo.toml", "Cargo.lock", ".github/workflows/cli.yml"]
   push:
     branches: [main]
-    paths: ["cli/**", "serve/**", "fold/**", "cloud/**", "cloud-records/**", "cloud-mcp/**", "deploy/bog-cloud/**", "scripts/cloud/**", "Cargo.toml", "Cargo.lock", ".github/workflows/cli.yml"]
+    paths: ["cli/**", "serve/**", "fold/**", "bog-definition/**", "bog-runtime/**", "clients/**", "starters/**", "cloud/**", "cloud-records/**", "cloud-mcp/**", "deploy/bog-cloud/**", "scripts/cloud/**", "Cargo.toml", "Cargo.lock", ".github/workflows/cli.yml"]
 
 concurrency:
   group: cli-${{ github.ref }}
@@ -17,6 +17,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
       - uses: Swatinem/rust-cache@v2
 
       - name: Build the CLI
@@ -25,8 +33,14 @@ jobs:
       - name: Build records worker for process tests
         run: cargo build --locked -p bog-cloud-records --bin bog-records-worker
 
+      - name: Supported client and browser contracts
+        run: |
+          python3 -m unittest discover -s scripts/cloud -p 'test_bog_*.py'
+          node --test clients/typescript/test/*.test.js cloud/tests/js/*.test.cjs
+          python3 clients/generate-command-manifest.py --check
+
       - name: Fold, server and cloud tests
-        run: cargo test --locked -p fold -p bog-serve -p bog-cloud-records -p bog-cloud -p bog-cloud-mcp
+        run: cargo test --locked -p fold -p bog-serve -p bog-definition -p bog-runtime -p bog-cloud-records -p bog-cloud -p bog-cloud-mcp
 
       - name: Golden OpenAPI docs validate against the spec
         run: pipx run openapi-spec-validator serve/tests/golden/template.json serve/tests/golden/search.json
