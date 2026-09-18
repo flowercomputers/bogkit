@@ -776,7 +776,7 @@ async fn custom_domains_preserve_issuer_and_bind_new_audiences() {
     let mut service =
         CloudService::open(Config::new(root.path().into(), worker), common::OWNER).unwrap();
     let mut config = GithubConfig::for_loopback_testing(&provider_url).unwrap();
-    let issuer = "https://flower-bog-cloud.fly.dev";
+    let issuer = "https://cloud.bog.new";
     config.redirect_uri = format!("{issuer}/auth/callback");
     let native = NativeAuth::new(config, &root.path().join("sessions")).unwrap();
     Arc::get_mut(&mut service).unwrap().native_auth = Some(native.clone());
@@ -836,13 +836,52 @@ async fn custom_domains_preserve_issuer_and_bind_new_audiences() {
             .send()
             .await
             .unwrap();
-        assert_eq!(login.status(), 307);
-        assert_eq!(
-            login.headers()["location"],
-            format!("{issuer}/auth/login?user_code=ABCD1234")
-        );
-        assert!(!login.headers().contains_key("set-cookie"));
+        if host == "cloud.bog.new" {
+            assert_eq!(login.status(), 303);
+            assert!(login.headers().contains_key("set-cookie"));
+        } else {
+            assert_eq!(login.status(), 307);
+            assert_eq!(
+                login.headers()["location"],
+                format!("{issuer}/auth/login?user_code=ABCD1234")
+            );
+            assert!(!login.headers().contains_key("set-cookie"));
+        }
     }
+    // Validate the issuer against the metadata URL, not merely a 200 response.
+    for host in ["cloud.bog.new", "flower-bog-cloud.fly.dev"] {
+        let meta: Value = http
+            .get(format!("{base}/.well-known/oauth-authorization-server"))
+            .header("host", host)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(meta["issuer"], format!("https://{host}"));
+        assert_eq!(
+            meta["authorization_endpoint"],
+            format!("https://{host}/oauth/authorize")
+        );
+        assert_eq!(
+            meta["token_endpoint"],
+            format!("https://{host}/oauth/token")
+        );
+    }
+    let mcp_meta = http
+        .get(format!("{base}/.well-known/oauth-authorization-server"))
+        .header("host", "mcp.bog.new")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(mcp_meta.status(), 404);
+    assert!(
+        mcp_meta.headers()["link"]
+            .to_str()
+            .unwrap()
+            .contains(issuer)
+    );
     let redirect = "http://127.0.0.1:9999/callback";
     let registered: Value = http
         .post(format!("{base}/oauth/register"))
@@ -876,111 +915,133 @@ async fn custom_domains_preserve_issuer_and_bind_new_audiences() {
         .unwrap();
     service.auth.provision_identity(&session.identity).unwrap();
     let cookie = session.set_cookie.split(';').next().unwrap();
-    for resource in [
-        "https://cloud.bog.new",
-        "https://cloud.bog.new/mcp",
-        "https://mcp.bog.new/mcp",
-        "https://flower-bog-cloud.fly.dev/mcp",
-    ] {
-        let auth = http
-            .get(format!("{base}/oauth/authorize"))
-            .query(&[
+    for issuer_host in ["cloud.bog.new", "flower-bog-cloud.fly.dev"] {
+        for resource in [
+            "https://cloud.bog.new",
+            "https://cloud.bog.new/mcp",
+            "https://mcp.bog.new/mcp",
+            "https://flower-bog-cloud.fly.dev/mcp",
+        ] {
+            let auth = http
+                .get(format!("{base}/oauth/authorize"))
+                .header("host", issuer_host)
+                .query(&[
+                    ("client_id", client),
+                    ("redirect_uri", redirect),
+                    ("response_type", "code"),
+                    ("code_challenge_method", "S256"),
+                    ("code_challenge", CHALLENGE),
+                    ("resource", resource),
+                    ("scope", "bog:write"),
+                    ("state", "fixture-state"),
+                ])
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(auth.status(), 303);
+            let public = auth.headers()["location"]
+                .to_str()
+                .unwrap()
+                .split("user_code=")
+                .nth(1)
+                .unwrap();
+            let approval: Value = http
+                .post(format!("{base}/auth/device/approve"))
+                .header("cookie", cookie)
+                .header("origin", issuer)
+                .header("x-csrf-token", &session.csrf_token)
+                .json(&json!({"user_code":public,"approve":true}))
+                .send()
+                .await
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            let callback = reqwest::Url::parse(approval["redirect_uri"].as_str().unwrap()).unwrap();
+            let query: std::collections::HashMap<_, _> =
+                callback.query_pairs().into_owned().collect();
+            assert_eq!(query["iss"], format!("https://{issuer_host}"));
+            let form = [
+                ("grant_type", "authorization_code"),
                 ("client_id", client),
                 ("redirect_uri", redirect),
-                ("response_type", "code"),
-                ("code_challenge_method", "S256"),
-                ("code_challenge", CHALLENGE),
                 ("resource", resource),
-                ("scope", "bog:write"),
-                ("state", "fixture-state"),
-            ])
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(auth.status(), 303);
-        let public = auth.headers()["location"]
-            .to_str()
-            .unwrap()
-            .split("user_code=")
-            .nth(1)
-            .unwrap();
-        let approval: Value = http
-            .post(format!("{base}/auth/device/approve"))
-            .header("cookie", cookie)
-            .header("origin", issuer)
-            .header("x-csrf-token", &session.csrf_token)
-            .json(&json!({"user_code":public,"approve":true}))
-            .send()
-            .await
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
-        let callback = reqwest::Url::parse(approval["redirect_uri"].as_str().unwrap()).unwrap();
-        let query: std::collections::HashMap<_, _> = callback.query_pairs().into_owned().collect();
-        assert_eq!(query["iss"], issuer);
-        let form = [
-            ("grant_type", "authorization_code"),
-            ("client_id", client),
-            ("redirect_uri", redirect),
-            ("resource", resource),
-            ("code", query["code"].as_str()),
-            ("code_verifier", VERIFIER),
-        ];
-        let mut wrong = form.to_vec();
-        wrong[3].1 = "https://evil.example/mcp";
-        assert_eq!(
-            http.post(format!("{base}/oauth/token"))
-                .form(&wrong)
+                ("code", query["code"].as_str()),
+                ("code_verifier", VERIFIER),
+            ];
+            let mut wrong = form.to_vec();
+            wrong[3].1 = "https://evil.example/mcp";
+            assert_eq!(
+                http.post(format!("{base}/oauth/token"))
+                    .header("host", issuer_host)
+                    .form(&wrong)
+                    .send()
+                    .await
+                    .unwrap()
+                    .status(),
+                400
+            );
+            // A code cannot be exchanged through the other issuer, even though both are trusted.
+            let other_issuer = if issuer_host == "cloud.bog.new" {
+                "flower-bog-cloud.fly.dev"
+            } else {
+                "cloud.bog.new"
+            };
+            assert_eq!(
+                http.post(format!("{base}/oauth/token"))
+                    .header("host", other_issuer)
+                    .form(&form)
+                    .send()
+                    .await
+                    .unwrap()
+                    .status(),
+                400
+            );
+            let token: Value = http
+                .post(format!("{base}/oauth/token"))
+                .header("host", issuer_host)
+                .form(&form)
                 .send()
                 .await
                 .unwrap()
-                .status(),
-            400
-        );
-        let token: Value = http
-            .post(format!("{base}/oauth/token"))
-            .form(&form)
-            .send()
-            .await
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
-        let secret = token["access_token"].as_str().unwrap();
-        assert_eq!(
-            http.get(format!("{base}/v1/me"))
-                .header("host", "cloud.bog.new")
-                .bearer_auth(secret)
-                .send()
+                .json()
                 .await
-                .unwrap()
-                .status(),
-            200
-        );
-        let mcp=http.post(format!("{base}/mcp")).header("host","mcp.bog.new").header("accept","application/json, text/event-stream").bearer_auth(secret).json(&json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"alias-test","version":"1"}}})).send().await.unwrap();
-        assert_eq!(
-            mcp.status(),
-            if resource.ends_with("/mcp") { 200 } else { 401 }
-        );
-        assert_eq!(
-            http.post(format!("{base}/oauth/revoke"))
-                .form(&[("token", secret), ("client_id", client)])
-                .send()
-                .await
-                .unwrap()
-                .status(),
-            200
-        );
-        assert_eq!(
-            http.get(format!("{base}/v1/me"))
-                .bearer_auth(secret)
-                .send()
-                .await
-                .unwrap()
-                .status(),
-            401
-        );
+                .unwrap();
+            let secret = token["access_token"].as_str().unwrap();
+            assert_eq!(
+                http.get(format!("{base}/v1/me"))
+                    .header("host", "cloud.bog.new")
+                    .bearer_auth(secret)
+                    .send()
+                    .await
+                    .unwrap()
+                    .status(),
+                200
+            );
+            let mcp=http.post(format!("{base}/mcp")).header("host","mcp.bog.new").header("accept","application/json, text/event-stream").bearer_auth(secret).json(&json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"alias-test","version":"1"}}})).send().await.unwrap();
+            assert_eq!(
+                mcp.status(),
+                if resource.ends_with("/mcp") { 200 } else { 401 }
+            );
+            assert_eq!(
+                http.post(format!("{base}/oauth/revoke"))
+                    .form(&[("token", secret), ("client_id", client)])
+                    .send()
+                    .await
+                    .unwrap()
+                    .status(),
+                200
+            );
+            assert_eq!(
+                http.get(format!("{base}/v1/me"))
+                    .bearer_auth(secret)
+                    .send()
+                    .await
+                    .unwrap()
+                    .status(),
+                401
+            );
+        }
     }
     service.supervisor.shutdown().await.unwrap();
     server.abort();

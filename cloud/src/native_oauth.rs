@@ -32,6 +32,7 @@ pub(crate) struct OauthState {
     registrations: HashMap<IpAddr, (i64, u32)>,
 }
 struct Grant {
+    issuer: String,
     resource: String,
     client: String,
     redirect: String,
@@ -88,8 +89,8 @@ impl NativeAuth {
     fn resource(&self) -> String {
         format!("{}/mcp", self.config.origin())
     }
-    pub(crate) fn oauth_metadata(&self) -> Value {
-        let b = self.config.origin();
+    pub(crate) fn oauth_metadata_for_issuer(&self, issuer: &str) -> Value {
+        let b = issuer.to_owned();
         let mut resources = vec![b.clone(), self.resource()];
         if self.config.custom_domains_enabled() {
             resources.extend(
@@ -97,10 +98,14 @@ impl NativeAuth {
                     "https://cloud.bog.new",
                     "https://cloud.bog.new/mcp",
                     "https://mcp.bog.new/mcp",
+                    "https://flower-bog-cloud.fly.dev",
+                    "https://flower-bog-cloud.fly.dev/mcp",
                 ]
                 .map(str::to_owned),
             );
         }
+        resources.sort();
+        resources.dedup();
         json!({"issuer":b,"protected_resources":resources,"authorization_endpoint":format!("{b}/oauth/authorize"),"token_endpoint":format!("{b}/oauth/token"),"registration_endpoint":format!("{b}/oauth/register"),"revocation_endpoint":format!("{b}/oauth/revoke"),"response_types_supported":["code"],"grant_types_supported":["authorization_code"],"token_endpoint_auth_methods_supported":["none"],"revocation_endpoint_auth_methods_supported":["none"],"code_challenge_methods_supported":["S256"],"scopes_supported":[READ,WRITE],"authorization_response_iss_parameter_supported":true,"client_id_metadata_document_supported":true,"service_documentation":format!("{b}/auth.md")})
     }
     pub(crate) fn resource_metadata(&self) -> Value {
@@ -198,6 +203,7 @@ impl NativeAuth {
     async fn authorize_client(
         &self,
         peer: IpAddr,
+        issuer: &str,
         p: HashMap<String, String>,
     ) -> Result<String, CloudError> {
         let client = field(&p, "client_id")?;
@@ -272,6 +278,7 @@ impl NativeAuth {
         grants.pending.insert(
             public.into(),
             Grant {
+                issuer: issuer.into(),
                 resource: field(&p, "resource")?.into(),
                 client: client.into(),
                 redirect: redirect.into(),
@@ -285,7 +292,12 @@ impl NativeAuth {
                 expires: now() + 600,
             },
         );
-        Ok(format!("/auth/device/approve?user_code={public}"))
+        let prefix = if issuer == self.config.origin() {
+            String::new()
+        } else {
+            self.config.origin()
+        };
+        Ok(format!("{prefix}/auth/device/approve?user_code={public}"))
     }
     pub(crate) fn oauth_access_description(
         &self,
@@ -307,9 +319,7 @@ impl NativeAuth {
             return Err(invalid("authorization expired; start again"));
         }
         let mut redirect = reqwest::Url::parse(&grant.redirect).map_err(|_| unavailable())?;
-        redirect
-            .query_pairs_mut()
-            .append_pair("iss", &self.config.origin());
+        redirect.query_pairs_mut().append_pair("iss", &grant.issuer);
         if !grant.state.is_empty() {
             redirect
                 .query_pairs_mut()
@@ -330,6 +340,7 @@ impl NativeAuth {
     fn exchange(
         &self,
         service: &CloudService,
+        issuer: &str,
         p: HashMap<String, String>,
     ) -> Result<Value, CloudError> {
         if field(&p, "grant_type")? != "authorization_code" {
@@ -359,14 +370,15 @@ impl NativeAuth {
             return Err(CloudError::new("invalid_grant", "invalid PKCE verifier"));
         }
         let challenge = URL_SAFE_NO_PAD.encode(hash(verifier.as_bytes()));
-        if field(&p, "client_id")? != grant.client
+        if issuer != grant.issuer
+            || field(&p, "client_id")? != grant.client
             || field(&p, "redirect_uri")? != grant.redirect
             || field(&p, "resource")? != grant.resource
             || !bool::from(challenge.as_bytes().ct_eq(grant.challenge.as_bytes()))
         {
             return Err(CloudError::new(
                 "invalid_grant",
-                "client, redirect, resource or PKCE binding mismatch",
+                "issuer, client, redirect, resource or PKCE binding mismatch",
             ));
         }
         let grant = state.codes.remove(&key).ok_or_else(unavailable)?;
@@ -504,8 +516,13 @@ async fn inner(service: &CloudService, request: Request) -> Result<Response, Clo
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
     let path = request.uri().path().to_owned();
+    let issuer = request
+        .extensions()
+        .get::<crate::domains::AuthorizationIssuer>()
+        .map(|v| v.0.clone())
+        .unwrap_or_else(|| native.config.origin());
     if path == "/.well-known/oauth-authorization-server" {
-        return Ok(Json(native.oauth_metadata()).into_response());
+        return Ok(Json(native.oauth_metadata_for_issuer(&issuer)).into_response());
     }
     if path == "/.well-known/oauth-protected-resource/mcp" {
         return Ok(Json(native.resource_metadata()).into_response());
@@ -518,6 +535,7 @@ async fn inner(service: &CloudService, request: Request) -> Result<Response, Clo
         let target = native
             .authorize_client(
                 peer.ok_or_else(unavailable)?,
+                &issuer,
                 parameters(request.uri().query().unwrap_or("").as_bytes())?,
             )
             .await?;
@@ -549,7 +567,7 @@ async fn inner(service: &CloudService, request: Request) -> Result<Response, Clo
     }
     let p = parameters(&body)?;
     match path.as_str() {
-        "/oauth/token" => Ok(Json(native.exchange(service, p)?).into_response()),
+        "/oauth/token" => Ok(Json(native.exchange(service, &issuer, p)?).into_response()),
         "/oauth/revoke" => {
             native.revoke_oauth(service, p)?;
             Ok(StatusCode::OK.into_response())

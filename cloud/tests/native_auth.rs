@@ -71,6 +71,15 @@ async fn github_login_uses_pkce_and_immutable_identity_then_local_session() {
 #[test]
 fn config_rejects_non_exact_callback_and_partial_or_mixed_provider() {
     assert!(GithubConfig::new("id", "secret", "https://evil.test/auth/callback").is_err());
+    assert!(GithubConfig::new("id", "secret", "https://cloud.bog.new/auth/callback").is_ok());
+    for bad in [
+        "http://cloud.bog.new/auth/callback",
+        "https://cloud.bog.new.evil.test/auth/callback",
+        "https://cloud.bog.new/auth/callback?x=1",
+        "https://mcp.bog.new/auth/callback",
+    ] {
+        assert!(GithubConfig::new("id", "secret", bad).is_err());
+    }
     assert!(
         GithubConfig::new(
             "id",

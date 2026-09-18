@@ -1,5 +1,5 @@
-//! Custom-domain aliases keep the existing authorization issuer and host-only
-//! browser sessions stable. Never derive a trusted resource from arbitrary Host.
+//! Exact public origins with a canonical issuer and a legacy issuer for existing clients.
+//! Never derive a trusted issuer or resource from an arbitrary Host.
 use crate::CloudService;
 use axum::{
     Json,
@@ -12,17 +12,21 @@ use std::sync::Arc;
 
 const CLOUD: &str = "https://cloud.bog.new";
 const MCP: &str = "https://mcp.bog.new";
+const LEGACY: &str = "https://flower-bog-cloud.fly.dev";
+#[derive(Clone)]
+pub(crate) struct AuthorizationIssuer(pub String);
 fn public_origin(host: &str) -> Option<&'static str> {
     match host {
         "cloud.bog.new" => Some(CLOUD),
         "mcp.bog.new" => Some(MCP),
+        "flower-bog-cloud.fly.dev" => Some(LEGACY),
         _ => None,
     }
 }
 
 pub async fn aliases(
     State(service): State<Arc<CloudService>>,
-    request: Request,
+    mut request: Request,
     next: Next,
 ) -> Response {
     let Some(native) = service
@@ -40,13 +44,22 @@ pub async fn aliases(
     let Some(base) = public_origin(host) else {
         return next.run(request).await;
     };
-    let path = request.uri().path();
+    let path = request.uri().path().to_owned();
+    if base == MCP
+        && (path == "/.well-known/oauth-authorization-server" || path.starts_with("/oauth/"))
+    {
+        return (axum::http::StatusCode::NOT_FOUND, [(header::LINK, format!("<{}/.well-known/oauth-authorization-server>; rel=\"oauth-authorization-server\"", native.config.origin()))], Json(serde_json::json!({"error":{"code":"not_found","message":"This is an MCP resource, not an authorization server. Follow authorization_servers in its protected-resource metadata."},"authorization_servers":[native.config.origin()]}))).into_response();
+    }
+    request
+        .extensions_mut()
+        .insert(AuthorizationIssuer(base.to_owned()));
     // The browser login cookie must be set on the registered callback host.
-    // Keeping the console there avoids cross-domain cookie/token transfers.
-    if path == "/console"
-        || path == "/auth/login"
-        || path == "/auth/callback"
-        || path == "/auth/device/approve"
+    // Redirect other browser entry points before creating a host-only session.
+    if base != native.config.origin()
+        && (path == "/console"
+            || path == "/auth/login"
+            || path == "/auth/callback"
+            || path == "/auth/device/approve")
     {
         let target = format!(
             "{}{}",
@@ -55,7 +68,7 @@ pub async fn aliases(
                 .uri()
                 .path_and_query()
                 .map(|p| p.as_str())
-                .unwrap_or(path)
+                .unwrap_or(&path)
         );
         let mut response = Redirect::temporary(&target).into_response();
         response
@@ -67,7 +80,7 @@ pub async fn aliases(
         return Redirect::temporary("/mcp").into_response();
     }
     if matches!(
-        path,
+        path.as_str(),
         "/.well-known/oauth-protected-resource" | "/.well-known/oauth-protected-resource/mcp"
     ) {
         let mcp = base == MCP || path.ends_with("/mcp");
@@ -81,6 +94,9 @@ pub async fn aliases(
         } else {
             base.to_owned()
         });
+        if base == LEGACY {
+            metadata["authorization_servers"] = serde_json::json!([LEGACY]);
+        }
         metadata["resource_documentation"] = serde_json::json!(format!("{CLOUD}/connect"));
         return ([(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")], Json(metadata)).into_response();
     }
@@ -120,7 +136,7 @@ mod tests {
         let config = crate::native_auth::GithubConfig::new(
             "test",
             "test",
-            "https://flower-bog-cloud.fly.dev/auth/callback",
+            "https://cloud.bog.new/auth/callback",
         )
         .unwrap();
         for resource in [

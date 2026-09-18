@@ -30,7 +30,11 @@ impl GithubConfig {
     pub fn new(id: &str, secret: &str, redirect: &str) -> Result<Self, CloudError> {
         if id.is_empty()
             || secret.is_empty()
-            || redirect != "https://flower-bog-cloud.fly.dev/auth/callback"
+            || !matches!(
+                redirect,
+                "https://flower-bog-cloud.fly.dev/auth/callback"
+                    | "https://cloud.bog.new/auth/callback"
+            )
         {
             return Err(CloudError::new(
                 "invalid_config",
@@ -68,9 +72,13 @@ impl GithubConfig {
             user: format!("{origin}/user"),
         })
     }
-    /// Additional names for this same deployment; the issuer and callback remain stable.
+    /// Exact production callback allowlist; aliases never trust arbitrary Host values.
     pub fn custom_domains_enabled(&self) -> bool {
-        self.redirect_uri == "https://flower-bog-cloud.fly.dev/auth/callback"
+        matches!(
+            self.redirect_uri.as_str(),
+            "https://flower-bog-cloud.fly.dev/auth/callback"
+                | "https://cloud.bog.new/auth/callback"
+        )
     }
     pub(crate) fn accepts_resource(&self, resource: &str, rest: bool) -> bool {
         resource == format!("{}/mcp", self.origin())
@@ -78,8 +86,14 @@ impl GithubConfig {
             || (self.custom_domains_enabled()
                 && (matches!(
                     resource,
-                    "https://cloud.bog.new/mcp" | "https://mcp.bog.new/mcp"
-                ) || (rest && resource == "https://cloud.bog.new")))
+                    "https://cloud.bog.new/mcp"
+                        | "https://mcp.bog.new/mcp"
+                        | "https://flower-bog-cloud.fly.dev/mcp"
+                ) || (rest
+                    && matches!(
+                        resource,
+                        "https://cloud.bog.new" | "https://flower-bog-cloud.fly.dev"
+                    ))))
     }
     pub fn origin(&self) -> String {
         reqwest::Url::parse(&self.redirect_uri)
