@@ -3,6 +3,7 @@
 import argparse
 import concurrent.futures
 import hashlib
+import http.client
 import json
 import pathlib
 import sqlite3
@@ -97,7 +98,7 @@ class Harness:
             with self.lock:
                 self.report['requests'].append({'stage': self.stage, 'method': method,
                     'path': path, 'seconds': time.monotonic() - started})
-        if not 200 <= status < 300 or (isinstance(result, dict) and 'error' in result):
+        if not 200 <= status < 300 or (isinstance(result, dict) and result.get('error') is not None):
             raise RuntimeError(f'{method} {path}: API error')
         return result
 
@@ -147,6 +148,18 @@ class Harness:
     def record(i):
         return {'title': f'Publish software changelog {i}', 'notes': f'Release notes and backup verification task {i}', 'completed': False, 'priority': i % 10}
 
+    def wait_ready(self):
+        deadline = time.monotonic() + 45
+        while True:
+            try:
+                with self.opener.open(self.args.url + '/v1', timeout=2) as response:
+                    if response.status == 200:
+                        return
+            except (urllib.error.URLError, TimeoutError, http.client.HTTPException):
+                if time.monotonic() > deadline:
+                    raise RuntimeError('startup readiness timed out') from None
+                time.sleep(0.5)
+
     def run(self):
         cfg = json.loads(docker('inspect', self.args.container))[0]
         env = dict(item.split('=', 1) for item in cfg['Config']['Env'] if '=' in item)
@@ -167,7 +180,13 @@ class Harness:
         image = json.loads(docker('image', 'inspect', cfg['Image']))[0]
         self.report['image'] = {'id': cfg['Image'], 'os': image['Os'], 'architecture': image['Architecture']}
         self.sample()
-        tokens = seed(self.args.fixture_root)
+        # Host and Linux SQLite must never concurrently open this bind-mounted WAL.
+        docker('stop', self.args.container)
+        try:
+            tokens = seed(self.args.fixture_root)
+        finally:
+            docker('start', self.args.container)
+        self.wait_ready()
         thread = threading.Thread(target=self.monitor, daemon=True)
         thread.start()
         bogs = []
@@ -234,16 +253,7 @@ class Harness:
                 thread.join(timeout=65)
                 self.stage = 'container-restart'
                 docker('restart', self.args.container)
-                deadline = time.monotonic() + 45
-                while True:
-                    try:
-                        with self.opener.open(self.args.url + '/v1', timeout=2) as response:
-                            if response.status == 200:
-                                break
-                    except (urllib.error.URLError, TimeoutError):
-                        if time.monotonic() > deadline:
-                            raise RuntimeError('restart readiness timed out') from None
-                        time.sleep(0.5)
+                self.wait_ready()
                 self.stop.clear()
                 thread = threading.Thread(target=self.monitor, daemon=True)
                 thread.start()
