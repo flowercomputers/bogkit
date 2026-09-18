@@ -18,8 +18,8 @@ kill_timeout = 120
   BOG_CLOUD_MAX_ACTIVE = "8"
   BOG_CLOUD_MAX_STARTS = "2"
   BOG_CLOUD_MIN_FREE_BYTES = "67108864"
-  BOG_CLOUD_ALLOWED_HOSTS = "flower-bog-cloud.fly.dev"
-  BOG_CLOUD_ALLOWED_ORIGINS = "https://flower-bog-cloud.fly.dev"
+  BOG_CLOUD_ALLOWED_HOSTS = "flower-bog-cloud.fly.dev,cloud.bog.new,mcp.bog.new"
+  BOG_CLOUD_ALLOWED_ORIGINS = "https://flower-bog-cloud.fly.dev,https://cloud.bog.new,https://mcp.bog.new"
 
 [[mounts]]
   source = "bog_data"

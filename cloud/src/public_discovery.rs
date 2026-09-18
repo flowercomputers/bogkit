@@ -13,7 +13,13 @@ fn origin(service: &CloudService) -> String {
     service
         .native_auth
         .as_ref()
-        .map(|a| a.config.origin())
+        .map(|a| {
+            if a.config.custom_domains_enabled() {
+                "https://cloud.bog.new".into()
+            } else {
+                a.config.origin()
+            }
+        })
         .or_else(|| {
             service
                 .public_auth
@@ -153,7 +159,7 @@ pub async fn document(State(service): State<Arc<CloudService>>, request: Request
         "/og.svg"=>guide_asset("image/svg+xml",include_str!("../static/og.svg")),
         _ => {
             let (title,body)= match path {
-                "/connect"=>("Connect an agent", if service.native_auth.is_some() { include_str!("../static/connect.html").replace("{{origin}}", &escape(&base)) } else { "<p>GitHub agent connection is unavailable on this deployment. An operator must supply an appropriate credential privately. App credentials access one existing Bog; provisioning requires management access.</p><p><a href=\"/auth.md\">Read the active authentication instructions</a></p>".into() }),
+                "/connect"=>("Connect an agent", if service.native_auth.is_some() { include_str!("../static/connect.html").replace("{{origin}}", &escape(&base)).replace("{{mcp_url}}", &escape(&if base == "https://cloud.bog.new" { "https://mcp.bog.new/mcp".into() } else { format!("{base}/mcp") })) } else { "<p>GitHub agent connection is unavailable on this deployment. An operator must supply an appropriate credential privately. App credentials access one existing Bog; provisioning requires management access.</p><p><a href=\"/auth.md\">Read the active authentication instructions</a></p>".into() }),
                 "/docs"=>("Documentation",include_str!("../static/public-docs.html").replace("{{pricing}}", &escape(&pricing(&service)))),
                 "/about"=>("About Bog Cloud",include_str!("../static/about.html").into()),
                 "/contact"=>("Contact Bog Cloud",include_str!("../static/contact.html").into()),

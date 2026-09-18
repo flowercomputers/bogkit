@@ -90,7 +90,18 @@ impl NativeAuth {
     }
     pub(crate) fn oauth_metadata(&self) -> Value {
         let b = self.config.origin();
-        json!({"issuer":b,"protected_resources":[b,self.resource()],"authorization_endpoint":format!("{b}/oauth/authorize"),"token_endpoint":format!("{b}/oauth/token"),"registration_endpoint":format!("{b}/oauth/register"),"revocation_endpoint":format!("{b}/oauth/revoke"),"response_types_supported":["code"],"grant_types_supported":["authorization_code"],"token_endpoint_auth_methods_supported":["none"],"revocation_endpoint_auth_methods_supported":["none"],"code_challenge_methods_supported":["S256"],"scopes_supported":[READ,WRITE],"authorization_response_iss_parameter_supported":true,"client_id_metadata_document_supported":true,"service_documentation":format!("{b}/auth.md")})
+        let mut resources = vec![b.clone(), self.resource()];
+        if self.config.custom_domains_enabled() {
+            resources.extend(
+                [
+                    "https://cloud.bog.new",
+                    "https://cloud.bog.new/mcp",
+                    "https://mcp.bog.new/mcp",
+                ]
+                .map(str::to_owned),
+            );
+        }
+        json!({"issuer":b,"protected_resources":resources,"authorization_endpoint":format!("{b}/oauth/authorize"),"token_endpoint":format!("{b}/oauth/token"),"registration_endpoint":format!("{b}/oauth/register"),"revocation_endpoint":format!("{b}/oauth/revoke"),"response_types_supported":["code"],"grant_types_supported":["authorization_code"],"token_endpoint_auth_methods_supported":["none"],"revocation_endpoint_auth_methods_supported":["none"],"code_challenge_methods_supported":["S256"],"scopes_supported":[READ,WRITE],"authorization_response_iss_parameter_supported":true,"client_id_metadata_document_supported":true,"service_documentation":format!("{b}/auth.md")})
     }
     pub(crate) fn resource_metadata(&self) -> Value {
         json!({"resource":self.resource(),"resource_name":"Bog Cloud HTTP and MCP API","authorization_servers":[self.config.origin()],"scopes_supported":[READ,WRITE],"bearer_methods_supported":["header"],"resource_documentation":format!("{}/docs",self.config.origin())})
@@ -222,9 +233,7 @@ impl NativeAuth {
         if field(&p, "response_type")? != "code" || field(&p, "code_challenge_method")? != "S256" {
             return Err(invalid("response_type code and PKCE S256 required"));
         }
-        if field(&p, "resource")? != self.resource()
-            && field(&p, "resource")? != self.config.origin()
-        {
+        if !self.config.accepts_resource(field(&p, "resource")?, true) {
             return Err(CloudError::new(
                 "invalid_target",
                 "resource must be this service origin (REST) or its /mcp URL",
@@ -408,7 +417,7 @@ impl NativeAuth {
             row.ok_or_else(|| CloudError::new("unauthorized", "invalid OAuth credential"))?;
         // Preserve existing MCP-token REST access. New origin-bound tokens are
         // REST-only and never accepted by the MCP transport.
-        if resource != self.resource() && !(rest && resource == self.config.origin()) {
+        if !self.config.accepts_resource(&resource, rest) {
             return Err(CloudError::new(
                 "unauthorized",
                 "OAuth credential has the wrong resource",

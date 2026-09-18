@@ -48,7 +48,11 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await?;
     let app = bog_cloud::build_rest_router(service.clone())
-        .merge(build_mcp_router_with_options(service.clone(), options));
+        .merge(build_mcp_router_with_options(service.clone(), options))
+        .layer(axum::middleware::from_fn_with_state(
+            service.clone(),
+            bog_cloud::domains::aliases,
+        ));
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let serving = axum::serve(
         listener,

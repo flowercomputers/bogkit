@@ -68,6 +68,19 @@ impl GithubConfig {
             user: format!("{origin}/user"),
         })
     }
+    /// Additional names for this same deployment; the issuer and callback remain stable.
+    pub fn custom_domains_enabled(&self) -> bool {
+        self.redirect_uri == "https://flower-bog-cloud.fly.dev/auth/callback"
+    }
+    pub(crate) fn accepts_resource(&self, resource: &str, rest: bool) -> bool {
+        resource == format!("{}/mcp", self.origin())
+            || (rest && resource == self.origin())
+            || (self.custom_domains_enabled()
+                && (matches!(
+                    resource,
+                    "https://cloud.bog.new/mcp" | "https://mcp.bog.new/mcp"
+                ) || (rest && resource == "https://cloud.bog.new")))
+    }
     pub fn origin(&self) -> String {
         reqwest::Url::parse(&self.redirect_uri)
             .expect("validated callback")
