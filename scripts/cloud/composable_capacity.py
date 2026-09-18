@@ -158,7 +158,7 @@ class Harness:
         thread.start()
         bogs = []
         try:
-            kinds = ['records-v1', 'todo', 'todo-search', 'todo-semantic', 'todo', 'todo-search', 'todo-semantic', 'todo', 'todo-search']
+            kinds = ['records-v1', 'todo', 'todo-search', 'todo-semantic', 'todo', 'todo-search', 'todo-semantic', 'todo', 'records-v1']
             for index, kind in enumerate(kinds):
                 self.stage = f'populate-{index + 1}-{kind}'
                 token = tokens[index // 3]
