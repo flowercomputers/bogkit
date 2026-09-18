@@ -76,6 +76,9 @@ pub fn build_rest_router(service: Arc<CloudService>) -> Router {
         .route("/robots.txt", get(crate::public_discovery::document))
         .route("/sitemap.xml", get(crate::public_discovery::document))
         .route("/.well-known/api-catalog", get(crate::public_discovery::document))
+        .route("/agent.md", get(crate::public_discovery::document))
+        .route("/docs.md", get(crate::public_discovery::document))
+        .route("/examples/notes.json", get(crate::public_discovery::document))
         .route("/docs", get(crate::public_discovery::document))
         .route("/connect", get(crate::public_discovery::document))
         .route("/about", get(crate::public_discovery::document))
@@ -149,12 +152,15 @@ pub fn error_response(error: CloudError, request_id: &str) -> Response {
         "response_too_large" => 413,
         _ => 400,
     };
-    let mut response = (
-        StatusCode::from_u16(status).unwrap(),
-        Json(json!({"error":{"code":error.code,"message":error.message,"next_action":error.next_action()},"request_id":request_id})),
-    )
-        .into_response();
-    if status == 503 {
+    let mut payload = json!({"error":{"code":error.code,"message":error.message,"next_action":error.next_action()},"request_id":request_id});
+    if let Some(fix) = error.fix() {
+        payload["error"]["fix"] = fix;
+    }
+    if matches!(status, 429 | 503) {
+        payload["retry_after_ms"] = json!(1000);
+    }
+    let mut response = (StatusCode::from_u16(status).unwrap(), Json(payload)).into_response();
+    if matches!(status, 429 | 503) {
         response
             .headers_mut()
             .insert(header::RETRY_AFTER, header::HeaderValue::from_static("1"));
@@ -195,7 +201,26 @@ async fn dispatch(State(service): State<Arc<CloudService>>, request: Request) ->
                     .into_response()
             }
         }
-        Err(error) => error_response(error, &request_id),
+        Err(error) => {
+            let status = error.code.clone();
+            let response = error_response(error, &request_id);
+            if status == "capacity" {
+                if let Some((0, reset)) = authenticated_principal
+                    .as_ref()
+                    .and_then(|p| service.rate_limit_snapshot(p))
+                {
+                    let (parts, body) = response.into_parts();
+                    let bytes = to_bytes(body, 1024 * 1024).await.unwrap_or_default();
+                    let mut v: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+                    v["retry_after_ms"] = json!(reset * 1000);
+                    Response::from_parts(parts, axum::body::Body::from(v.to_string()))
+                } else {
+                    response
+                }
+            } else {
+                response
+            }
+        }
     };
     if let Some(principal) = authenticated_principal.as_ref()
         && let Some((remaining, reset)) = service.rate_limit_snapshot(principal)
@@ -365,6 +390,17 @@ async fn dispatch_inner(
         .await
         .map_err(|_| CloudError::new("payload_too_large", "request exceeds 1 MiB"))?;
     let parse = || serde_json::from_slice::<Value>(&bytes).map_err(|_| bad("invalid JSON body"));
+    if method == "GET" && path.len() == 3 && path[1] == "requests" {
+        return service
+            .execute_with_request_id(
+                &principal,
+                Operation::RequestInfo {
+                    request_id: path[2].clone(),
+                },
+                request_id,
+            )
+            .await;
+    }
     if method == "GET" && path.as_slice() == ["v1", "components"] {
         return service
             .execute_with_request_id(&principal, Operation::ListComponents, request_id)
@@ -414,9 +450,9 @@ async fn dispatch_inner(
         }
         match (method.as_str(), path[1].as_str(), path.len()) {
             ("GET", "me", 2) => {
-                return ok(
-                    json!({"kind":principal.kind(),"account":principal.account_id().map(|id|json!({"id":id})),"workspace_id":principal.workspace_id(),"platform_operator":service.auth.is_platform_operator(&principal)?}),
-                );
+                return service
+                    .execute_with_request_id(&principal, Operation::GetCurrentContext, request_id)
+                    .await;
             }
             ("POST", "workspaces", 2) => {
                 #[derive(Deserialize)]
@@ -526,6 +562,36 @@ async fn dispatch_inner(
         }
         return Err(CloudError::new("not_found", "route not found"));
     }
+    if method == "POST" && path.as_slice() == ["v1", "bogs", "cleanup", "preview"] {
+        let v = parse()?;
+        return service
+            .execute_with_request_id(
+                &principal,
+                Operation::PreviewCleanup {
+                    prefix: v["name_prefix"]
+                        .as_str()
+                        .ok_or_else(|| bad("name_prefix required"))?
+                        .into(),
+                },
+                request_id,
+            )
+            .await;
+    }
+    if method == "POST" && path.as_slice() == ["v1", "bogs", "cleanup", "execute"] {
+        let v = parse()?;
+        return service
+            .execute_with_request_id(
+                &principal,
+                Operation::ExecuteCleanup {
+                    preview_id: v["preview_id"]
+                        .as_str()
+                        .ok_or_else(|| bad("preview_id required"))?
+                        .into(),
+                },
+                request_id,
+            )
+            .await;
+    }
     let id = if path.len() > 2 {
         Some(BogId(
             Uuid::parse_str(&path[2]).map_err(|_| bad("invalid database ID"))?,
@@ -534,6 +600,29 @@ async fn dispatch_inner(
         None
     };
     let op = match (method.as_str(), path.len()) {
+        ("GET", 4) if path[3] == "routes" => Operation::ListRoutes {
+            bog_id: id.unwrap(),
+        },
+        ("GET", 4) if path[3] == "docs" => {
+            let id = id.unwrap();
+            service.auth.authorize(&principal, Some(id), false)?;
+            let active = service.registry.definition(id)?;
+            let route = crate::definitions::compact_routes(&active, &id.to_string())
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|r| {
+                    r["body_example"]["action"] == "list"
+                        && r["path"]
+                            .as_str()
+                            .is_some_and(|p| p.ends_with("/resources/docs/query"))
+                })
+                .cloned();
+            return Ok(crate::OperationResult {
+                status: 404,
+                body: json!({"error":{"code":"not_found","message":"Use the exposed table query to list documents","next_action":"Use did_you_mean when present; otherwise inspect routes"},"did_you_mean":route}),
+            });
+        }
         ("GET", 4) if path[3] == "definition" => Operation::DescribeDefinition {
             bog_id: id.unwrap(),
         },
@@ -643,29 +732,64 @@ async fn dispatch_inner(
         ("POST", 2) => {
             service.auth.authorize(&principal, None, true)?;
             let value = parse()?;
-            if let Some(definition) = value.get("definition") {
-                if value
-                    .as_object()
-                    .is_none_or(|o| o.keys().any(|k| k != "name" && k != "definition"))
-                {
-                    return Err(bad("expected name and definition only"));
+            if value.get("definition").is_none() {
+                // Preserve the shared, aggregated repair guidance for template
+                // creation while accepting opt-in orchestration fields.
+                let mut template_body = value.clone();
+                if let Some(fields) = template_body.as_object_mut() {
+                    for field in ["wait", "sandbox", "app_access"] {
+                        fields.remove(field);
+                    }
                 }
-                Operation::CreateDefinedBog {
-                    name: value["name"]
-                        .as_str()
-                        .ok_or_else(|| bad("name required"))?
-                        .into(),
-                    definition: definition.clone(),
-                    idempotency_key: key.clone().ok_or_else(|| bad("Idempotency-Key required"))?,
-                }
-            } else {
-                let (name, template, idempotency_key) =
-                    crate::contract::validate_creation(&value, key.as_deref(), "Idempotency-Key")?;
-                Operation::CreateBog {
-                    name,
-                    template,
-                    idempotency_key,
-                }
+                crate::contract::validate_creation(
+                    &template_body,
+                    key.as_deref(),
+                    "Idempotency-Key",
+                )?;
+            }
+            if value.as_object().is_none_or(|o| {
+                o.keys().any(|k| {
+                    ![
+                        "name",
+                        "template",
+                        "definition",
+                        "wait",
+                        "sandbox",
+                        "app_access",
+                    ]
+                    .contains(&k.as_str())
+                })
+            }) {
+                return Err(bad("unsupported creation field"));
+            }
+            let boolean = |field: &str| -> Result<bool, CloudError> {
+                value
+                    .get(field)
+                    .map(|v| {
+                        v.as_bool()
+                            .ok_or_else(|| bad("wait and sandbox must be booleans"))
+                    })
+                    .transpose()
+                    .map(|v| v.unwrap_or(false))
+            };
+            Operation::ProvisionBog {
+                name: value["name"]
+                    .as_str()
+                    .ok_or_else(|| bad("name required"))?
+                    .into(),
+                template: value
+                    .get("template")
+                    .map(|v| {
+                        v.as_str()
+                            .map(str::to_owned)
+                            .ok_or_else(|| bad("template must be a string"))
+                    })
+                    .transpose()?,
+                definition: value.get("definition").cloned(),
+                idempotency_key: key.clone().ok_or_else(|| bad("Idempotency-Key required"))?,
+                wait: boolean("wait")?,
+                sandbox: boolean("sandbox")?,
+                app_access: value.get("app_access").cloned(),
             }
         }
         ("DELETE", 3) => {
@@ -914,6 +1038,12 @@ async fn browser_inner(service: &CloudService, request: Request) -> Result<Respo
     Ok(response)
 }
 async fn discovery(State(service): State<Arc<CloudService>>, request: Request) -> Response {
+    if request.uri().path() == "/llms.txt" {
+        return guide_asset(
+            "text/plain; charset=utf-8",
+            crate::agent_guide::index(&service),
+        );
+    }
     if service.native_auth.is_some()
         && let Some(response) = crate::native_http::discovery(&service, request.uri().path())
     {
@@ -936,7 +1066,11 @@ async fn discovery(State(service): State<Arc<CloudService>>, request: Request) -
             .as_ref()
             .map(|a| Json(a.verifier.config.resource_metadata()).into_response())
             .unwrap_or_else(|| StatusCode::NOT_FOUND.into_response()),
-        "/openapi.json" => Json(crate::contract::openapi()).into_response(),
+        "/openapi.json" => {
+            let mut document = crate::contract::openapi();
+            document["externalDocs"]["url"] = json!(format!("{}/docs", crate::public_discovery::origin(&service)));
+            Json(document).into_response()
+        },
         "/llms.txt" => (
             [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
             crate::contract::llms_for_mode(service.public_auth.is_some()),
@@ -945,6 +1079,8 @@ async fn discovery(State(service): State<Arc<CloudService>>, request: Request) -
         "/v1/templates" => Json(json!({"templates":crate::contract::overview()["templates"]})).into_response(),
         _ => {
             let mut overview = crate::contract::overview();
+            overview["mcp"] = crate::agent_discovery::server_card(&crate::public_discovery::origin(&service))["remotes"][0]["url"].clone();
+            overview["sandbox"] = json!({"enabled":service.supervisor.config.sandboxes_enabled,"per_workspace":1,"lifetime_seconds":3600});
             overview["authentication_configured"] = json!(service.public_auth.is_some());
             if service.public_auth.is_none() {
                 overview["limits"]["legacy_operator_bogs"] = json!(service.supervisor.max_active());

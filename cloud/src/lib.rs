@@ -1,5 +1,8 @@
 //! Private Bog resource management.
-pub mod registry;
+pub mod agent_guide;
+mod sandboxes;
+pub use sandboxes::{CleanupPreview, CleanupResult};
+mod registry;
 pub mod types;
 pub use registry::Registry;
 pub use types::*;
@@ -45,5 +48,5 @@ pub mod app_access;
 
 pub mod observability;
 
-pub mod domains;
 pub mod definitions;
+pub mod domains;

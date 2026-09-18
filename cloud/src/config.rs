@@ -2,6 +2,10 @@ use std::path::PathBuf;
 #[derive(Clone, Debug)]
 pub struct Config {
     pub composable_enabled: bool,
+    /// Explicit advertised origin for operator-only deployments; never trust request Host.
+    pub public_origin: Option<String>,
+    /// Roll out separately; disable creation before rollback, retain expiry-capable manager for existing sandboxes.
+    pub sandboxes_enabled: bool,
     pub composable_limits: bog_definition::Limits,
     pub root: PathBuf,
     pub worker_binary: PathBuf,
@@ -15,6 +19,8 @@ impl Config {
     pub fn new(root: PathBuf, worker_binary: PathBuf) -> Self {
         Self {
             composable_enabled: false,
+            public_origin: None,
+            sandboxes_enabled: false,
             composable_limits: bog_definition::Limits::default(),
             root,
             worker_binary,
@@ -65,6 +71,10 @@ impl Config {
                 )),
             }
         }
+        if let Ok(value) = std::env::var("BOG_CLOUD_PUBLIC_ORIGIN") {
+            config.public_origin = Some(validate_public_origin(&value)?);
+        }
+        config.sandboxes_enabled = std::env::var("BOG_CLOUD_SANDBOXES").is_ok_and(|v| v == "true");
         config.composable_enabled =
             std::env::var("BOG_CLOUD_COMPOSABLE").is_ok_and(|v| v == "true");
         match std::env::var("BOG_CLOUD_COMPOSABLE_LIMITS") {
@@ -127,6 +137,52 @@ mod limit_tests {
                 parse_composable_limits(raw).unwrap_err().code,
                 "invalid_config"
             );
+        }
+    }
+}
+
+fn validate_public_origin(value: &str) -> Result<String, crate::CloudError> {
+    let invalid = || {
+        crate::CloudError::new(
+            "invalid_config",
+            "public origin must be HTTPS or loopback HTTP without a path, query or credentials",
+        )
+    };
+    let url = reqwest::Url::parse(value).map_err(|_| invalid())?;
+    let loopback = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
+    if !(url.scheme() == "https" || (url.scheme() == "http" && loopback))
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.path() != "/"
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(invalid());
+    }
+    Ok(url.origin().ascii_serialization())
+}
+
+#[cfg(test)]
+mod origin_tests {
+    use super::validate_public_origin;
+    #[test]
+    fn advertised_origin_is_explicit_and_safe() {
+        for value in [
+            "https://example.test",
+            "http://127.0.0.1:8788",
+            "http://[::1]:8788",
+        ] {
+            assert!(validate_public_origin(value).is_ok(), "{value}");
+        }
+        for value in [
+            "http://example.test",
+            "https://user:secret@example.test",
+            "https://example.test/path",
+            "https://example.test?x",
+            "file:///tmp",
+        ] {
+            assert!(validate_public_origin(value).is_err());
         }
     }
 }

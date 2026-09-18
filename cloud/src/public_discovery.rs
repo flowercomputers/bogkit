@@ -9,7 +9,7 @@ use axum::{
 use serde_json::json;
 use std::sync::Arc;
 const PUBLIC_ORIGIN: &str = "https://flower-bog-cloud.fly.dev";
-fn origin(service: &CloudService) -> String {
+pub(crate) fn origin(service: &CloudService) -> String {
     service
         .native_auth
         .as_ref()
@@ -27,6 +27,7 @@ fn origin(service: &CloudService) -> String {
                 .and_then(|a| reqwest::Url::parse(&a.verifier.config.resource).ok())
                 .map(|u| u.origin().ascii_serialization())
         })
+        .or_else(|| service.supervisor.config.public_origin.clone())
         .unwrap_or_else(|| PUBLIC_ORIGIN.into())
 }
 /// Require an explicit, acceptable Markdown representation; wildcards keep HTML.
@@ -98,10 +99,7 @@ pub async fn homepage(State(service): State<Arc<CloudService>>, request: Request
     let mut response = if markdown(request.headers()) {
         guide_asset(
             "text/markdown; charset=utf-8",
-            format!(
-                "# Bog Cloud\n\nA working prototype by [Flower Computer](https://flowercomputer.com/) for apps and agents to store JSON records through HTTP or bearer-authenticated MCP.\n\nUse it for a small shared notebook, reading list, or script state. Keep a separate copy of important data. SQL and durable event replay are not supported.\n\n[Connect an agent]({base}/connect) · [Documentation]({base}/docs) · [Authentication]({base}/auth.md) · [API operations]({base}/v1) · [OpenAPI]({base}/openapi.json) · [MCP](https://mcp.bog.new/mcp) · [Console]({base}/console)\n\nRead the authentication guide for this deployment's active mode before connecting.\n\n{}\n",
-                pricing(&service)
-            ),
+            crate::agent_guide::guide(&service),
         )
     } else {
         let html = crate::native_http::guide(&service);
@@ -121,6 +119,23 @@ pub async fn homepage(State(service): State<Arc<CloudService>>, request: Request
 pub async fn document(State(service): State<Arc<CloudService>>, request: Request) -> Response {
     let base = origin(&service);
     let path = request.uri().path();
+    if matches!(path, "/agent.md" | "/docs.md") || (path == "/docs" && markdown(request.headers()))
+    {
+        let mut response = linked(
+            guide_asset(
+                "text/markdown; charset=utf-8",
+                crate::agent_guide::guide(&service),
+            ),
+            &base,
+        );
+        response
+            .headers_mut()
+            .insert(header::VARY, HeaderValue::from_static("Accept"));
+        return response;
+    }
+    if path == "/examples/notes.json" {
+        return guide_asset("application/json", crate::agent_guide::NOTES);
+    }
     if let Some((content_type, body)) = crate::agent_discovery::public_document(path, &base) {
         let mut response = if request.method() == axum::http::Method::OPTIONS {
             StatusCode::NO_CONTENT.into_response()
@@ -165,7 +180,9 @@ pub async fn document(State(service): State<Arc<CloudService>>, request: Request
                 "/contact"=>("Contact Bog Cloud",include_str!("../static/contact.html").into()),
                 _=>("Privacy notes","<p>Bog Cloud uses credentials to control access to workspaces and records. When this deployment enables GitHub sign-in, it identifies your account; repository access is not requested. Never include credentials in chat messages or URLs. This prototype is evolving: keep a separate copy of important data.</p><p>For questions about data handling, contact <a href=\"https://flowercomputer.com/\">Flower Computer</a>. These notes do not specify a retention schedule.</p>".into())
             };
-            linked(guide_asset("text/html; charset=utf-8",format!("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>{title} — Bog Cloud</title>{}<link rel=\"stylesheet\" href=\"/guide.css\"></head><body><header><a href=\"/\">Bog Cloud</a><nav><a href=\"/docs\">Documentation</a> · <a href=\"/auth.md\">Authentication</a></nav></header><main><h1>{title}</h1>{body}</main></body></html>",metadata(&base,path))),&base)
+            let mut response = linked(guide_asset("text/html; charset=utf-8",format!("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>{title} — Bog Cloud</title>{}<link rel=\"stylesheet\" href=\"/guide.css\"></head><body><header><a href=\"/\">Bog Cloud</a><nav><a href=\"/docs\">Documentation</a> · <a href=\"/auth.md\">Authentication</a></nav></header><main><h1>{title}</h1>{body}</main></body></html>",metadata(&base,path))),&base);
+            if path == "/docs" { response.headers_mut().insert(header::VARY, HeaderValue::from_static("Accept")); }
+            response
         }
     }
 }

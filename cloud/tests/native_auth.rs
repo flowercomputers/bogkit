@@ -239,9 +239,10 @@ async fn native_http_device_and_discovery() {
         (
             "/llms.txt",
             vec![
-                "hosted typed datastore",
-                "GitHub browser sign-in",
-                "OAuth-capable MCP clients",
+                "# Bog Cloud",
+                "GitHub approval is enabled",
+                "/agent.md",
+                "/auth.md",
             ],
         ),
         (
@@ -265,7 +266,8 @@ async fn native_http_device_and_discovery() {
             assert!(text.contains(phrase), "{path}: missing {phrase}");
         }
         if path == "/llms.txt" {
-            assert!(text.contains(&bog_cloud::contract::llms()));
+            assert!(text.len() < 2048);
+            assert!(text.contains("/openapi.json"));
             assert!(!text.contains("WorkOS"));
         }
     }
@@ -314,7 +316,9 @@ async fn native_http_device_and_discovery() {
             .unwrap()
             .contains(value["device_code"].as_str().unwrap())
     );
+    let device_code = value["device_code"].clone();
     let response = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -329,7 +333,51 @@ async fn native_http_device_and_discovery() {
         .unwrap();
     let body = to_bytes(response.into_body(), 100000).await.unwrap();
     let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(value["error"]["code"], "authorization_pending");
+    assert_eq!(value["error"], "authorization_pending");
+    assert_eq!(value["error_detail"]["code"], "authorization_pending");
+    assert!(value["error_description"].is_string());
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/auth/device/token")
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"device_code":device_code}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = to_bytes(response.into_body(), 100000).await.unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(value["error"], "slow_down");
+    assert_eq!(value["error_detail"]["code"], "slow_down");
+    // Only the token endpoint uses the flat OAuth error contract, including bad input.
+    for (path, flat) in [("/auth/device/token", true), ("/auth/device", false)] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(path)
+                    .header("content-type", "application/json")
+                    .body(Body::from("invalid JSON"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 400);
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        let body = to_bytes(response.into_body(), 100000).await.unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        if flat {
+            assert_eq!(value["error"], "invalid_request");
+            assert_eq!(value["error_detail"]["code"], "invalid_request");
+        } else {
+            assert_eq!(value["error"]["code"], "invalid_request");
+            assert!(value.get("error_detail").is_none());
+        }
+    }
 }
 
 #[tokio::test]

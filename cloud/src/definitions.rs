@@ -201,7 +201,7 @@ pub fn resources_with_limits(active: &ActiveDefinition, limits: &bog_definition:
             }
             let mut hosted_schema = value["request_schema"].clone();
             if matches!(op.action, bog_definition::Action::Get | bog_definition::Action::List | bog_definition::Action::Read | bog_definition::Action::Top | bog_definition::Action::Wait) {
-                hosted_schema["properties"]["action"] = json!({"const":op.action});
+                hosted_schema["properties"]["action"] = if op.action == bog_definition::Action::Get { json!({"enum":["get","batch_get"]}) } else { json!({"const":op.action}) };
                 let default = match resource.terminal { bog_definition::Terminal::Table => bog_definition::Action::List, bog_definition::Terminal::Ranked {..} => bog_definition::Action::Top, _ => bog_definition::Action::Read };
                 if op.action != default {
                     let required = hosted_schema.as_object_mut().unwrap().entry("required").or_insert_with(|| json!([]));
@@ -231,6 +231,36 @@ pub fn resources_with_limits(active: &ActiveDefinition, limits: &bog_definition:
         }
     }).collect();
     json!({"resources":resources,"revision":active.revision,"digest":active.digest})
+}
+/// Compact executable routes derived from the same exposed operation metadata as schemas.
+pub fn compact_routes(active: &ActiveDefinition, bog_id: &str) -> Value {
+    let metadata = resources(active);
+    let mut routes = Vec::new();
+    for resource in metadata["resources"].as_array().into_iter().flatten() {
+        for op in resource["operations"].as_array().into_iter().flatten() {
+            let action = op["action"].as_str().unwrap_or("");
+            let body = match action {
+                "put" => {
+                    json!({"title":"Hello Bog","body":"A quiet woodland cabin retreat","updated_at":1,"text":"Hello Bog","ts":1})
+                }
+                "batch" => {
+                    json!({"ops":[{"op":"upsert","key":"note-1","data":{"title":"Hello Bog","body":"A quiet woodland cabin retreat","updated_at":1,"text":"Hello Bog","ts":1}}]})
+                }
+                "get" => json!({"action":"get","key":"note-1"}),
+                "list" => json!({"action":"list","limit":20}),
+                "top" => json!({"action":"top","limit":20}),
+                "read" => json!({"action":"read"}),
+                "wait" => json!({"action":"wait","timeout":0}),
+                "search" => json!({"query":"hello","limit":3}),
+                _ => Value::Null,
+            };
+            routes.push(json!({"op":op["name"],"method":op["hosted"]["method"],"path":op["hosted"]["path"].as_str().unwrap_or("").replace("{bog_id}",bog_id),"body_example":body}));
+            if action == "get" {
+                routes.push(json!({"op":"batch_get","method":"POST","path":op["hosted"]["path"].as_str().unwrap_or("").replace("{bog_id}",bog_id),"body_example":{"action":"batch_get","keys":["note-1"]}}));
+            }
+        }
+    }
+    json!(routes)
 }
 impl crate::CloudService {
     pub(crate) fn plan_definition(
@@ -272,10 +302,19 @@ impl crate::CloudService {
         let object = query
             .as_object_mut()
             .ok_or_else(|| invalid("query must be an object"))?;
+        if object.get("action").is_some_and(|v| v == "batch_get")
+            && (!object.contains_key("keys") || object.contains_key("key"))
+        {
+            return Err(invalid("batch_get requires keys, not key"));
+        }
         let action = if search {
             Action::Search
         } else if let Some(action) = object.remove("action") {
-            serde_json::from_value(action).map_err(invalid)?
+            if action == "batch_get" {
+                Action::Get
+            } else {
+                serde_json::from_value(action).map_err(invalid)?
+            }
         } else {
             match active
                 .definition
@@ -303,11 +342,44 @@ impl crate::CloudService {
             .map(|(name, _)| name)
             .ok_or_else(|| CloudError::new("not_found", "resource operation is not exposed"))?;
         if !active.configured {
+            let schema = bog_definition::request_schema(action);
+            let fields = query
+                .as_object()
+                .ok_or_else(|| invalid("query must be an object"))?;
+            if fields.keys().any(|k| schema["properties"].get(k).is_none())
+                || fields.values().any(Value::is_null)
+            {
+                return Err(invalid("unknown or incompatible operation argument"));
+            }
+            if action == Action::Get && (fields.contains_key("key") == fields.contains_key("keys"))
+            {
+                return Err(invalid("get requires exactly one of key or keys"));
+            }
             let q: bog_runtime::Query = serde_json::from_value(query).map_err(invalid)?;
             let limit = q.limit.unwrap_or(100);
             let offset = q.offset.unwrap_or(0);
             if limit > 1000 || offset > 10_000 {
                 return Err(invalid("page exceeds limits"));
+            }
+            if action == Action::Get && q.keys.is_some() {
+                let args =
+                    serde_json::to_string(&serde_json::json!({"keys":q.keys})).map_err(invalid)?;
+                let encoded: String = reqwest::Url::parse_with_params(
+                    "http://localhost/_cloud/batch-get",
+                    &[("args", args)],
+                )
+                .map_err(invalid)?
+                .query()
+                .unwrap()
+                .into();
+                return self
+                    .worker(
+                        id,
+                        reqwest::Method::GET,
+                        format!("/_cloud/batch-get?{encoded}"),
+                        None,
+                    )
+                    .await;
             }
             let path = match action {
                 Action::Get => format!(
@@ -316,7 +388,24 @@ impl crate::CloudService {
                         q.key.as_deref().ok_or_else(|| invalid("key required"))?
                     )?
                 ),
-                Action::List => format!("/views/docs?limit={limit}&offset={offset}"),
+                Action::List => {
+                    if (q.after.is_some() || q.before.is_some()) && q.offset.is_some() {
+                        return Err(invalid("bounds cannot be combined with offset"));
+                    }
+                    let mut pairs = vec![("limit", limit.to_string())];
+                    if let Some(v) = q.after {
+                        pairs.push(("after", v));
+                    }
+                    if let Some(v) = q.before {
+                        pairs.push(("before", v));
+                    }
+                    if q.offset.is_some() {
+                        pairs.push(("offset", offset.to_string()));
+                    }
+                    let u = reqwest::Url::parse_with_params("http://localhost/views/docs", &pairs)
+                        .map_err(invalid)?;
+                    format!("/views/docs?{}", u.query().unwrap())
+                }
                 Action::Read => "/views/total".into(),
                 _ => {
                     return Err(CloudError::new(

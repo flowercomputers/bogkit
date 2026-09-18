@@ -29,7 +29,7 @@ pub fn server_card(base: &str) -> Value {
         "name":"io.fly.flower-bog-cloud/bog-cloud", "title":"Bog Cloud",
         "version":env!("CARGO_PKG_VERSION"),
         "description":"Hosted JSON databases for small prototypes, with HTTP and MCP access.",
-        "websiteUrl":format!("{base}/docs"),
+        "websiteUrl":format!("{base}/agent.md"),
         "remotes":[{"type":"streamable-http", "url":endpoint,
             "supportedProtocolVersions":["2025-11-25"],
             "headers":[{"name":"Authorization", "isRequired":true,"isSecret":true,
@@ -60,6 +60,12 @@ pub fn catalog(base: &str) -> Value {
         "url":format!("{base}/openapi.json"),
         "description":"OpenAPI description of Bog Cloud's authenticated JSON database API.",
         "representativeQueries":["Build a server-side app using the Bog HTTP API", "Find the request format for storing JSON records"]
+    }, {
+        "@context":"https://agenticresourcediscovery.org/context/v1",
+        "identifier":format!("urn:air:{publisher}:guide:bog-cloud"),
+        "displayName":"Bog Cloud agent guide", "type":"text/markdown",
+        "url":format!("{base}/agent.md"),
+        "description":"Start here for active authentication, a composable notes example and private app installation."
     }]})
 }
 
@@ -94,6 +100,22 @@ mod tests {
             );
         }
     }
+    #[test]
+    fn hosted_skill_awaits_private_helper_and_uses_current_guides() {
+        for required in [
+            "/agent.md",
+            "/docs.md",
+            "/llms.txt",
+            "--connect --auth-file",
+            "await its completion",
+            "--handoff HANDOFF_ID",
+            "before** the initial view",
+        ] {
+            assert!(SKILL.contains(required), "missing {required}");
+        }
+        assert!(!SKILL.contains("via `POST /v1/bogs/{id}/tokens`"));
+    }
+
     #[test]
     fn skill_digest_and_frontmatter_match_the_published_artifact() {
         let index = skills_index();

@@ -20,6 +20,29 @@ pub enum Operation {
     DescribeDefinition {
         bog_id: BogId,
     },
+    ProvisionBog {
+        name: String,
+        template: Option<String>,
+        definition: Option<Value>,
+        idempotency_key: String,
+        #[serde(default)]
+        wait: bool,
+        #[serde(default)]
+        sandbox: bool,
+        app_access: Option<Value>,
+    },
+    PreviewCleanup {
+        prefix: String,
+    },
+    ExecuteCleanup {
+        preview_id: String,
+    },
+    ListRoutes {
+        bog_id: BogId,
+    },
+    RequestInfo {
+        request_id: String,
+    },
     ListResources {
         bog_id: BogId,
     },
@@ -135,6 +158,7 @@ pub struct CloudService {
     pub auth: Auth,
     pub supervisor: Arc<Supervisor>,
     requests: tokio::sync::Semaphore,
+    provisioning: tokio::sync::Semaphore,
     rates: std::sync::Mutex<std::collections::HashMap<String, (std::time::Instant, u32)>>,
 }
 impl CloudService {
@@ -178,6 +202,7 @@ impl CloudService {
             auth,
             supervisor,
             requests: tokio::sync::Semaphore::new(64),
+            provisioning: tokio::sync::Semaphore::new(16),
             rates: Default::default(),
         }))
     }
@@ -231,6 +256,150 @@ impl CloudService {
         principal: &Principal,
         operation: Operation,
     ) -> Result<OperationResult, CloudError> {
+        if let Operation::ProvisionBog {
+            name,
+            template,
+            definition,
+            idempotency_key,
+            wait,
+            sandbox,
+            app_access,
+        } = operation
+        {
+            self.auth.authorize(principal, None, true)?;
+            // Keep bounded creation waits from exhausting request tasks. A separate
+            // permit avoids recursive acquisition through the granular create path.
+            let _provision = self.provisioning.try_acquire().map_err(|_| {
+                CloudError::new("capacity", "too many concurrent provisioning requests")
+            })?;
+            let access = app_access
+                .map(|v| -> Result<(Scope, String), CloudError> {
+                    if v.as_object()
+                        .is_none_or(|o| o.keys().any(|k| k != "scope" && k != "label"))
+                    {
+                        return Err(CloudError::new(
+                            "invalid_request",
+                            "app_access accepts scope and label",
+                        ));
+                    }
+                    let scope = serde_json::from_value(
+                        v.get("scope")
+                            .cloned()
+                            .unwrap_or(serde_json::json!("write")),
+                    )
+                    .map_err(crate::definitions::invalid)?;
+                    let label = v
+                        .get("label")
+                        .map(|v| {
+                            v.as_str().ok_or_else(|| {
+                                CloudError::new("invalid_request", "label must be a string")
+                            })
+                        })
+                        .transpose()?
+                        .unwrap_or("Application")
+                        .to_owned();
+                    if label.is_empty() || label.len() > 80 || label.chars().any(char::is_control) {
+                        return Err(CloudError::new("invalid_request", "invalid app label"));
+                    }
+                    Ok((scope, label))
+                })
+                .transpose()?;
+            if access.is_some() && (principal.account_id().is_none() || self.native_auth.is_none())
+            {
+                return Err(CloudError::new(
+                    "forbidden",
+                    "app access preparation requires native account authorization",
+                ));
+            }
+            if definition.is_some() && template.is_some() {
+                return Err(CloudError::new(
+                    "invalid_request",
+                    "choose template or definition",
+                ));
+            }
+            let mut result = if sandbox {
+                if !self.supervisor.config.sandboxes_enabled {
+                    return Err(CloudError::new(
+                        "feature_disabled",
+                        "sandbox creation is not enabled",
+                    ));
+                }
+                self.rate_limit(principal)?;
+                if definition.is_some() && !self.supervisor.config.composable_enabled {
+                    return Err(CloudError::new(
+                        "feature_disabled",
+                        "composable hosted bogs are disabled",
+                    ));
+                }
+                if template.as_deref().is_some_and(|t| t != "records-v1") {
+                    return Err(CloudError::new("invalid_request", "unknown template"));
+                }
+                let d = definition
+                    .map(crate::definitions::parse)
+                    .transpose()?
+                    .unwrap_or_else(bog_definition::Definition::records_v1);
+                self.supervisor
+                    .config
+                    .composable_limits
+                    .validate_definition(&d)
+                    .map_err(crate::definitions::invalid)?;
+                crate::config::require_free_space(
+                    &self.supervisor.config.root,
+                    self.supervisor.config.min_free_bytes,
+                )?;
+                let bog =
+                    self.registry
+                        .create_sandbox_defined(principal, &name, &idempotency_key, &d)?;
+                let supervisor = self.supervisor.clone();
+                let id = bog.id;
+                tokio::spawn(async move {
+                    let _ = supervisor.ensure_running(id).await;
+                });
+                OperationResult {
+                    status: 202,
+                    body: self.creation_value(id)?,
+                }
+            } else {
+                let op = match definition {
+                    Some(definition) => Operation::CreateDefinedBog {
+                        name,
+                        definition,
+                        idempotency_key,
+                    },
+                    None => Operation::CreateBog {
+                        name,
+                        template: template.unwrap_or_else(|| "records-v1".into()),
+                        idempotency_key,
+                    },
+                };
+                Box::pin(self.execute_inner(principal, op)).await?
+            };
+            let id: BogId = serde_json::from_value(result.body["id"].clone())
+                .map_err(crate::definitions::invalid)?;
+            if wait {
+                let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(25);
+                loop {
+                    self.auth.authorize(principal, Some(id), false)?;
+                    let bog = self.registry.get(id)?;
+                    if matches!(
+                        bog.status,
+                        crate::ObservedState::Ready | crate::ObservedState::Failed
+                    ) || tokio::time::Instant::now() >= deadline
+                    {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+                result.body = self.creation_value(id)?;
+                if result.body["status"] == "ready" {
+                    result.status = 201;
+                }
+            }
+            if let Some((scope, label)) = access {
+                result.body["app_access"] = self.prepare_app_access(principal, id, scope, label)?;
+            }
+            return Ok(result);
+        }
         // Resource waits use the same authorized waiter, quotas and revocation checks.
         let operation =
             if let Operation::QueryResource {
@@ -303,20 +472,24 @@ impl CloudService {
         use Operation::*;
         let (target, write) = match &operation {
             WaitForChange { .. } => unreachable!(),
+            GetCurrentContext | RequestInfo { .. } => (principal.bog_id, false),
             ListComponents
             | ValidateDefinition { .. }
             | ListBogs
             | ListWorkspaces
             | ListTemplates
-            | GetCurrentContext
             | ListTokens { .. } => (None, false),
             CreateDefinedBog { .. }
             | CreateBog { .. }
             | IssueToken { .. }
             | PrepareAppAccess { .. }
-            | RevokeToken { .. } => (None, true),
+            | RevokeToken { .. }
+            | PreviewCleanup { .. }
+            | ExecuteCleanup { .. }
+            | ProvisionBog { .. } => (None, true),
             DescribeDefinition { bog_id }
             | ListResources { bog_id }
+            | ListRoutes { bog_id }
             | QueryResource { bog_id, .. }
             | SearchResource { bog_id, .. }
             | DefinitionUpdateStatus { bog_id, .. }
@@ -347,11 +520,30 @@ impl CloudService {
             }
         }
         let result = match operation {
+            ProvisionBog { .. } => unreachable!(),
+            PreviewCleanup { prefix } => {
+                serde_json::to_value(self.auth.preview_cleanup(principal, &prefix)?)
+                    .map_err(crate::definitions::invalid)?
+            }
+            ExecuteCleanup { preview_id } => {
+                let results = self.auth.execute_cleanup(principal, &preview_id)?;
+                for row in &results {
+                    let supervisor = self.supervisor.clone();
+                    let id = row.bog_id;
+                    tokio::spawn(async move {
+                        let _ = supervisor.cleanup_deleted(id).await;
+                    });
+                }
+                serde_json::json!({"results":results})
+            }
+
             ListComponents => {
                 let mut v = bog_definition::component_catalog_with_limits(
                     &self.supervisor.config.composable_limits,
                 );
                 v["enabled"] = serde_json::json!(self.supervisor.config.composable_enabled);
+                v["sandboxes_enabled"] =
+                    serde_json::json!(self.supervisor.config.sandboxes_enabled);
                 v
             }
             ValidateDefinition { definition } => {
@@ -367,6 +559,17 @@ impl CloudService {
                 self.auth.authorize(principal, None, false)?;
                 serde_json::to_value(self.registry.definition(bog_id)?)
                     .map_err(crate::definitions::invalid)?
+            }
+            ListRoutes { bog_id } => {
+                serde_json::json!({"routes":crate::definitions::compact_routes(&self.registry.definition(bog_id)?, &bog_id.to_string())})
+            }
+            RequestInfo { request_id } => {
+                let id = self.observability.request_target(&request_id)?;
+                self.auth
+                    .authorize(principal, Some(id), false)
+                    .map_err(|_| CloudError::new("not_found", "request observation not found"))?;
+                self.registry.get(id)?;
+                self.observability.request(id, principal, &request_id)?
             }
             ListResources { bog_id } => crate::definitions::resources_with_limits(
                 &self.registry.definition(bog_id)?,
@@ -433,9 +636,7 @@ impl CloudService {
                 tokio::spawn(async move {
                     let _ = supervisor.ensure_running(id).await;
                 });
-                let mut body = self.describe_bog_value(bog.id)?;
-                body["definition"] = serde_json::to_value(self.registry.definition(id)?)
-                    .map_err(crate::definitions::invalid)?;
+                let mut body = self.creation_value(bog.id)?;
                 body["api_url"] = serde_json::json!(format!("/v1/bogs/{id}"));
                 return Ok(OperationResult { status: 202, body });
             }
@@ -512,7 +713,7 @@ impl CloudService {
                             registry.set_status(id, crate::ObservedState::Failed, Some(&e.code));
                     }
                 });
-                let mut value = self.describe_bog_value(bog.id)?;
+                let mut value = self.creation_value(bog.id)?;
                 value["api_url"] = Value::String(format!("/v1/bogs/{}", bog.id));
                 return Ok(OperationResult {
                     status: 202,
@@ -526,13 +727,30 @@ impl CloudService {
                 };
                 let descriptions = bogs
                     .iter()
-                    .map(|bog| self.describe_bog_value(bog.id))
+                    .filter_map(|bog| match self.summarize_bog_value(bog.id) {
+                        Err(e) if e.code == "not_found" => None,
+                        other => Some(other),
+                    })
                     .collect::<Result<Vec<_>, _>>()?;
                 serde_json::json!({"bogs":descriptions})
             }
             ListTemplates => crate::contract::templates(),
             GetCurrentContext => {
-                serde_json::json!({"kind":principal.kind(),"account":principal.account_id().map(|id|serde_json::json!({"id":id})),"workspace_id":principal.workspace_id(),"platform_operator":self.auth.is_platform_operator(principal)?,"workspaces":self.auth.workspaces_for_principal(principal)?})
+                let workspaces = if principal.kind() == crate::PrincipalKind::App {
+                    Vec::new()
+                } else {
+                    self.auth.workspaces_for_principal(principal)?
+                };
+                let allowance = if let Some(w) = workspaces
+                    .iter()
+                    .find(|w| Some(w.id) == principal.workspace_id())
+                {
+                    let (used,sandboxes):(i64,i64)=self.registry.connection()?.query_row("SELECT COALESCE(SUM(CASE WHEN s.bog_id IS NULL THEN 1 ELSE 0 END),0),COALESCE(SUM(CASE WHEN s.bog_id IS NOT NULL THEN 1 ELSE 0 END),0) FROM bogs b LEFT JOIN sandboxes s ON b.id=s.bog_id WHERE b.workspace_id=?1 AND (b.deleted_at IS NULL OR b.cleanup_completed_at IS NULL)",[w.id.to_string()],|r|Ok((r.get(0)?,r.get(1)?))).map_err(crate::registry::db_error)?;
+                    serde_json::json!({"bogs_used":used,"bogs_allowed":w.bog_limit,"source":w.bog_limit_source,"sandboxes_used":sandboxes,"sandboxes_allowed":if self.supervisor.config.sandboxes_enabled {1} else {0},"host_capacity_guaranteed":false})
+                } else {
+                    Value::Null
+                };
+                serde_json::json!({"kind":principal.kind(),"account":principal.account_id().map(|id|serde_json::json!({"id":id})),"workspace_id":principal.workspace_id(),"credential":{"scope":if principal.read_only {"read"} else {"write"},"expires_at":principal.expires_at,"bog_id":principal.bog_id},"allowance":allowance,"capacity_note":"Workspace allowance does not guarantee host capacity", "platform_operator":self.auth.is_platform_operator(principal)?,"workspaces":workspaces})
             }
             PrepareAppAccess {
                 bog_id,
@@ -675,10 +893,51 @@ impl CloudService {
             body: result,
         })
     }
+    fn summarize_bog_value(&self, id: BogId) -> Result<Value, CloudError> {
+        let mut value =
+            serde_json::to_value(self.registry.get(id)?).map_err(crate::definitions::invalid)?;
+        let active = self.registry.definition(id)?;
+        value["sandbox"] = self.registry.sandbox_metadata(id)?.unwrap_or(Value::Null);
+        value["kind"] = serde_json::json!(if active.configured {
+            "defined"
+        } else {
+            "template"
+        });
+        if active.configured {
+            value["template"] = Value::Null;
+            value["template_version"] = Value::Null;
+        }
+        value["definition"] = serde_json::json!({"revision":active.revision,"digest":active.digest,"configured":active.configured});
+        let resources: Vec<_> = active
+            .definition
+            .resources
+            .iter()
+            .filter_map(|(name, resource)| {
+                let actions: Vec<_> = active
+                    .definition
+                    .expose
+                    .values()
+                    .filter(|op| op.target == *name)
+                    .map(|op| op.action)
+                    .collect();
+                if actions.is_empty() {
+                    return None;
+                }
+                let terminal = serde_json::to_value(&resource.terminal).ok()?;
+                Some(serde_json::json!({"name":name,"kind":terminal["kind"],"actions":actions}))
+            })
+            .collect();
+        value["capability_summary"] = serde_json::json!(resources);
+        value["resources_url"] = serde_json::json!(format!("/v1/bogs/{id}/resources"));
+        value["writes_paused"] =
+            serde_json::json!(self.registry.active_definition_job(id)?.is_some());
+        Ok(value)
+    }
     fn describe_bog_value(&self, id: BogId) -> Result<Value, CloudError> {
         let mut value =
             serde_json::to_value(self.registry.get(id)?).map_err(crate::definitions::invalid)?;
         let active = self.registry.definition(id)?;
+        value["sandbox"] = self.registry.sandbox_metadata(id)?.unwrap_or(Value::Null);
         value["kind"] = serde_json::json!(if active.configured {
             "defined"
         } else {
@@ -696,6 +955,16 @@ impl CloudService {
         let job = self.registry.active_definition_job(id)?;
         value["writes_paused"] = serde_json::json!(job.is_some());
         value["active_definition_job"] = job.unwrap_or(Value::Null);
+        Ok(value)
+    }
+    pub(crate) fn creation_value(&self, id: BogId) -> Result<Value, CloudError> {
+        let mut value = self.summarize_bog_value(id)?;
+        value["routes"] =
+            crate::definitions::compact_routes(&self.registry.definition(id)?, &id.to_string());
+        value["api_url"] = serde_json::json!(format!("/v1/bogs/{id}"));
+        value["status_url"] = serde_json::json!(format!("/v1/bogs/{id}"));
+        value["schema_url"] = serde_json::json!(format!("/v1/bogs/{id}/resources"));
+        value["next"] = serde_json::json!([{ "op":"describe_bog", "method":"GET", "path":format!("/v1/bogs/{id}") }]);
         Ok(value)
     }
     /// Snapshot the existing bucket without authenticating or charging a request.
@@ -825,6 +1094,7 @@ impl Operation {
         match self {
             DescribeDefinition { bog_id }
             | ListResources { bog_id }
+            | ListRoutes { bog_id }
             | QueryResource { bog_id, .. }
             | SearchResource { bog_id, .. }
             | PlanDefinitionUpdate { bog_id, .. }
@@ -851,11 +1121,16 @@ impl Operation {
     fn observation_name(&self) -> &'static str {
         use Operation::*;
         match self {
+            ProvisionBog { .. } => "provision_bog",
+            PreviewCleanup { .. } => "preview_cleanup",
+            ExecuteCleanup { .. } => "execute_cleanup",
             ListComponents => "list_components",
             ValidateDefinition { .. } => "validate_definition",
             CreateDefinedBog { .. } => "create_defined_bog",
             DescribeDefinition { .. } => "describe_definition",
             ListResources { .. } => "list_resources",
+            ListRoutes { .. } => "list_routes",
+            RequestInfo { .. } => "request_info",
             QueryResource { .. } => "query_resource",
             SearchResource { .. } => "search_resource",
             PlanDefinitionUpdate { .. } => "plan_definition_update",
@@ -977,5 +1252,39 @@ mod transport_normalization_tests {
         ] {
             assert!(normalize_wait(input).is_err());
         }
+    }
+    #[tokio::test]
+    async fn provisioning_is_bounded_before_any_creation_side_effect() {
+        let root = tempfile::tempdir().unwrap();
+        let service = CloudService::open(
+            Config::new(root.path().into(), root.path().join("unused-worker")),
+            "test-owner-secret-at-least-thirty-two-bytes",
+        )
+        .unwrap();
+        let principal = service
+            .auth
+            .authenticate("test-owner-secret-at-least-thirty-two-bytes")
+            .unwrap();
+        let permits = service.provisioning.acquire_many(16).await.unwrap();
+        let error = service
+            .execute(
+                &principal,
+                Operation::ProvisionBog {
+                    name: "bounded".into(),
+                    template: None,
+                    definition: None,
+                    idempotency_key: "bounded".into(),
+                    wait: true,
+                    sandbox: false,
+                    app_access: None,
+                },
+            )
+            .await
+            .err()
+            .unwrap();
+        assert_eq!(error.code, "capacity");
+        assert!(service.registry.list().unwrap().is_empty());
+        drop(permits);
+        assert_eq!(service.provisioning.available_permits(), 16);
     }
 }

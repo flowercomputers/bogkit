@@ -17,9 +17,21 @@ fn denied() -> CloudError {
     CloudError::new("unauthorized", "sign in required")
 }
 pub async fn endpoint(State(service): State<Arc<CloudService>>, request: Request) -> Response {
-    let mut r = inner(&service, request)
-        .await
-        .unwrap_or_else(|e| crate::http::error_response(e, &uuid::Uuid::new_v4().to_string()));
+    let device_token = request.uri().path() == "/auth/device/token";
+    let mut r = inner(&service, request).await.unwrap_or_else(|e| {
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let oauth_error = json!({
+            "error": e.code,
+            "error_description": e.message,
+            "error_detail": {"code": e.code, "message": e.message, "next_action": e.next_action()},
+            "request_id": request_id
+        });
+        let mut response = crate::http::error_response(e, &request_id);
+        if device_token {
+            *response.body_mut() = axum::body::Body::from(oauth_error.to_string());
+        }
+        response
+    });
     r.headers_mut().insert(
         header::CACHE_CONTROL,
         header::HeaderValue::from_static("no-store"),
@@ -191,6 +203,12 @@ pub async fn browser_inner(
 }
 pub const AUTH_MARKDOWN: &str = r#"# auth.md — Bog Cloud authentication
 
+## Connect and continue
+
+Show the public approval link and code, then keep the connection operation running. Do not ask for an approval acknowledgment in chat. Continue only when the server confirms authorization; stop on denial, expiration, or cancellation. Respect polling intervals and backoff. If your host cannot keep waiting, explain that limitation instead of promising automatic continuation.
+
+Terminal-capable agents can download /bog-app-access.py and run `python3 bog-app-access.py --connect --auth-file /private/path/bog-auth.json`. This waits for approval, stores the credential privately, and verifies authenticated access before reporting Connected. Await its completion, then resume the original task. Reuse that explicitly selected file with the app installer; never print it. Keep it outside application public directories.
+
 This is a prototype. During this preview, the existing chat owner credential may remain enabled for the legacy workspace only; it cannot access new personal workspaces or manage memberships.
 
 GitHub sign-in at /auth/login proves identity. Bog owns sessions, memberships and credentials. No repository scopes are requested. Your personal workspace is created once. Logout ends only the local Bog session.
@@ -272,7 +290,7 @@ pub fn discovery(service: &CloudService, path: &str) -> Option<Response> {
             .into_response(),
         "/v1" => {
             let mut v = crate::contract::overview();
-            v["pricing"] = json!({"plan":"free prototype","price":0,"currency":"USD","payment_card_required":false,"self_serve_signup":"/auth/login","self_serve_credentials":"/console","sandbox":"Use a disposable Bog in your workspace; no separate sandbox"});
+            v["pricing"] = json!({"plan":"free prototype","price":0,"currency":"USD","payment_card_required":false,"self_serve_signup":"/auth/login","self_serve_credentials":"/console","sandbox":{"enabled":service.supervisor.config.sandboxes_enabled,"per_workspace":1,"lifetime_seconds":3600,"storage_bytes":16777216}});
             v["interfaces"] = json!({"http":"/v1","mcp":"/mcp","graphql":false});
             v["authentication_configured"] = json!(service.authentication_configured());
             v["authentication_mode"] = json!("github_native");

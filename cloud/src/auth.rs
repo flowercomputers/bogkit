@@ -108,20 +108,25 @@ impl Auth {
         if !bool::from(digest.ct_eq(&stored)) {
             return Err(denied());
         }
-        let (account_id, workspace, expires): (Option<String>, Option<String>, Option<i64>) = db
+        let (account_id, workspace, expires, scope): (
+            Option<String>,
+            Option<String>,
+            Option<i64>,
+            String,
+        ) = db
             .query_row(
-                "SELECT account_id,workspace_id,expires_at FROM tokens WHERE id=?1",
+                "SELECT account_id,workspace_id,expires_at,scope FROM tokens WHERE id=?1",
                 [&token_id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
             )
             .map_err(db_error)?;
         if expires.is_some_and(|v| v <= now()) {
             return Err(denied());
         }
         let principal = Principal {
-            read_only: false,
+            read_only: scope == "read",
             kind: PrincipalKind::App,
-            expires_at: None,
+            expires_at: expires.and_then(|v| u64::try_from(v).ok()),
             account_id,
             workspace_id: workspace
                 .and_then(|v| Uuid::parse_str(&v).ok())

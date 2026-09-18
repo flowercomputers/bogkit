@@ -422,6 +422,18 @@ mod tests {
         let metadata: Value =
             serde_json::from_slice(&to_bytes(response.into_body(), 65536).await.unwrap()).unwrap();
         assert!(metadata.get("token").is_none());
+        let contract = crate::contract::openapi();
+        let schema = &contract["paths"]["/v1/bogs/{bog_id}/app-access"]["post"]["responses"]["200"]
+            ["content"]["application/json"]["schema"];
+        assert!(schema["properties"].get("revoked").is_none());
+        for key in schema["required"].as_array().unwrap() {
+            assert!(
+                metadata.get(key.as_str().unwrap()).is_some(),
+                "missing {key}"
+            );
+        }
+        assert!(schema["properties"].get("handoff_id").is_some());
+
         assert_eq!(metadata["origin"], "http://127.0.0.1:8080");
         assert!(
             metadata["installation"]

@@ -118,3 +118,37 @@ async fn invalid_documents_and_batches_are_rejected_before_starting_worker() {
     }
     assert_eq!(svc.registry.get(id).unwrap().generation, 0);
 }
+
+#[tokio::test]
+async fn inventory_is_compact_and_detail_remains_available() {
+    let tmp = tempfile::tempdir().unwrap();
+    let svc = CloudService::open(
+        Config::new(tmp.path().join("root"), std::env::current_exe().unwrap()),
+        OWNER,
+    )
+    .unwrap();
+    let owner = svc.auth.authenticate(OWNER).unwrap();
+    for i in 0..3 {
+        svc.registry
+            .create(&format!("bog-{i}"), "records-v1", &format!("key-{i}"))
+            .unwrap();
+    }
+    let inventory = svc.execute(&owner, Operation::ListBogs).await.unwrap().body;
+    assert!(inventory.to_string().len() < 6000);
+    for bog in inventory["bogs"].as_array().unwrap() {
+        assert!(bog.get("capabilities").is_none());
+        assert!(bog["capability_summary"].as_array().unwrap().len() >= 2);
+        assert!(!bog.to_string().contains("request_schema"));
+    }
+    let id = svc.registry.list().unwrap()[0].id;
+    let detail = svc
+        .execute(&owner, Operation::DescribeBog { bog_id: id })
+        .await
+        .unwrap()
+        .body;
+    assert!(
+        detail["capabilities"]
+            .to_string()
+            .contains("request_schema")
+    );
+}

@@ -104,7 +104,7 @@ fn operations_have_unique_ids_typed_results_and_real_error_envelopes() {
     let doc = bog_cloud::contract::openapi();
     refs(&doc, &doc);
     let mut ids = std::collections::HashSet::new();
-    for methods in doc["paths"].as_object().unwrap().values() {
+    for (path, methods) in doc["paths"].as_object().unwrap() {
         for op in methods.as_object().unwrap().values() {
             assert!(ids.insert(op["operationId"].as_str().unwrap()));
             assert!(!op["description"].as_str().unwrap().is_empty());
@@ -122,7 +122,11 @@ fn operations_have_unique_ids_typed_results_and_real_error_envelopes() {
                     validate(
                         &doc,
                         &result["content"]["application/json"]["schema"],
-                        &json!({"error":{"code":"invalid_request","message":"Explain the correction"},"request_id":"test"}),
+                        &if path == "/auth/device/token" {
+                            json!({"error":"invalid_request","error_description":"Explain the correction","error_detail":{"code":"invalid_request","message":"Explain the correction"},"request_id":"test"})
+                        } else {
+                            json!({"error":{"code":"invalid_request","message":"Explain the correction"},"request_id":"test"})
+                        },
                     );
                 }
             }

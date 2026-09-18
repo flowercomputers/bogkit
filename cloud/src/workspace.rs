@@ -73,7 +73,10 @@ impl Auth {
         self.check_member(a, w, owner)?;
         Ok((w, a))
     }
-    fn human_owner<'a>(&self, p: &'a Principal) -> Result<(WorkspaceId, &'a str), CloudError> {
+    pub(crate) fn human_owner<'a>(
+        &self,
+        p: &'a Principal,
+    ) -> Result<(WorkspaceId, &'a str), CloudError> {
         if p.kind != PrincipalKind::Human {
             return Err(forbidden());
         }
@@ -1234,6 +1237,9 @@ mod tests {
 
 impl Auth {
     pub fn authorize_delete_bog(&self, p: &Principal, bog: BogId) -> Result<(), CloudError> {
+        if p.kind() == PrincipalKind::Agent {
+            return self.sandbox_agent_delete(p, bog);
+        }
         let workspace = if p.legacy_public_operator() {
             self.authorize(p, None, true)?;
             WorkspaceId::legacy()
@@ -1268,7 +1274,9 @@ impl Auth {
                 "database confirmation does not match",
             ));
         }
-        let (w, a) = if p.legacy_public_operator() {
+        let (w, a) = if p.kind() == PrincipalKind::Agent {
+            (p.workspace_id().ok_or_else(forbidden)?, p.account_id())
+        } else if p.legacy_public_operator() {
             (WorkspaceId::legacy(), None)
         } else {
             let (w, a) = self.human_owner(p)?;
@@ -1279,7 +1287,11 @@ impl Auth {
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(db_error)?;
         if let Some(a) = a {
-            member(&tx, a, w, true)?;
+            member(&tx, a, w, p.kind() != PrincipalKind::Agent)?;
+            crate::sandboxes::check_live_principal(&tx, p, now())?;
+            if p.kind() == PrincipalKind::Agent {
+                crate::sandboxes::sandbox_creator(&tx, p, bog)?;
+            }
         }
         let building:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM definition_jobs WHERE bog_id=?1 AND status IN ('building','activating','recovery_required'))",[bog.to_string()],|r|r.get(0)).map_err(db_error)?;
         if building {

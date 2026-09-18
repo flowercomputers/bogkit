@@ -2,6 +2,30 @@
 use serde_json::{Value, json};
 pub const OPERATIONS: &[(&str, &str, &str, &str)] = &[
     (
+        "list_routes",
+        "GET",
+        "/v1/bogs/{bog_id}/routes",
+        "Compact executable examples for exposed operations.",
+    ),
+    (
+        "request_info",
+        "GET",
+        "/v1/requests/{request_id}",
+        "Retained redacted request observation; missing or expired is not proof of success. App credentials see only their activity.",
+    ),
+    (
+        "preview_cleanup",
+        "POST",
+        "/v1/bogs/cleanup/preview",
+        "Owner-only preview freezes matching Bog IDs; no deletion.",
+    ),
+    (
+        "execute_cleanup",
+        "POST",
+        "/v1/bogs/cleanup/execute",
+        "Owner-only execution of frozen preview; rechecks permissions per item.",
+    ),
+    (
         "list_components",
         "GET",
         "/v1/components",
@@ -250,7 +274,7 @@ pub fn batch_request_schema() -> Value {
     json!({"description":"Canonical body is {ops:[...]}. A bare array and {operations:[...]} remain compatibility aliases.","oneOf":[canonical,operations,{"type":"object","required":["operations"],"properties":{"operations":operations},"additionalProperties":false}]})
 }
 pub fn overview() -> Value {
-    json!({"api":"Bog Cloud","components":"/v1/components","definition_validation":"/v1/definitions/validate","definition_examples":"Authenticated /v1/components examples: todo, todo_search, todo_semantic","composition":"Check authenticated components.enabled; disabled by default. Trusted JSON definitions only.","authentication":"/auth.md","openapi":"/openapi.json","mcp":"https://mcp.bog.new/mcp","templates":[{"id":"records-v1","default":true,"description":"JSON object records keyed by string; docs and total views."}],"workspace_selection":"workspace_id query parameter (REST) or tool argument (MCP), defaults to personal workspace","create_example":{"method":"POST","path":"/v1/bogs","headers":{"Content-Type":"application/json","Idempotency-Key":"your-stable-request-id"},"body":{"name":"my-records"}},"limits":{"bogs_per_workspace":3,"logical_bytes_per_bog":16777216}})
+    json!({"api":"Bog Cloud","agent_guide":"/agent.md","documentation":"/docs.md","llms":"/llms.txt","workspaces":"/v1/workspaces","private_helper":"/bog-app-access.py","app_access":{"method":"POST","path":"/v1/bogs/{bog_id}/app-access","body":{"scope":"write","label":"Application"}},"components":"/v1/components","definition_validation":"/v1/definitions/validate","definition_examples":"Authenticated /v1/components examples: todo, todo_search, todo_semantic","composition":"Check authenticated components.enabled; disabled by default. Trusted JSON definitions only.","authentication":"/auth.md","openapi":"/openapi.json","mcp":"https://mcp.bog.new/mcp","templates":[{"id":"records-v1","default":true,"description":"JSON object records keyed by string; docs and total views."}],"workspace_selection":"workspace_id query parameter (REST) or tool argument (MCP), defaults to personal workspace","create_example":{"method":"POST","path":"/v1/bogs","headers":{"Content-Type":"application/json","Idempotency-Key":"your-stable-request-id"},"body":{"name":"my-records"}},"limits":{"bogs_per_workspace":3,"logical_bytes_per_bog":16777216}})
 }
 pub fn openapi() -> Value {
     let mut paths = serde_json::Map::new();
@@ -272,7 +296,7 @@ pub fn openapi() -> Value {
             ),
             "search_resource" => Some(search_request_schema()),
             "query_resource" => Some(
-                json!({"type":"object","properties":{"action":{"enum":["get","list","read","top","wait"]},"cursor":{"type":"string"},"timeout":{"type":"integer","minimum":0,"maximum":25},"key":{"type":"string"},"limit":{"type":"integer","minimum":0,"maximum":1000},"offset":{"type":"integer","minimum":0,"maximum":10000}},"additionalProperties":false}),
+                json!({"type":"object","properties":{"action":{"enum":["get","batch_get","list","read","top","wait"]},"cursor":{"type":"string"},"timeout":{"type":"integer","minimum":0,"maximum":25},"key":{"type":"string"},"keys":{"type":"array","maxItems":100,"items":{"type":"string"}},"after":{"type":"string"},"before":{"type":"string"},"include_fields":bog_definition::request_schema(bog_definition::Action::Search)["properties"]["include_fields"],"limit":{"type":"integer","minimum":0,"maximum":1000},"offset":{"type":"integer","minimum":0,"maximum":10000}},"additionalProperties":false}),
             ),
             "bog_metrics" => {
                 parameters.push(json!({"name":"window","in":"query","schema":{"type":"string","enum":["5m","1h"],"default":"1h"}}));
@@ -285,7 +309,7 @@ pub fn openapi() -> Value {
             "create_bog" => {
                 parameters.push(json!({"name":"Idempotency-Key","in":"header","required":true,"schema":{"type":"string","minLength":1}}));
                 Some(
-                    json!({"type":"object","required":["name"],"additionalProperties":false,"properties":{"name":{"type":"string","minLength":1},"template":{"type":"string","enum":["records-v1"],"default":"records-v1"},"definition":bog_definition::schema()},"not":{"required":["template","definition"]},"example":{"name":"my-records"}}),
+                    json!({"type":"object","required":["name"],"additionalProperties":false,"properties":{"name":{"type":"string","minLength":1},"template":{"type":"string","enum":["records-v1"],"default":"records-v1"},"definition":bog_definition::schema(),"wait":{"type":"boolean","default":false},"sandbox":{"type":"boolean","default":false},"app_access":{"type":"object","additionalProperties":false,"properties":{"scope":{"enum":["read","write"]},"label":{"type":"string","minLength":1,"maxLength":80}}}},"not":{"required":["template","definition"]},"example":{"name":"my-records"}}),
                 )
             }
             "upsert_record" => Some(
@@ -296,6 +320,12 @@ pub fn openapi() -> Value {
             ),
             "issue_token" => Some(
                 json!({"type":"object","required":["scope"],"additionalProperties":false,"properties":{"scope":{"type":"string","enum":["read","write"]}}}),
+            ),
+            "preview_cleanup" => Some(
+                json!({"type":"object","required":["name_prefix"],"properties":{"name_prefix":{"type":"string"}},"additionalProperties":false}),
+            ),
+            "execute_cleanup" => Some(
+                json!({"type":"object","required":["preview_id"],"properties":{"preview_id":{"type":"string","format":"uuid"}},"additionalProperties":false}),
             ),
             "batch" => Some(batch_request_schema()),
             "wait_for_change" => {
@@ -457,6 +487,18 @@ fn finish_contract(mut paths: serde_json::Map<String, Value>) -> Value {
             "created_at",
         ],
     );
+    let mut bog_summary = bog.clone();
+    bog_summary["properties"]["capability_summary"] = array(object(
+        json!({"name":string,"kind":string,"actions":array(string.clone())}),
+        &["name", "kind", "actions"],
+    ));
+    bog_summary["properties"]["resources_url"] = string.clone();
+    bog_summary["properties"]["writes_paused"] = boolean.clone();
+    bog_summary["required"].as_array_mut().unwrap().extend([
+        json!("capability_summary"),
+        json!("resources_url"),
+        json!("writes_paused"),
+    ]);
     let error = object(
         json!({"error":object(json!({"code":string,"message":string}), &["code","message"]),"request_id":string}),
         &["error", "request_id"],
@@ -477,7 +519,18 @@ fn finish_contract(mut paths: serde_json::Map<String, Value>) -> Value {
         json!({"fingerprint":string,"input":record,"views":array(object(json!({"name":string,"kind":string,"keyed":boolean,"search":{"type":["string","null"]},"item":record}), &["name","kind","keyed","search","item"])),"write":object(json!({"keyed":record}), &["keyed"]),"template_version":{"const":"records-v1"}}),
         &["fingerprint", "input", "views", "write", "template_version"],
     );
-    let mut schemas = json!({"Bog":bog,"Error":error,"Workspace":workspace,"Invitation":invitation,"Token":token,"RecordSchema":schema});
+    let mut schemas = json!({"Bog":bog,"BogSummary":bog_summary,"Error":error,"Workspace":workspace,"Invitation":invitation,"Token":token,"RecordSchema":schema});
+    schemas["CompactRoute"] = object(
+        json!({"op":string,"method":string,"path":string,"body_example":{}}),
+        &["op", "method", "path", "body_example"],
+    );
+    let mut creation = schemas["BogSummary"].clone();
+    creation["properties"]["routes"] = array(reference("CompactRoute"));
+    creation["properties"]["status_url"] = string.clone();
+    creation["properties"]["schema_url"] = string.clone();
+    creation["properties"]["next"] = array(record.clone());
+    creation["properties"]["app_access"] = record.clone();
+    schemas["BogCreation"] = creation;
     schemas["ConfiguredSchema"] = object(
         json!({"definition_version":integer,"revision":integer,"digest":string,"operations":array(operation_metadata_schema()),"limits":record}),
         &["definition_version", "revision", "digest", "operations"],
@@ -555,8 +608,22 @@ fn finish_contract(mut paths: serde_json::Map<String, Value>) -> Value {
                 "apply_definition_update" | "definition_update_status" => definition_job_schema(),
                 "bog_metrics" => metrics_schema(),
                 "bog_events" => events_schema(),
-                "create_bog" | "describe_bog" => reference("Bog"),
-                "list_bogs" => object(json!({"bogs":array(reference("Bog"))}), &["bogs"]),
+                "create_bog" => reference("BogCreation"),
+                "describe_bog" => reference("Bog"),
+                "list_routes" => object(
+                    json!({"routes":array(reference("CompactRoute"))}),
+                    &["routes"],
+                ),
+                "request_info" => object(
+                    json!({"bog_id":string,"request_id":string,"operation":string,"status":integer,"code":{"type":["string","null"]},"elapsed_ms":{"type":"number"},"at":integer}),
+                    &["bog_id", "request_id", "operation", "status"],
+                ),
+                "preview_cleanup" => object(
+                    json!({"id":string,"bog_ids":array(string.clone())}),
+                    &["id", "bog_ids"],
+                ),
+                "execute_cleanup" => object(json!({"results":array(record.clone())}), &["results"]),
+                "list_bogs" => object(json!({"bogs":array(reference("BogSummary"))}), &["bogs"]),
                 "list_workspaces" => object(
                     json!({"workspaces":array(reference("Workspace"))}),
                     &["workspaces"],
@@ -579,16 +646,31 @@ fn finish_contract(mut paths: serde_json::Map<String, Value>) -> Value {
                     json!({"oneOf":[array(object(json!({"key":string,"value":record}), &["key","value"])),object(json!({"value":integer}), &["value"])]}),
                 ),
                 "usage" => envelope(object(
-                    json!({"logical_bytes":integer,"limit_bytes":integer,"over_limit":boolean}),
+                    json!({"logical_bytes":integer,"limit_bytes":integer,"over_limit":boolean,"definition_revision":integer,"boot_id":string,"sequence_scope":string,"search_resources":array(object(json!({"name":string,"kind":{"enum":["semantic","bm25"]},"fields":array(string.clone()),"searchable_records":integer,"maintenance":string}), &["name","kind","fields","searchable_records","maintenance"]))}),
                     &["logical_bytes", "limit_bytes", "over_limit"],
                 )),
                 "issue_token" => object(
                     json!({"id":string,"token":string,"scope":{"enum":["read","write"]}}),
                     &["id", "token", "scope"],
                 ),
+                "prepare_app_access" => object(
+                    json!({"origin":string,"handoff_id":string,"expires_at":integer,"bog_id":string,"workspace_id":string,"scope":{"enum":["read","write"]},"label":string,"redeem_path":string,"console_path":string,"installation":string}),
+                    &[
+                        "origin",
+                        "handoff_id",
+                        "expires_at",
+                        "bog_id",
+                        "workspace_id",
+                        "scope",
+                        "label",
+                        "redeem_path",
+                        "console_path",
+                        "installation",
+                    ],
+                ),
                 "list_tokens" => object(json!({"tokens":array(reference("Token"))}), &["tokens"]),
                 "current_account" => object(
-                    json!({"kind":{"enum":["operator","human","agent","app"]},"account":{"oneOf":[{"type":"null"},object(json!({"id":string}), &["id"])]},"workspace_id":{"type":["string","null"]}}),
+                    json!({"kind":{"enum":["operator","human","agent","app"]},"account":{"oneOf":[{"type":"null"},object(json!({"id":string}), &["id"])]},"workspace_id":{"type":["string","null"]},"credential":record,"allowance":{"type":["object","null"]},"workspaces":array(reference("Workspace")),"capacity_note":string}),
                     &["kind", "account", "workspace_id"],
                 ),
                 "delete_bog" => object(json!({"deleted":{"const":true}}), &["deleted"]),
@@ -841,6 +923,16 @@ fn finish_contract(mut paths: serde_json::Map<String, Value>) -> Value {
         }
         paths.entry(path).or_insert_with(|| json!({}))[method] = op;
     }
+    let device_error = object(
+        json!({"error":string,"error_description":string,"error_detail":record,"request_id":string}),
+        &["error", "error_description", "error_detail", "request_id"],
+    );
+    for status in ["400", "401", "403", "404", "429", "503"] {
+        paths.get_mut("/auth/device/token").unwrap()["post"]["responses"][status] =
+            response(device_error.clone());
+    }
+    let ready = paths["/v1/bogs"]["post"]["responses"]["202"].clone();
+    paths.get_mut("/v1/bogs").unwrap()["post"]["responses"]["201"] = ready;
     // Dispatch attaches these only after authentication and once a bucket exists.
     // Public discovery and native device endpoints use different request paths.
     for (path, methods) in &mut paths {
@@ -877,7 +969,7 @@ fn finish_contract(mut paths: serde_json::Map<String, Value>) -> Value {
         "RateLimit-Reset":{"description":"Optional. Seconds until the authenticated principal's current rate bucket resets. Absent when no bucket exists.","schema":{"type":"integer","minimum":0}},
         "RateLimitRetryAfter":{"description":"Optional on 429: seconds until the request-rate bucket resets, supplied only when that bucket is exhausted. Other capacity limits do not guarantee this header.","schema":{"type":"integer","minimum":0}}
     });
-    json!({"openapi":"3.1.0","info":{"title":"Bog Cloud","version":"1","description":"Working prototype. Cookie-authenticated mutations require exact Origin and x-csrf-token from /console-session. View ordering is implementation-defined; no insertion-order or replay guarantee. No guaranteed deprecation notice period. Stable incompatible data API changes use a new major URL version; planned retirement uses Deprecation, Sunset and migration Link headers. See /docs."},"externalDocs":{"url":"https://flower-bog-cloud.fly.dev/docs","description":"Bog Cloud usage and versioning policy"},"x-bog-credentials":{"application":{"scopes":["read","write"],"resource":"one Bog","write_includes_read":true,"can_provision":false,"can_issue_credentials":false},"delegated_agent":{"can_create_bogs":true,"can_issue_app_credentials":true,"can_delete_bogs":false,"can_manage_members":false,"can_issue_account_credentials":false,"lifetime_seconds":2592000},"human":{"permissions":"current workspace membership and role; owner required for destructive workspace administration"}},"paths":paths,"components":{"headers":headers,"schemas":schemas,"securitySchemes":{"bearer":{"type":"http","scheme":"bearer","description":"Bog bearer credential. Application scopes read/write are internal permissions, not OAuth scopes."},"browserSession":{"type":"apiKey","in":"cookie","name":"__Host-bog_session"}}}})
+    json!({"openapi":"3.1.0","info":{"title":"Bog Cloud","version":"1","description":"Working prototype. Cookie-authenticated mutations require exact Origin and x-csrf-token from /console-session. View ordering is implementation-defined; no insertion-order or replay guarantee. No guaranteed deprecation notice period. Stable incompatible data API changes use a new major URL version; planned retirement uses Deprecation, Sunset and migration Link headers. See /docs."},"externalDocs":{"url":"https://flower-bog-cloud.fly.dev/docs","description":"Bog Cloud usage and versioning policy"},"x-bog-credentials":{"application":{"scopes":["read","write"],"resource":"one Bog","write_includes_read":true,"can_provision":false,"can_issue_credentials":false},"delegated_agent":{"can_create_bogs":true,"can_issue_app_credentials":true,"can_delete_bogs":false,"can_delete_own_sandboxes":true,"can_manage_members":false,"can_issue_account_credentials":false,"lifetime_seconds":2592000},"human":{"permissions":"current workspace membership and role; owner required for destructive workspace administration"}},"paths":paths,"components":{"headers":headers,"schemas":schemas,"securitySchemes":{"bearer":{"type":"http","scheme":"bearer","description":"Bog bearer credential. Application scopes read/write are internal permissions, not OAuth scopes."},"browserSession":{"type":"apiKey","in":"cookie","name":"__Host-bog_session"}}}})
 }
 pub fn llms() -> String {
     format!(
@@ -986,7 +1078,7 @@ pub fn guide(configured: bool, legacy_limit: usize) -> String {
 }
 
 /// Common guidance for remote tools, resources, and human connection docs.
-pub const AGENT_INSTRUCTIONS: &str = "Start with get_current_context, list_templates and discover_capabilities (HTTP GET /v1/components; MCP resource bog://guide/components). Check enabled before configurable creation or definition updates; disabling composition does not remove existing Bogs. The component catalog provides the complete definition_schema, examples and effective limits. Use validate_definition, then create_bog_from_definition with a stable idempotency_key (HTTP POST /v1/bogs with name and definition, omitting template). Use list_resources to discover exposed operations; hosted.request_schema and hosted.response_schema describe HTTP/MCP operation bodies, while top-level response_schema describes internal runtime data; query_resource accepts the selected action; omitted action intentionally defaults to list for tables, top for ranked resources, and read otherwise, even if another action is exposed. search_resource accepts query, limit, offset, include_fields and semantic-only max_distance (0 to 2). include_fields uses JSON Pointers; hit.value is keyed by those pointers, with missing fields omitted. Semantic score = 1 - distance; lower distance is closer, without a universal relevance cutoff. BM25 splits whitespace, strips non-ASCII-alphanumeric bytes within each token, lowercases ASCII, and does not stem. A resource query uses its resource name, not its exposed operation name. Hosted query action wait accepts deprecated timeout_seconds or timeout_ms aliases (milliseconds rounded up, maximum 25000), rejects multiple timeout spellings, and canonically uses timeout seconds from 0 through 25 and returns seq, cursor, changed and reset without a data envelope. The canonical batch body is {ops:[...]}; bare arrays and {operations:[...]} remain compatibility aliases. Source writes use the existing record/batch APIs only when the definition exposes those actions. To add resources, read describe_definition, plan_definition_update with expected_revision, then apply_definition_update and poll definition_update_status. Preserve existing resources and operations. Accepted jobs are not completed updates: succeeded confirms activation, failed retains the previous revision, and recovery_required requires operator recovery. Retry writes_paused after activation or failure. Read credentials can query exposed resources; definition inspection and updates require management authority. Omitted workspace_id means your personal workspace; always pass workspace_id for shared workspaces. Create with a name and stable idempotency_key; reuse the identical key/body on retries. Wait for ready status before using records. If startup reports failed with a capacity error, retain the returned Bog ID and retry creation with the SAME name, idempotency_key and body after active operations finish. Unused warm workers are automatically reclaimed when another Bog needs capacity. This retries startup of the same Bog; do not create new names or keys to recover. A record/view request can also start that same Bog once capacity is available; describe alone does not restart it. Read bounded pages (default 100, max 1000, offset max 10000). wait_for_change takes timeout 0–25 and an opaque cursor; refetch on changed or reset, with no event replay. Use prepare_app_access for a single-Bog app credential delivered privately by the helper or an explicit console download. The private helper reuses an owned private authorization cache only with explicit --auth-file; otherwise it starts an additional approval. Never put secrets in prompts, URLs, or logs. For diagnosis use bog_metrics (window 5m or 1h): it does not wake a sleeping Bog. Check window_complete, truncated, and observed_since before comparing counts; latencies are bounded recent samples, not a complete history. Workspace members can read bog_events for bounded operational history; app credentials see worker state and their own traffic; operational events require management authority. Events never contain record changes. Agents cannot manage membership or delete Bogs.";
+pub const AGENT_INSTRUCTIONS: &str = "Inventory list_bogs returns compact capability_summary entries; fetch list_resources for complete operation schemas. Start with get_current_context, list_templates and discover_capabilities (HTTP GET /v1/components; MCP resource bog://guide/components). Check enabled before configurable creation or definition updates; disabling composition does not remove existing Bogs. The component catalog provides the complete definition_schema, examples and effective limits. Use validate_definition, then create_bog_from_definition with a stable idempotency_key (HTTP POST /v1/bogs with name and definition, omitting template). Use list_resources to discover exposed operations; hosted.request_schema and hosted.response_schema describe HTTP/MCP operation bodies, while top-level response_schema describes internal runtime data; query_resource accepts the selected action; omitted action intentionally defaults to list for tables, top for ranked resources, and read otherwise, even if another action is exposed. search_resource accepts query, limit, offset, include_fields and semantic-only max_distance (0 to 2). include_fields uses JSON Pointers; hit.value is keyed by those pointers, with missing fields omitted. Semantic score = 1 - distance; lower distance is closer, without a universal relevance cutoff. BM25 splits whitespace, strips non-ASCII-alphanumeric bytes within each token, lowercases ASCII, and does not stem. A resource query uses its resource name, not its exposed operation name. Hosted query action wait accepts deprecated timeout_seconds or timeout_ms aliases (milliseconds rounded up, maximum 25000), rejects multiple timeout spellings, and canonically uses timeout seconds from 0 through 25 and returns seq, cursor, changed and reset without a data envelope. The canonical batch body is {ops:[...]}; bare arrays and {operations:[...]} remain compatibility aliases. Source writes use the existing record/batch APIs only when the definition exposes those actions. To add resources, read describe_definition, plan_definition_update with expected_revision, then apply_definition_update and poll definition_update_status. Preserve existing resources and operations. Accepted jobs are not completed updates: succeeded confirms activation, failed retains the previous revision, and recovery_required requires operator recovery. Retry writes_paused after activation or failure. Read credentials can query exposed resources; definition inspection and updates require management authority. Omitted workspace_id means your personal workspace; always pass workspace_id for shared workspaces. Create with a name and stable idempotency_key; reuse the identical key/body on retries. Wait for ready status before using records. If startup reports failed with a capacity error, retain the returned Bog ID and retry creation with the SAME name, idempotency_key and body after active operations finish. Unused warm workers are automatically reclaimed when another Bog needs capacity. This retries startup of the same Bog; do not create new names or keys to recover. A record/view request can also start that same Bog once capacity is available; describe alone does not restart it. Read bounded pages (default 100, max 1000, offset max 10000). wait_for_change takes timeout 0–25 and an opaque cursor; refetch on changed or reset, with no event replay. Use prepare_app_access for a single-Bog app credential delivered privately by the helper or an explicit console download. The private helper reuses an owned private authorization cache only with explicit --auth-file; otherwise it starts an additional approval. Never put secrets in prompts, URLs, or logs. For diagnosis use bog_metrics (window 5m or 1h): it does not wake a sleeping Bog. Check window_complete, truncated, and observed_since before comparing counts; latencies are bounded recent samples, not a complete history. Workspace members can read bog_events for bounded operational history; app credentials see worker state and their own traffic; operational events require management authority. Events never contain record changes. Agents cannot manage membership or delete ordinary Bogs; they may delete their own temporary sandbox. Read /agent.md for the compact workflow.";
 pub const ACCESS_RULES: &str = "GitHub identity determines your account, and current membership determines workspace access. Personal is the default; shared workspace selection must be explicit. bog:read reads existing Bogs; bog:write also permits creation, record writes and issuing single-Bog app credentials. Broader scope cannot grant missing membership. App credentials cannot provision, mint credentials, or access another Bog. Owners manage membership and Bog deletion through the console. Removal and revocation take effect on subsequent requests. Pending private handoffs last ten minutes, require the initiating account at redemption, and expire on server restart. The handoff reference is nonsecret and safe in tool results or conversation; it grants no access by itself. An authorized agent may run the private helper using the helper's own authorization cache, without reading another client's credentials or exposing the installed file. If approval is needed, the human must explicitly approve the separate device request; console download also requires explicit human action. issue_token remains compatible but returns a secret in its result; prefer prepare_app_access.";
 pub fn templates() -> Value {
     json!({"templates":overview()["templates"]})

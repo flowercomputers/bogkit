@@ -71,6 +71,44 @@ async fn public_discovery_over_real_http_preserves_auth_boundaries() {
             assert!(body.contains("/auth.md"));
         }
     }
+    let guide = client
+        .get(format!("{base}/agent.md"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(guide.len() <= 3300);
+    for path in ["/docs.md", "/docs", "/"] {
+        let response = client
+            .get(format!("{base}{path}"))
+            .header("Accept", "text/markdown")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.headers()["vary"], "Accept");
+        assert_eq!(response.text().await.unwrap(), guide);
+    }
+    let index = client
+        .get(format!("{base}/llms.txt"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(index.len() < 2048);
+    assert!(index.contains("/agent.md"));
+    let example: Value = client
+        .get(format!("{base}/examples/notes.json"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    bog_cloud::definitions::parse(example).unwrap();
     for method in [reqwest::Method::GET, reqwest::Method::HEAD] {
         let r = client
             .request(method.clone(), format!("{base}/.well-known/api-catalog"))
@@ -250,6 +288,14 @@ async fn native_documents_redirect_and_actual_rate_limit_headers() {
     )
     .unwrap();
     std::sync::Arc::get_mut(&mut service).unwrap().native_auth = Some(native);
+    let index = bog_cloud::agent_guide::index(&service);
+    let guide = bog_cloud::agent_guide::guide(&service);
+    assert!(index.len() < 2048);
+    assert!(guide.len() <= 3300);
+    assert!(guide.contains("GitHub approval is enabled"));
+    assert!(!guide.contains("Operator-only"));
+    assert!(index.contains("https://cloud.bog.new/agent.md"));
+
     let principal = service.auth.authenticate(OWNER).unwrap();
     for _ in 0..599 {
         service.rate_limit(&principal).unwrap();
@@ -365,4 +411,52 @@ async fn native_documents_redirect_and_actual_rate_limit_headers() {
     assert_eq!(r.status(), 401);
     assert!(!r.headers().contains_key("ratelimit-remaining"));
     server.abort();
+}
+
+#[tokio::test]
+async fn operator_discovery_uses_configured_origin_not_request_host() {
+    use axum::{
+        body::{Body, to_bytes},
+        http::Request,
+    };
+    use tower::ServiceExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let mut config = Config::new(tmp.path().join("service"), std::env::current_exe().unwrap());
+    config.public_origin = Some("http://127.0.0.1:8788".into());
+    let service = CloudService::open(config, OWNER).unwrap();
+    let router = build_rest_router(service);
+    for path in [
+        "/agent.md",
+        "/llms.txt",
+        "/v1",
+        "/mcp/server-card",
+        "/openapi.json",
+    ] {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(path)
+                    .header("host", "evil.example")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200, "{path}");
+        let body = String::from_utf8(
+            to_bytes(response.into_body(), 1_000_000)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(body.contains("http://127.0.0.1:8788"), "{path}");
+        assert!(!body.contains("evil.example"));
+        if path == "/agent.md" {
+            assert!(body.contains("legacy workspace"));
+            assert!(!body.contains("defaults personal"));
+            assert!(body.contains("pointer keys"));
+        }
+    }
 }

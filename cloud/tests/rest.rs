@@ -269,7 +269,11 @@ async fn legacy_guidance_is_truthful_without_javascript() {
         )
         .unwrap();
         assert!(
-            body.contains("Public signup, workspace sharing, and invitations are unavailable"),
+            if path == "/llms.txt" {
+                body.contains("Operator-only")
+            } else {
+                body.contains("Public signup, workspace sharing, and invitations are unavailable")
+            },
             "{path}"
         );
         assert!(body.contains("privately"), "{path}");

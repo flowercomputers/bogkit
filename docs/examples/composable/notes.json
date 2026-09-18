@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "input": "notes",
+  "resources": {
+    "notes": {
+      "terminal": {
+        "kind": "table"
+      }
+    },
+    "recent": {
+      "terminal": {
+        "kind": "ranked",
+        "field": "/updated_at",
+        "ascending": false
+      }
+    },
+    "text": {
+      "terminal": {
+        "kind": "bm25",
+        "fields": [
+          "/title",
+          "/body"
+        ]
+      }
+    },
+    "semantic": {
+      "terminal": {
+        "kind": "semantic",
+        "fields": [
+          "/title",
+          "/body"
+        ]
+      }
+    }
+  },
+  "expose": {
+    "put": {
+      "target": "notes",
+      "action": "put"
+    },
+    "remove": {
+      "target": "notes",
+      "action": "remove"
+    },
+    "batch": {
+      "target": "notes",
+      "action": "batch"
+    },
+    "get": {
+      "target": "notes",
+      "action": "get"
+    },
+    "list": {
+      "target": "notes",
+      "action": "list"
+    },
+    "wait": {
+      "target": "notes",
+      "action": "wait"
+    },
+    "recent": {
+      "target": "recent",
+      "action": "top"
+    },
+    "text": {
+      "target": "text",
+      "action": "search"
+    },
+    "semantic": {
+      "target": "semantic",
+      "action": "search"
+    }
+  }
+}

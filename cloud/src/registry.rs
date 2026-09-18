@@ -108,6 +108,8 @@ impl Registry {
         if version < 5 {
             db.execute_batch("CREATE TABLE bog_definitions (bog_id TEXT PRIMARY KEY REFERENCES bogs(id), definition TEXT NOT NULL, digest TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1, storage_dir TEXT NOT NULL DEFAULT 'data'); CREATE TABLE definition_jobs (id TEXT PRIMARY KEY, bog_id TEXT NOT NULL REFERENCES bogs(id), status TEXT NOT NULL, payload TEXT NOT NULL, created_at INTEGER NOT NULL); PRAGMA user_version=5;").map_err(db_error)?;
         }
+        // Additive extensions preserve schema-5 rollback before sandboxes are used.
+        db.execute_batch("CREATE TABLE IF NOT EXISTS sandboxes (bog_id TEXT PRIMARY KEY REFERENCES bogs(id), creator_credential TEXT NOT NULL, expires_at INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS cleanup_previews (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, ids TEXT NOT NULL);").map_err(db_error)?;
         let foreign_key_errors: i64 = db
             .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |r| {
                 r.get(0)
@@ -180,6 +182,7 @@ impl Registry {
             // The legacy workspace allowance is independent of platform retention.
             32,
             None,
+            false,
         )
     }
     pub fn create_scoped(
@@ -200,6 +203,7 @@ impl Registry {
             None,
             32,
             None,
+            false,
         )
     }
     pub fn create_for_principal(
@@ -228,10 +232,11 @@ impl Registry {
             Some(p),
             global_maximum.min(32),
             None,
+            false,
         )
     }
     #[allow(clippy::too_many_arguments)] // One transaction must cover identity, scope, limits, and initial state.
-    fn create_in_workspace(
+    pub(crate) fn create_in_workspace(
         &self,
         workspace: crate::WorkspaceId,
         name: &str,
@@ -243,6 +248,7 @@ impl Registry {
         principal: Option<&crate::Principal>,
         global_maximum: usize,
         definition: Option<&bog_definition::Definition>,
+        sandbox: bool,
     ) -> Result<Bog, CloudError> {
         let name = name.trim().to_lowercase();
         if name.is_empty()
@@ -267,6 +273,9 @@ impl Registry {
             request["definition_digest"] =
                 serde_json::json!(definition.digest().map_err(crate::definitions::invalid)?);
         }
+        if sandbox {
+            request["sandbox"] = serde_json::json!(true);
+        }
         let digest = hash(request.to_string().as_bytes());
         let mut db = self.connection()?;
         let tx = db
@@ -286,6 +295,9 @@ impl Registry {
                 false,
             )?;
         }
+        if let Some(p) = principal {
+            crate::sandboxes::check_live_principal(&tx, p, now())?;
+        }
         let prior: Option<(Vec<u8>, String)> = tx
             .query_row(
                 "SELECT body_hash,bog_id FROM create_requests WHERE request_key=?1 AND workspace_id=?2",
@@ -300,6 +312,16 @@ impl Registry {
                     "conflict",
                     "idempotency key was used for a different request",
                 ));
+            }
+            let expired: bool = tx
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sandboxes WHERE bog_id=?1 AND expires_at<=?2)",
+                    params![id, now()],
+                    |r| r.get(0),
+                )
+                .map_err(db_error)?;
+            if expired {
+                return Err(CloudError::new("not_found", "sandbox has expired"));
             }
             return tx
                 .query_row(
@@ -322,10 +344,16 @@ impl Registry {
             return Err(CloudError::new("conflict", "database name already exists"));
         }
         let uncapped: bool = tx.query_row("SELECT w.uncapped_bogs OR COALESCE(a.uncapped_bogs,0) FROM workspaces w LEFT JOIN accounts a ON a.id=w.personal_account_id WHERE w.id=?1", [workspace.to_string()], |r| r.get(0)).map_err(db_error)?;
-        if !uncapped {
+        if sandbox {
+            let count: i64 = tx.query_row("SELECT COUNT(*) FROM bogs b JOIN sandboxes s ON s.bog_id=b.id WHERE b.workspace_id=?1 AND (b.deleted_at IS NULL OR b.cleanup_completed_at IS NULL)", [workspace.to_string()], |r| r.get(0)).map_err(db_error)?;
+            if count >= 1 {
+                return Err(CloudError::new("capacity", "sandbox limit reached"));
+            }
+        }
+        if !uncapped && !sandbox {
             let active: i64 = tx
             .query_row(
-                "SELECT COUNT(*) FROM bogs WHERE (desired_state='running' OR (deleted_at IS NOT NULL AND cleanup_completed_at IS NULL)) AND workspace_id=?1",
+                "SELECT COUNT(*) FROM bogs WHERE (desired_state='running' OR (deleted_at IS NOT NULL AND cleanup_completed_at IS NULL)) AND workspace_id=?1 AND id NOT IN (SELECT bog_id FROM sandboxes)",
                 [workspace.to_string()],
                 |r| r.get(0),
             )
@@ -335,7 +363,7 @@ impl Registry {
             }
             let count: i64 = tx
             .query_row(
-                "SELECT COUNT(*) FROM bogs WHERE workspace_id=?1 AND (deleted_at IS NULL OR cleanup_completed_at IS NULL)",
+                "SELECT COUNT(*) FROM bogs WHERE workspace_id=?1 AND (deleted_at IS NULL OR cleanup_completed_at IS NULL) AND id NOT IN (SELECT bog_id FROM sandboxes)",
                 [workspace.to_string()],
                 |r| r.get(0),
             )
@@ -371,6 +399,20 @@ impl Registry {
         if let Some(definition) = definition {
             tx.execute("INSERT INTO bog_definitions(bog_id,definition,digest,revision) VALUES (?1,?2,?3,1)", params![bog.id.to_string(), serde_json::to_string(definition).map_err(|_| CloudError::new("invalid_request", "invalid definition"))?, definition.digest().map_err(crate::definitions::invalid)?]).map_err(db_error)?;
         }
+        if sandbox {
+            let p = principal
+                .ok_or_else(|| CloudError::new("forbidden", "workspace credential required"))?;
+            let credential = p
+                .token_id
+                .as_deref()
+                .or(p.account_id())
+                .ok_or_else(|| CloudError::new("forbidden", "creator credential required"))?;
+            tx.execute(
+                "INSERT INTO sandboxes(bog_id,creator_credential,expires_at) VALUES(?1,?2,?3)",
+                params![bog.id.to_string(), credential, bog.created_at + 3600],
+            )
+            .map_err(db_error)?;
+        }
         tx.commit().map_err(db_error)?;
         Ok(bog)
     }
@@ -378,15 +420,16 @@ impl Registry {
         let db = self.connection()?;
         let mut stmt = db
             .prepare(&format!(
-                "SELECT {COLUMNS} FROM bogs WHERE workspace_id=?1 AND deleted_at IS NULL ORDER BY created_at,id"
+                "SELECT {COLUMNS} FROM bogs WHERE workspace_id=?1 AND deleted_at IS NULL AND id NOT IN (SELECT bog_id FROM sandboxes WHERE expires_at<=?2) ORDER BY created_at,id"
             ))
             .map_err(db_error)?;
-        stmt.query_map([workspace.to_string()], read_bog)
+        stmt.query_map(params![workspace.to_string(), now()], read_bog)
             .map_err(db_error)?
             .collect::<Result<Vec<_>, _>>()
             .map_err(db_error)
     }
     pub fn get_scoped(&self, workspace: crate::WorkspaceId, id: BogId) -> Result<Bog, CloudError> {
+        self.check_sandbox_expiry(id, now())?;
         self.connection()?
             .query_row(
                 &format!("SELECT {COLUMNS} FROM bogs WHERE id=?1 AND workspace_id=?2 AND deleted_at IS NULL"),
@@ -398,6 +441,7 @@ impl Registry {
             .ok_or_else(|| CloudError::new("not_found", "database not found"))
     }
     pub fn get(&self, id: BogId) -> Result<Bog, CloudError> {
+        self.check_sandbox_expiry(id, now())?;
         self.connection()?
             .query_row(
                 &format!("SELECT {COLUMNS} FROM bogs WHERE id=?1 AND deleted_at IS NULL"),
@@ -412,10 +456,10 @@ impl Registry {
         let db = self.connection()?;
         let mut s = db
             .prepare(&format!(
-                "SELECT {COLUMNS} FROM bogs WHERE deleted_at IS NULL ORDER BY created_at,id"
+                "SELECT {COLUMNS} FROM bogs WHERE deleted_at IS NULL AND id NOT IN (SELECT bog_id FROM sandboxes WHERE expires_at<=?1) ORDER BY created_at,id"
             ))
             .map_err(db_error)?;
-        s.query_map([], read_bog)
+        s.query_map([now()], read_bog)
             .map_err(db_error)?
             .collect::<Result<Vec<_>, _>>()
             .map_err(db_error)
@@ -501,6 +545,7 @@ impl Registry {
             // Resident worker capacity must not limit retained Bogs across workspaces.
             32,
             Some(definition),
+            false,
         )
     }
 }

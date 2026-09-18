@@ -824,6 +824,7 @@ impl Supervisor {
     }
     pub async fn reconcile(&self) -> Result<Vec<(BogId, String)>, CloudError> {
         crate::backup::recover_staging(&self.config.root.join("backups"))?;
+        self.registry.expire_sandboxes(crate::registry::now())?;
         let mut failures = Vec::new();
         for id in self.registry.pending_deletions()? {
             if let Err(error) = self.cleanup_deleted(id).await {
@@ -945,6 +946,7 @@ impl Supervisor {
                 let Some(supervisor) = supervisor.upgrade() else {
                     break;
                 };
+                let _ = supervisor.registry.expire_sandboxes(crate::registry::now());
                 for id in supervisor.registry.pending_deletions().unwrap_or_default() {
                     if let Err(error) = supervisor.cleanup_deleted(id).await {
                         eprintln!("database deletion cleanup pending: {}", error.code);
