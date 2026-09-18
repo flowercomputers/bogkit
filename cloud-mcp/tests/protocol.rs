@@ -1,5 +1,16 @@
 mod common;
 use common::*;
+fn composable_fixture(name: &str) -> serde_json::Value {
+    serde_json::from_slice(
+        &std::fs::read(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../docs/examples/composable")
+                .join(name),
+        )
+        .unwrap(),
+    )
+    .unwrap()
+}
 #[tokio::test]
 async fn sdk_initializes_and_discovers_exact_tools() {
     let h = Harness::new().await;
@@ -10,23 +21,33 @@ async fn sdk_initializes_and_discovers_exact_tools() {
     assert_eq!(
         names,
         vec![
+            "apply_definition_update",
             "batch",
             "bog_events",
             "bog_metrics",
             "create_bog",
+            "create_bog_from_definition",
+            "definition_update_status",
             "delete_record",
             "describe_bog",
+            "describe_definition",
+            "discover_capabilities",
             "get_current_context",
             "get_record",
             "issue_token",
             "list_bogs",
+            "list_resources",
             "list_templates",
             "list_tokens",
             "list_workspaces",
+            "plan_definition_update",
             "prepare_app_access",
+            "query_resource",
             "read_view",
             "revoke_token",
+            "search_resource",
             "upsert_record",
+            "validate_definition",
             "wait_for_change"
         ]
     );
@@ -42,6 +63,25 @@ async fn sdk_initializes_and_discovers_exact_tools() {
     assert_eq!(
         list.iter()
             .find(|t| t.name == "batch")
+            .unwrap()
+            .annotations
+            .as_ref()
+            .unwrap()
+            .idempotent_hint,
+        Some(false)
+    );
+    for name in ["plan_definition_update", "apply_definition_update"] {
+        let revision = &list
+            .iter()
+            .find(|tool| tool.name == name)
+            .unwrap()
+            .input_schema["properties"]["expected_revision"];
+        assert_eq!(revision["minimum"], 1);
+        assert_eq!(revision["maximum"], 9_007_199_254_740_991_u64);
+    }
+    assert_eq!(
+        list.iter()
+            .find(|t| t.name == "apply_definition_update")
             .unwrap()
             .annotations
             .as_ref()
@@ -179,6 +219,151 @@ async fn sdk_crud_batch_idempotency_and_independent_rest() {
     client.cancel().await.unwrap();
     h.close().await;
 }
+
+#[tokio::test]
+async fn composable_resources_hide_unexposed_resources_and_match_rest() {
+    let h = Harness::composable().await;
+    let client = h.client(OWNER).await;
+    let definition = json!({
+        "resources": {
+            "public_total": {"terminal":{"kind":"count"}},
+            "private_total": {"terminal":{"kind":"count"}}
+        },
+        "expose": {
+            "read_public_total": {"target":"public_total","action":"read"}
+        }
+    });
+    let created = data(
+        call(
+            &client,
+            "create_bog_from_definition",
+            json!({"name":"private resource fixture","definition":definition,"idempotency_key":"private-resource-fixture"}),
+        )
+        .await,
+    );
+    let id = created["id"].as_str().unwrap();
+    let mcp = data(call(&client, "list_resources", json!({"bog_id":id})).await);
+    assert_eq!(mcp["resources"].as_array().unwrap().len(), 1);
+    assert_eq!(mcp["resources"][0]["name"], "public_total");
+    assert!(!mcp.to_string().contains("private_total"));
+
+    let mut rest: Value = reqwest::Client::new()
+        .get(format!("{}/v1/bogs/{id}/resources", h.url))
+        .bearer_auth(OWNER)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    rest.as_object_mut().unwrap().remove("request_id");
+    assert_eq!(rest, mcp);
+
+    let hidden = call(
+        &client,
+        "query_resource",
+        json!({"bog_id":id,"resource":"private_total","query":{}}),
+    )
+    .await;
+    assert_eq!(hidden.is_error, Some(true));
+    assert_eq!(
+        hidden.structured_content.unwrap()["error"]["code"],
+        "not_found"
+    );
+    client.cancel().await.unwrap();
+    h.close().await;
+}
+
+#[tokio::test]
+async fn composable_todo_queries_and_searches_match_http() {
+    let h = Harness::composable().await;
+    let client = h.client(OWNER).await;
+    let definition = composable_fixture("todo-semantic.json");
+    let operations = composable_fixture("todo-records.json");
+    let created = data(
+        call(
+            &client,
+            "create_bog_from_definition",
+            json!({"name":"MCP todo semantic fixture","definition":definition,"idempotency_key":"mcp-todo-semantic-fixture"}),
+        )
+        .await,
+    );
+    let id = created["id"].as_str().unwrap();
+    ready(&h, serde_json::from_value(created["id"].clone()).unwrap()).await;
+    data(
+        call(
+            &client,
+            "batch",
+            json!({"bog_id":id,"operations":operations}),
+        )
+        .await,
+    );
+
+    let http = reqwest::Client::new();
+    for (tool, resource, query) in [
+        ("query_resource", "open", json!({})),
+        ("query_resource", "open_count", json!({})),
+        ("query_resource", "priority", json!({})),
+        (
+            "search_resource",
+            "text_search",
+            json!({"query":"release notes","limit":10}),
+        ),
+        (
+            "search_resource",
+            "semantic_search",
+            json!({"query":"publish the changelog","limit":10}),
+        ),
+    ] {
+        let mcp = data(
+            call(
+                &client,
+                tool,
+                json!({"bog_id":id,"resource":resource,"query":query.clone()}),
+            )
+            .await,
+        );
+        let suffix = if tool == "search_resource" {
+            "search"
+        } else {
+            "query"
+        };
+        let mut rest: Value = http
+            .post(format!(
+                "{}/v1/bogs/{id}/resources/{resource}/{suffix}",
+                h.url
+            ))
+            .bearer_auth(OWNER)
+            .json(&query)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        rest.as_object_mut().unwrap().remove("request_id");
+        assert_eq!(mcp, rest, "MCP/HTTP mismatch for {resource}");
+    }
+    let resources = data(call(&client, "list_resources", json!({"bog_id":id})).await);
+    assert!(!resources.to_string().contains("private_stats"));
+    assert_eq!(
+        data(
+            call(
+                &client,
+                "query_resource",
+                json!({"bog_id":id,"resource":"open_count","query":{}}),
+            )
+            .await,
+        )["data"],
+        2
+    );
+    client.cancel().await.unwrap();
+    h.close().await;
+}
 #[tokio::test]
 async fn legacy_initialize_wire_discovery_and_bad_jsonrpc() {
     let h = Harness::new().await;
@@ -210,7 +395,7 @@ async fn legacy_initialize_wire_discovery_and_bad_jsonrpc() {
         .json()
         .await
         .unwrap();
-    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 18);
+    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 28);
     let bad = post(json!({"jsonrpc":"bogus","id":3,"method":"tools/list"}))
         .send()
         .await
@@ -534,7 +719,7 @@ async fn newer_clients_negotiate_verified_revision_and_cannot_select_newer_inlin
         .json()
         .await
         .unwrap();
-    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 18);
+    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 28);
     assert!(list["result"].get("resultType").is_none());
     h.close().await;
 }

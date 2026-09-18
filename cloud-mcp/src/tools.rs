@@ -19,6 +19,45 @@ struct Create {
 }
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+struct ValidateDefinition {
+    #[schemars(schema_with = "object_value_schema")]
+    definition: Value,
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct CreateDefined {
+    name: String,
+    #[schemars(schema_with = "object_value_schema")]
+    definition: Value,
+    idempotency_key: String,
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct ResourceOperation {
+    bog_id: String,
+    resource: String,
+    #[schemars(schema_with = "object_value_schema")]
+    query: Value,
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct DefinitionUpdate {
+    bog_id: String,
+    #[schemars(schema_with = "object_value_schema")]
+    definition: Value,
+    expected_revision: u64,
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct DefinitionUpdateStatus {
+    bog_id: String,
+    job_id: String,
+}
+fn object_value_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    serde_json::from_value(json!({"type":"object"})).expect("object value schema")
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct Describe {
     bog_id: String,
 }
@@ -113,6 +152,14 @@ fn definition<T: JsonSchema>(
         input["properties"]["limit"] =
             json!({"type":"integer","minimum":1,"maximum":100,"default":50});
     }
+    if matches!(name, "plan_definition_update" | "apply_definition_update") {
+        input["properties"]["expected_revision"] = json!({
+            "type":"integer",
+            "minimum":1,
+            "maximum":9_007_199_254_740_991_u64,
+            "description":"Active definition revision. JavaScript-safe positive integer."
+        });
+    }
     if name == "wait_for_change" {
         // serde aliases are accepted at runtime but omitted by schemars.
         // Advertise both spellings so strict schema clients can use the alias.
@@ -146,6 +193,76 @@ fn definition<T: JsonSchema>(
 
 pub fn definitions() -> Vec<Tool> {
     vec![
+        definition::<Empty>(
+            "discover_capabilities",
+            "Discover the supported definition components, versions, constraints and schemas before authoring a Bog definition.",
+            true,
+            false,
+            true,
+        ),
+        definition::<ValidateDefinition>(
+            "validate_definition",
+            "Validate and normalize a Bog definition without creating or changing a Bog.",
+            true,
+            false,
+            true,
+        ),
+        definition::<CreateDefined>(
+            "create_bog_from_definition",
+            "Create a Bog from a validated JSON definition. Reuse the same idempotency key and identical body to retry safely.",
+            false,
+            false,
+            true,
+        ),
+        definition::<Describe>(
+            "describe_definition",
+            "Read the active normalized definition, digest and revision for an accessible Bog.",
+            true,
+            false,
+            true,
+        ),
+        definition::<Describe>(
+            "list_resources",
+            "List the public resources exposed by a Bog definition. Private resources are never returned.",
+            true,
+            false,
+            true,
+        ),
+        definition::<ResourceOperation>(
+            "query_resource",
+            "Run a definition-controlled query against one public non-search resource.",
+            true,
+            false,
+            true,
+        ),
+        definition::<ResourceOperation>(
+            "search_resource",
+            "Run a bounded text or semantic search against one public search resource.",
+            true,
+            false,
+            true,
+        ),
+        definition::<DefinitionUpdate>(
+            "plan_definition_update",
+            "Validate and plan an additive definition update against the expected active revision without changing the Bog.",
+            true,
+            false,
+            true,
+        ),
+        definition::<DefinitionUpdate>(
+            "apply_definition_update",
+            "Start an already validated additive definition update against the expected active revision.",
+            false,
+            false,
+            false,
+        ),
+        definition::<DefinitionUpdateStatus>(
+            "definition_update_status",
+            "Read durable progress or the terminal result of one definition update job.",
+            true,
+            false,
+            true,
+        ),
         definition::<Metrics>(
             "bog_metrics",
             "Read bounded operational metrics without waking the Bog. App credentials see only their own request metrics.",
@@ -298,6 +415,83 @@ struct Prepare {
 }
 pub(crate) fn operation(name: &str, args: Value) -> Result<Operation, ErrorData> {
     Ok(match name {
+        "discover_capabilities" => {
+            let _: Empty = parse(args)?;
+            Operation::ListComponents
+        }
+        "validate_definition" => {
+            let a: ValidateDefinition = parse(args)?;
+            Operation::ValidateDefinition {
+                definition: a.definition,
+            }
+        }
+        "create_bog_from_definition" => {
+            let a: CreateDefined = parse(args)?;
+            Operation::CreateDefinedBog {
+                name: a.name,
+                definition: a.definition,
+                idempotency_key: a.idempotency_key,
+            }
+        }
+        "describe_definition" => {
+            let a: Describe = parse(args)?;
+            Operation::DescribeDefinition {
+                bog_id: id(a.bog_id)?,
+            }
+        }
+        "list_resources" => {
+            let a: Describe = parse(args)?;
+            Operation::ListResources {
+                bog_id: id(a.bog_id)?,
+            }
+        }
+        "query_resource" | "search_resource" => {
+            let a: ResourceOperation = parse(args)?;
+            let bog_id = id(a.bog_id)?;
+            if name == "query_resource" {
+                Operation::QueryResource {
+                    bog_id,
+                    resource: a.resource,
+                    query: a.query,
+                }
+            } else {
+                Operation::SearchResource {
+                    bog_id,
+                    resource: a.resource,
+                    query: a.query,
+                }
+            }
+        }
+        "plan_definition_update" | "apply_definition_update" => {
+            let a: DefinitionUpdate = parse(args)?;
+            if a.expected_revision == 0 || a.expected_revision > 9_007_199_254_740_991 {
+                return Err(ErrorData::invalid_params(
+                    "expected_revision must be a JavaScript-safe positive integer",
+                    None,
+                ));
+            }
+            let bog_id = id(a.bog_id)?;
+            if name == "plan_definition_update" {
+                Operation::PlanDefinitionUpdate {
+                    bog_id,
+                    definition: a.definition,
+                    expected_revision: a.expected_revision,
+                }
+            } else {
+                Operation::ApplyDefinitionUpdate {
+                    bog_id,
+                    definition: a.definition,
+                    expected_revision: a.expected_revision,
+                }
+            }
+        }
+        "definition_update_status" => {
+            let a: DefinitionUpdateStatus = parse(args)?;
+            Operation::DefinitionUpdateStatus {
+                bog_id: id(a.bog_id)?,
+                job_id: a.job_id,
+            }
+        }
         "bog_metrics" => {
             let a: Metrics = parse(args)?;
             let window = a.window;

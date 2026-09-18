@@ -4,7 +4,9 @@ use axum::{
     http::StatusCode,
     routing::{get, post},
 };
-use bog_cloud_records::{DEFAULT_LOGICAL_BYTES, TEMPLATE_ID, records_service_with_limit};
+use bog_cloud_records::{
+    ConfiguredService, DEFAULT_LOGICAL_BYTES, TEMPLATE_ID, records_service_with_limit,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
@@ -48,7 +50,7 @@ fn bind_socket(
     path: &Path,
     data_dir: &Path,
     instance_id: &str,
-) -> Result<(tokio::net::UnixListener, OwnedSocket), Box<dyn std::error::Error>> {
+) -> Result<(tokio::net::UnixListener, OwnedSocket), Box<dyn std::error::Error + Send + Sync>> {
     let owner_path = PathBuf::from(format!("{}.owner", path.display()));
     if let Ok(meta) = std::fs::symlink_metadata(&owner_path) {
         if !meta.file_type().is_file() {
@@ -116,16 +118,22 @@ async fn main() {
         std::process::exit(1);
     }
 }
-async fn run() -> Result<(), Box<dyn std::error::Error>> {
+async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut data = None;
     let mut socket = None;
     let mut version = None;
+    let mut definition_file = None;
+    let mut revision = 1u64;
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
         let value = args.next().ok_or("missing flag value")?;
         match flag.as_str() {
             "--data-dir" if data.is_none() => data = Some(PathBuf::from(value)),
             "--socket" if socket.is_none() => socket = Some(PathBuf::from(value)),
+            "--definition-file" if definition_file.is_none() => {
+                definition_file = Some(PathBuf::from(value))
+            }
+            "--definition-revision" => revision = value.parse()?,
             "--template-version" if version.is_none() => version = Some(value),
             _ => return Err("unknown or duplicate flag".into()),
         }
@@ -146,11 +154,44 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         Err(std::env::VarError::NotPresent) => DEFAULT_LOGICAL_BYTES,
         Err(error) => return Err(error.into()),
     };
-    let service = records_service_with_limit(&data, limit)?;
+    let composable_limits: bog_definition::Limits = match std::env::var("BOG_COMPOSABLE_LIMITS") {
+        Ok(value) => serde_json::from_str(&value)?,
+        Err(std::env::VarError::NotPresent) => Default::default(),
+        Err(e) => return Err(e.into()),
+    };
+    composable_limits.validate()?;
+    let definition = match definition_file {
+        Some(path) => {
+            if !path.is_absolute() {
+                return Err("definition path must be absolute".into());
+            }
+            Some(serde_json::from_slice::<bog_definition::Definition>(
+                &std::fs::read(path)?,
+            )?)
+        }
+        None => None,
+    };
+    let active_definition = definition
+        .clone()
+        .unwrap_or_else(bog_definition::Definition::records_v1);
+    let digest = definition
+        .as_ref()
+        .unwrap_or(&bog_definition::Definition::records_v1())
+        .digest()?;
+    let service = match definition {
+        Some(definition) => WorkerService::Configured(ConfiguredService::open_with_limits(
+            &data,
+            definition,
+            revision,
+            limit,
+            composable_limits,
+        )?),
+        None => WorkerService::Records(records_service_with_limit(&data, limit)?),
+    };
     let data = std::fs::canonicalize(data)?;
     let (listener, mut socket_guard) = bind_socket(&socket, &data, &instance_id)?;
     let (stop_tx, mut stop_rx) = tokio::sync::watch::channel(false);
-    let identity = json!({"instance_id":instance_id,"nonce":nonce,"template_version":TEMPLATE_ID,"pid":std::process::id()});
+    let identity = json!({"instance_id":instance_id,"nonce":nonce,"template_version":TEMPLATE_ID,"pid":std::process::id(),"definition_digest":digest,"definition_revision":revision});
     let control = Router::new()
         .route(
             "/_cloud/identity",
@@ -176,7 +217,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }),
         );
-    let router = service.router().merge(control);
+    let router =
+        bog_cloud_records::with_write_freeze(service.router(), &active_definition).merge(control);
     let (drain_tx, drain_rx) = tokio::sync::oneshot::channel::<()>();
     let mut server = tokio::spawn(async move {
         axum::serve(listener, router)
@@ -215,4 +257,29 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     socket_guard.clean_exit = true;
     Ok(())
+}
+
+enum WorkerService {
+    Records(bog_serve::ServedApp),
+    Configured(ConfiguredService),
+}
+impl WorkerService {
+    fn router(&self) -> Router {
+        match self {
+            Self::Records(s) => s.router(),
+            Self::Configured(s) => s.router(),
+        }
+    }
+    fn begin_shutdown(&self) {
+        match self {
+            Self::Records(s) => s.begin_shutdown(),
+            Self::Configured(s) => s.begin_shutdown(),
+        }
+    }
+    fn shutdown(self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        match self {
+            Self::Records(s) => s.shutdown().map_err(Into::into),
+            Self::Configured(s) => s.shutdown().map_err(Into::into),
+        }
+    }
 }

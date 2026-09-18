@@ -83,7 +83,7 @@ impl Registry {
         let version: u32 = db
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .map_err(db_error)?;
-        if version > 4 {
+        if version > 5 {
             return Err(CloudError::new(
                 "incompatible_registry",
                 "registry version is newer than this server",
@@ -104,6 +104,9 @@ impl Registry {
         if version < 4 {
             db.execute_batch(include_str!("../migrations/004_workspace_quotas.sql"))
                 .map_err(db_error)?;
+        }
+        if version < 5 {
+            db.execute_batch("CREATE TABLE bog_definitions (bog_id TEXT PRIMARY KEY REFERENCES bogs(id), definition TEXT NOT NULL, digest TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1, storage_dir TEXT NOT NULL DEFAULT 'data'); CREATE TABLE definition_jobs (id TEXT PRIMARY KEY, bog_id TEXT NOT NULL REFERENCES bogs(id), status TEXT NOT NULL, payload TEXT NOT NULL, created_at INTEGER NOT NULL); PRAGMA user_version=5;").map_err(db_error)?;
         }
         let foreign_key_errors: i64 = db
             .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |r| {
@@ -175,6 +178,7 @@ impl Registry {
             initial,
             None,
             maximum,
+            None,
         )
     }
     pub fn create_scoped(
@@ -194,6 +198,7 @@ impl Registry {
             ObservedState::Creating,
             None,
             32,
+            None,
         )
     }
     pub fn create_for_principal(
@@ -221,6 +226,7 @@ impl Registry {
             ObservedState::Creating,
             Some(p),
             global_maximum.min(32),
+            None,
         )
     }
     #[allow(clippy::too_many_arguments)] // One transaction must cover identity, scope, limits, and initial state.
@@ -235,6 +241,7 @@ impl Registry {
         initial: ObservedState,
         principal: Option<&crate::Principal>,
         global_maximum: usize,
+        definition: Option<&bog_definition::Definition>,
     ) -> Result<Bog, CloudError> {
         let name = name.trim().to_lowercase();
         if name.is_empty()
@@ -254,11 +261,12 @@ impl Registry {
                 "invalid name, template, or idempotency key",
             ));
         }
-        let digest = hash(
-            serde_json::json!({"name":name,"template":template})
-                .to_string()
-                .as_bytes(),
-        );
+        let mut request = serde_json::json!({"name":name,"template":template});
+        if let Some(definition) = definition {
+            request["definition_digest"] =
+                serde_json::json!(definition.digest().map_err(crate::definitions::invalid)?);
+        }
+        let digest = hash(request.to_string().as_bytes());
         let mut db = self.connection()?;
         let tx = db
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
@@ -359,6 +367,9 @@ impl Registry {
             params![request_key, digest, bog.id.to_string(),workspace.to_string()],
         )
         .map_err(db_error)?;
+        if let Some(definition) = definition {
+            tx.execute("INSERT INTO bog_definitions(bog_id,definition,digest,revision) VALUES (?1,?2,?3,1)", params![bog.id.to_string(), serde_json::to_string(definition).map_err(|_| CloudError::new("invalid_request", "invalid definition"))?, definition.digest().map_err(crate::definitions::invalid)?]).map_err(db_error)?;
+        }
         tx.commit().map_err(db_error)?;
         Ok(bog)
     }
@@ -463,4 +474,31 @@ fn parse_column<T: std::str::FromStr<Err = CloudError>>(
     raw.parse().map_err(|e| {
         rusqlite::Error::FromSqlConversionFailure(index, rusqlite::types::Type::Text, Box::new(e))
     })
+}
+
+impl Registry {
+    pub fn create_defined(
+        &self,
+        principal: &crate::Principal,
+        name: &str,
+        key: &str,
+        definition: &bog_definition::Definition,
+        maximum: usize,
+    ) -> Result<Bog, CloudError> {
+        let scoped = principal.kind() != crate::PrincipalKind::Operator;
+        self.create_in_workspace(
+            principal
+                .workspace_id()
+                .unwrap_or_else(crate::WorkspaceId::legacy),
+            name,
+            "records-v1",
+            key,
+            if scoped { 3 } else { maximum },
+            if scoped { 3 } else { usize::MAX },
+            ObservedState::Creating,
+            if scoped { Some(principal) } else { None },
+            if scoped { maximum.min(32) } else { maximum },
+            Some(definition),
+        )
+    }
 }

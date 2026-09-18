@@ -7,6 +7,11 @@ use tower::ServiceExt;
 
 // A deliberately small schema evaluator for the subset exercised by real worker responses.
 fn validate(document: &Value, schema: &Value, value: &Value) {
+    let document = if schema.get("$id").is_some() {
+        schema
+    } else {
+        document
+    };
     if let Some(reference) = schema["$ref"].as_str() {
         return validate(
             document,
@@ -68,6 +73,12 @@ fn validate(document: &Value, schema: &Value, value: &Value) {
     }
 }
 fn refs(document: &Value, value: &Value) {
+    // A nested JSON Schema resource establishes its own fragment resolution scope.
+    let document = if value.get("$id").is_some() {
+        value
+    } else {
+        document
+    };
     if let Some(r) = value.get("$ref").and_then(Value::as_str) {
         assert!(
             document.pointer(r.strip_prefix('#').unwrap()).is_some(),

@@ -58,7 +58,7 @@ fn v1_upgrade_preserves_ids_requests_and_unexpired_legacy_tokens() {
     assert_eq!(
         db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
             .unwrap(),
-        4
+        5
     );
     assert_eq!(
         db.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |r| r
@@ -107,7 +107,7 @@ fn assert_migrated(path: &std::path::Path) {
     assert_eq!(
         db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
             .unwrap(),
-        4
+        5
     );
     assert_eq!(
         db.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |r| r

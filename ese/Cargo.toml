@@ -33,13 +33,15 @@ unicode-general-category = "1"
 [build-dependencies]
 serde_json = "1"
 tokenizers = { version = "0", optional = true }
-minreq = { version = "2", features = ["https-native"] }
+minreq = { version = "2", features = ["https-rustls"] }
+sha2 = "0.10"
 
 [dev-dependencies]
 criterion = { version = "0", features = ["html_reports"] }
 model2vec-rs = "0"
 parquet = { version = "58" }
-minreq = { version = "2", features = ["https-native"] }
+minreq = { version = "2", features = ["https-rustls"] }
+sha2 = "0.10"
 
 [[bench]]
 name = "gooaq"

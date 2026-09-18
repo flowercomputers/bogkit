@@ -2,6 +2,60 @@
 use serde_json::{Value, json};
 pub const OPERATIONS: &[(&str, &str, &str, &str)] = &[
     (
+        "list_components",
+        "GET",
+        "/v1/components",
+        "Discover trusted components, limits and definition schema. Check enabled before configurable creation; hosted composition is feature gated.",
+    ),
+    (
+        "validate_definition",
+        "POST",
+        "/v1/definitions/validate",
+        "Validate and normalize a definition without provisioning or changing data.",
+    ),
+    (
+        "describe_definition",
+        "GET",
+        "/v1/bogs/{bog_id}/definition",
+        "Management credentials required. Read the active normalized definition, digest and revision.",
+    ),
+    (
+        "list_resources",
+        "GET",
+        "/v1/bogs/{bog_id}/resources",
+        "Discover exposed resources and operation schemas; private resources are omitted.",
+    ),
+    (
+        "query_resource",
+        "POST",
+        "/v1/bogs/{bog_id}/resources/{resource}/query",
+        "Invoke an exposed resource read with action get, list, read or top. Source and synchronous resources share an atomic commit.",
+    ),
+    (
+        "search_resource",
+        "POST",
+        "/v1/bogs/{bog_id}/resources/{resource}/search",
+        "Search an exposed BM25 or semantic resource; query <=4096 bytes and limit <=50.",
+    ),
+    (
+        "plan_definition_update",
+        "POST",
+        "/v1/bogs/{bog_id}/definition/plan",
+        "Management credentials required. Validate an additive definition against expected_revision without changing data.",
+    ),
+    (
+        "apply_definition_update",
+        "POST",
+        "/v1/bogs/{bog_id}/definition/apply",
+        "Management credentials required. Start a durable additive rebuild; old reads remain available and writes return retryable writes_paused until activation or failure.",
+    ),
+    (
+        "definition_update_status",
+        "GET",
+        "/v1/bogs/{bog_id}/definition/jobs/{job_id}",
+        "Management credentials required. Read durable build status. succeeded means the verified revision was atomically activated; describe_bog reports worker availability. recovery_required leaves writes paused until manager/worker recovery.",
+    ),
+    (
         "bog_metrics",
         "GET",
         "/v1/bogs/{bog_id}/metrics",
@@ -35,7 +89,7 @@ pub const OPERATIONS: &[(&str, &str, &str, &str)] = &[
         "create_bog",
         "POST",
         "/v1/bogs",
-        "Create a workspace database. Name and Idempotency-Key required; template defaults to records-v1.",
+        "Create a workspace database. Name and Idempotency-Key required. Use template (default records-v1) or definition when components.enabled is true; never both.",
     ),
     (
         "list_bogs",
@@ -144,7 +198,7 @@ pub fn events_schema() -> Value {
     }})
 }
 pub fn overview() -> Value {
-    json!({"api":"Bog Cloud","authentication":"/auth.md","openapi":"/openapi.json","mcp":"/mcp","templates":[{"id":"records-v1","default":true,"description":"JSON object records keyed by string; docs and total views."}],"workspace_selection":"workspace_id query parameter (REST) or tool argument (MCP), defaults to personal workspace","create_example":{"method":"POST","path":"/v1/bogs","headers":{"Content-Type":"application/json","Idempotency-Key":"your-stable-request-id"},"body":{"name":"my-records"}},"limits":{"bogs_per_workspace":3,"logical_bytes_per_bog":16777216}})
+    json!({"api":"Bog Cloud","components":"/v1/components","definition_validation":"/v1/definitions/validate","composition":"Check authenticated components.enabled; disabled by default. Trusted JSON definitions only.","authentication":"/auth.md","openapi":"/openapi.json","mcp":"/mcp","templates":[{"id":"records-v1","default":true,"description":"JSON object records keyed by string; docs and total views."}],"workspace_selection":"workspace_id query parameter (REST) or tool argument (MCP), defaults to personal workspace","create_example":{"method":"POST","path":"/v1/bogs","headers":{"Content-Type":"application/json","Idempotency-Key":"your-stable-request-id"},"body":{"name":"my-records"}},"limits":{"bogs_per_workspace":3,"logical_bytes_per_bog":16777216}})
 }
 pub fn openapi() -> Value {
     let mut paths = serde_json::Map::new();
@@ -158,6 +212,18 @@ pub fn openapi() -> Value {
             }
         }
         let body = match *name {
+            "validate_definition" => Some(
+                json!({"type":"object","required":["definition"],"properties":{"definition":bog_definition::schema()},"additionalProperties":false}),
+            ),
+            "plan_definition_update" | "apply_definition_update" => Some(
+                json!({"type":"object","required":["definition","expected_revision"],"properties":{"definition":bog_definition::schema(),"expected_revision":{"type":"integer","minimum":1}},"additionalProperties":false}),
+            ),
+            "search_resource" => Some(bog_definition::request_schema(
+                bog_definition::Action::Search,
+            )),
+            "query_resource" => Some(
+                json!({"type":"object","properties":{"action":{"enum":["get","list","read","top"]},"key":{"type":"string"},"limit":{"type":"integer","minimum":0,"maximum":1000},"offset":{"type":"integer","minimum":0,"maximum":10000}},"additionalProperties":false}),
+            ),
             "bog_metrics" => {
                 parameters.push(json!({"name":"window","in":"query","schema":{"type":"string","enum":["5m","1h"],"default":"1h"}}));
                 None
@@ -169,7 +235,7 @@ pub fn openapi() -> Value {
             "create_bog" => {
                 parameters.push(json!({"name":"Idempotency-Key","in":"header","required":true,"schema":{"type":"string","minLength":1}}));
                 Some(
-                    json!({"type":"object","required":["name"],"additionalProperties":false,"properties":{"name":{"type":"string","minLength":1},"template":{"type":"string","enum":["records-v1"],"default":"records-v1"}},"example":{"name":"my-records"}}),
+                    json!({"type":"object","required":["name"],"additionalProperties":false,"properties":{"name":{"type":"string","minLength":1},"template":{"type":"string","enum":["records-v1"],"default":"records-v1"},"definition":bog_definition::schema()},"not":{"required":["template","definition"]},"example":{"name":"my-records"}}),
                 )
             }
             "upsert_record" => Some(
@@ -354,6 +420,10 @@ fn finish_contract(mut paths: serde_json::Map<String, Value>) -> Value {
         &["fingerprint", "input", "views", "write", "template_version"],
     );
     let mut schemas = json!({"Bog":bog,"Error":error,"Workspace":workspace,"Invitation":invitation,"Token":token,"RecordSchema":schema});
+    schemas["ConfiguredSchema"] = object(
+        json!({"definition_version":integer,"revision":integer,"digest":string,"operations":array(record.clone()),"limits":record}),
+        &["definition_version", "revision", "digest", "operations"],
+    );
     schemas["Changes"] = object(
         json!({"cursor":string,"seq":integer,"changed":boolean,"reset":boolean}),
         &["cursor", "seq", "changed", "reset"],
@@ -387,6 +457,44 @@ fn finish_contract(mut paths: serde_json::Map<String, Value>) -> Value {
             op["operationId"] = json!(id);
             op["security"] = json!([{"bearer":[]},{"browserSession":[]}]);
             let result = match id.as_str() {
+                "list_components" => object(
+                    json!({"version":integer,"enabled":boolean,"definition_schema":record,"limits":record,"stages":array(string.clone()),"terminals":array(string.clone())}),
+                    &[
+                        "version",
+                        "enabled",
+                        "definition_schema",
+                        "limits",
+                        "stages",
+                        "terminals",
+                    ],
+                ),
+                "validate_definition" => object(
+                    json!({"valid":{"const":true},"definition":bog_definition::schema(),"digest":string,"operations":array(record.clone())}),
+                    &["valid", "definition", "digest", "operations"],
+                ),
+                "describe_definition" => object(
+                    json!({"definition":bog_definition::schema(),"revision":integer,"digest":string,"configured":boolean}),
+                    &["definition", "revision", "digest", "configured"],
+                ),
+                "list_resources" => object(
+                    json!({"resources":array(record.clone()),"revision":integer,"digest":string}),
+                    &["resources", "revision", "digest"],
+                ),
+                "query_resource" | "search_resource" => envelope(json!({})),
+                "plan_definition_update" => object(
+                    json!({"compatible":{"const":true},"expected_revision":integer,"target_digest":string,"requires_rebuild":boolean,"changes":record}),
+                    &[
+                        "compatible",
+                        "expected_revision",
+                        "target_digest",
+                        "requires_rebuild",
+                        "changes",
+                    ],
+                ),
+                "apply_definition_update" | "definition_update_status" => object(
+                    json!({"job_id":string,"bog_id":string,"status":{"enum":["building","activating","succeeded","failed","recovery_required"]},"error":{"type":["string","null"]},"revision":integer}),
+                    &["job_id", "bog_id", "status"],
+                ),
                 "bog_metrics" => metrics_schema(),
                 "bog_events" => events_schema(),
                 "create_bog" | "describe_bog" => reference("Bog"),
@@ -395,7 +503,9 @@ fn finish_contract(mut paths: serde_json::Map<String, Value>) -> Value {
                     json!({"workspaces":array(reference("Workspace"))}),
                     &["workspaces"],
                 ),
-                "schema" => reference("RecordSchema"),
+                "schema" => {
+                    json!({"oneOf":[reference("RecordSchema"),reference("ConfiguredSchema")]})
+                }
                 "wait_for_change" => reference("Changes"),
                 "get_record" => envelope(record.clone()),
                 "upsert_record" => object(
@@ -446,7 +556,9 @@ fn finish_contract(mut paths: serde_json::Map<String, Value>) -> Value {
                 op["responses"]["204"] =
                     json!({"description":"Credential revoked; no response body"});
             } else {
-                op["responses"][if ["create_bog", "delete_bog"].contains(&id.as_str()) {
+                op["responses"][if ["create_bog", "delete_bog", "apply_definition_update"]
+                    .contains(&id.as_str())
+                {
                     "202"
                 } else {
                     "200"

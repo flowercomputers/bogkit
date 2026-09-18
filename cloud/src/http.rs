@@ -145,7 +145,7 @@ pub fn error_response(error: CloudError, request_id: &str) -> Response {
         "payload_too_large" => 413,
         "capacity" => 429,
         "method_not_allowed" => 405,
-        "unavailable" => 503,
+        "unavailable" | "writes_paused" => 503,
         "response_too_large" => 413,
         _ => 400,
     };
@@ -353,6 +353,23 @@ async fn dispatch_inner(
         .await
         .map_err(|_| CloudError::new("payload_too_large", "request exceeds 1 MiB"))?;
     let parse = || serde_json::from_slice::<Value>(&bytes).map_err(|_| bad("invalid JSON body"));
+    if method == "GET" && path.as_slice() == ["v1", "components"] {
+        return service
+            .execute_with_request_id(&principal, Operation::ListComponents, request_id)
+            .await;
+    }
+    if method == "POST" && path.as_slice() == ["v1", "definitions", "validate"] {
+        let value = parse()?;
+        return service
+            .execute_with_request_id(
+                &principal,
+                Operation::ValidateDefinition {
+                    definition: value.get("definition").cloned().unwrap_or(value),
+                },
+                request_id,
+            )
+            .await;
+    }
     if path[1] != "bogs" {
         service.rate_limit(&principal)?;
         let ok = |body| Ok(crate::OperationResult { status: 200, body });
@@ -505,6 +522,51 @@ async fn dispatch_inner(
         None
     };
     let op = match (method.as_str(), path.len()) {
+        ("GET", 4) if path[3] == "definition" => Operation::DescribeDefinition {
+            bog_id: id.unwrap(),
+        },
+        ("GET", 4) if path[3] == "resources" => Operation::ListResources {
+            bog_id: id.unwrap(),
+        },
+        ("POST", 6) if path[3] == "resources" && path[5] == "query" => Operation::QueryResource {
+            bog_id: id.unwrap(),
+            resource: path[4].clone(),
+            query: parse()?,
+        },
+        ("POST", 6) if path[3] == "resources" && path[5] == "search" => Operation::SearchResource {
+            bog_id: id.unwrap(),
+            resource: path[4].clone(),
+            query: parse()?,
+        },
+        ("POST", 5) if path[3] == "definition" && (path[4] == "plan" || path[4] == "apply") => {
+            let v = parse()?;
+            let definition = v
+                .get("definition")
+                .cloned()
+                .ok_or_else(|| bad("definition required"))?;
+            let expected_revision = v["expected_revision"]
+                .as_u64()
+                .ok_or_else(|| bad("expected_revision required"))?;
+            if path[4] == "plan" {
+                Operation::PlanDefinitionUpdate {
+                    bog_id: id.unwrap(),
+                    definition,
+                    expected_revision,
+                }
+            } else {
+                Operation::ApplyDefinitionUpdate {
+                    bog_id: id.unwrap(),
+                    definition,
+                    expected_revision,
+                }
+            }
+        }
+        ("GET", 6) if path[3] == "definition" && path[4] == "jobs" => {
+            Operation::DefinitionUpdateStatus {
+                bog_id: id.unwrap(),
+                job_id: path[5].clone(),
+            }
+        }
         ("GET", 4) if path[3] == "metrics" || path[3] == "events" => {
             let allowed = if path[3] == "metrics" {
                 &["workspace_id", "window"][..]
@@ -567,12 +629,30 @@ async fn dispatch_inner(
         },
         ("GET", 2) => Operation::ListBogs,
         ("POST", 2) => {
-            let (name, template, idempotency_key) =
-                crate::contract::validate_creation(&parse()?, key.as_deref(), "Idempotency-Key")?;
-            Operation::CreateBog {
-                name,
-                template,
-                idempotency_key,
+            let value = parse()?;
+            if let Some(definition) = value.get("definition") {
+                if value
+                    .as_object()
+                    .is_none_or(|o| o.keys().any(|k| k != "name" && k != "definition"))
+                {
+                    return Err(bad("expected name and definition only"));
+                }
+                Operation::CreateDefinedBog {
+                    name: value["name"]
+                        .as_str()
+                        .ok_or_else(|| bad("name required"))?
+                        .into(),
+                    definition: definition.clone(),
+                    idempotency_key: key.clone().ok_or_else(|| bad("Idempotency-Key required"))?,
+                }
+            } else {
+                let (name, template, idempotency_key) =
+                    crate::contract::validate_creation(&value, key.as_deref(), "Idempotency-Key")?;
+                Operation::CreateBog {
+                    name,
+                    template,
+                    idempotency_key,
+                }
             }
         }
         ("DELETE", 3) => {

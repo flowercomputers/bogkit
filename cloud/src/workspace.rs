@@ -1127,6 +1127,13 @@ impl Auth {
         if let Some(a) = a {
             member(&tx, a, w, true)?;
         }
+        let building:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM definition_jobs WHERE bog_id=?1 AND status IN ('building','activating','recovery_required'))",[bog.to_string()],|r|r.get(0)).map_err(db_error)?;
+        if building {
+            return Err(CloudError::new(
+                "conflict",
+                "definition build is in progress",
+            ));
+        }
         let n=tx.execute("UPDATE bogs SET deleted_at=COALESCE(deleted_at,?3),desired_state='stopped' WHERE id=?1 AND workspace_id=?2",params![bog.to_string(),w.to_string(),now()]).map_err(db_error)?;
         if n == 0 {
             return Err(CloudError::new("not_found", "database not found"));

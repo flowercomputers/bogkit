@@ -10,6 +10,8 @@ pub struct ArchiveFile {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub definition: Option<crate::definitions::ActiveDefinition>,
     pub format_version: u32,
     pub template_id: String,
     pub template_version: String,
@@ -61,7 +63,21 @@ fn snapshot(path: &std::path::Path) -> Result<LogicalSnapshot, CloudError> {
     result
 }
 pub fn validate_manifest(m: &Manifest) -> Result<(), CloudError> {
-    if m.format_version != 1
+    let configured = m.definition.is_some();
+    if let Some(active) = &m.definition {
+        active.definition.validate().map_err(|_| invalid())?;
+        if active.revision == 0
+            || active.revision >= i64::MAX as u64
+            || active.definition.digest().map_err(|_| invalid())? != active.digest
+            || !active.configured
+        {
+            return Err(invalid());
+        }
+        if m.files.len() != 1 || m.files[0].path != "records.json" {
+            return Err(invalid());
+        }
+    }
+    if m.format_version != if configured { 2 } else { 1 }
         || m.template_id != "records-v1"
         || m.template_version != "records-v1"
         || m.files.is_empty()
@@ -72,7 +88,9 @@ pub fn validate_manifest(m: &Manifest) -> Result<(), CloudError> {
     let mut seen = HashSet::new();
     let mut total = 0u64;
     for file in &m.files {
-        if !(file.path.starts_with("data/") || file.path == "data.schema")
+        if !(file.path.starts_with("data/")
+            || file.path == "data.schema"
+            || (configured && file.path == "records.json"))
             || file
                 .path
                 .split('/')
@@ -262,6 +280,7 @@ fn write_backup(root: &Path, source: &Path, id: BogId) -> Result<String, CloudEr
         });
         files.sort_by(|a, b| a.path.cmp(&b.path));
         let manifest = Manifest {
+            definition: None,
             format_version: 1,
             template_id: "records-v1".into(),
             template_version: "records-v1".into(),
@@ -344,6 +363,12 @@ impl Supervisor {
     }
     async fn backup_inner(self: Arc<Self>, id: BogId) -> Result<String, CloudError> {
         let guard = self.gate(id)?.write_owned().await;
+        if self.registry.building(id)? {
+            return Err(CloudError::new(
+                "conflict",
+                "definition build is in progress",
+            ));
+        }
         let original = self.registry.get(id)?;
         if original.desired_state == DesiredState::Running {
             self.start_locked(id).await?;
@@ -357,7 +382,16 @@ impl Supervisor {
                     .set_status(id, ObservedState::Maintenance, None)?;
                 let root = self.config.root.join("backups");
                 let source = self.instance_dir(id);
-                match tokio::task::spawn_blocking(move || write_backup(&root, &source, id)).await {
+                let active = self.registry.definition(id)?;
+                match tokio::task::spawn_blocking(move || {
+                    if active.configured {
+                        write_configured_backup(&root, &source, id, active)
+                    } else {
+                        write_backup(&root, &source, id)
+                    }
+                })
+                .await
+                {
                     Ok(result) => result,
                     Err(_) => Err(CloudError::new("unavailable", "backup copy failed")),
                 }
@@ -398,6 +432,22 @@ impl Supervisor {
             tokio::task::spawn_blocking(move || load_archive(&root, &archive_id))
                 .await
                 .map_err(|_| invalid())??;
+        if let Some(active) = &manifest.definition {
+            self.config
+                .composable_limits
+                .validate_definition(&active.definition)
+                .map_err(crate::definitions::invalid)?;
+        }
+        let _build_permit = if manifest.definition.is_some() {
+            Some(self.reserve_build()?)
+        } else {
+            None
+        };
+        let candidate_slot = if manifest.definition.is_some() {
+            Some(self.reserve_candidate()?)
+        } else {
+            None
+        };
         crate::config::require_free_space(
             &self.config.root,
             manifest
@@ -415,12 +465,35 @@ impl Supervisor {
         self.registry
             .set_status(bog.id, ObservedState::Restoring, None)?;
         let destination = self.instance_dir(bog.id);
+        let restored_definition = manifest.definition.clone();
+        let reserve = self.config.min_free_bytes;
+        let limits = self.config.composable_limits.clone();
+        let timeout = limits.build_timeout_seconds;
         let result = tokio::task::spawn_blocking(move || {
             fs::create_dir(&destination).map_err(io_error)?;
             private_directory(&destination)?;
-            copy_files(&archive, &destination, &manifest)?;
-            if snapshot(&destination.join("data"))? != manifest.logical {
-                return Err(invalid());
+            if let Some(active) = &manifest.definition {
+                let records: Vec<bog_runtime::Record> = serde_json::from_slice(
+                    &fs::read(real_file(&archive, "records.json")?).map_err(io_error)?,
+                )
+                .map_err(|_| invalid())?;
+                crate::definitions::rebuild(
+                    &destination.join("data"),
+                    active.definition.clone(),
+                    &records,
+                    &(
+                        manifest.logical.count as usize,
+                        manifest.logical.records_sha256.clone(),
+                    ),
+                    std::time::Instant::now() + std::time::Duration::from_secs(timeout),
+                    reserve,
+                    limits,
+                )?;
+            } else {
+                copy_files(&archive, &destination, &manifest)?;
+                if snapshot(&destination.join("data"))? != manifest.logical {
+                    return Err(invalid());
+                }
             }
             Ok(())
         })
@@ -431,6 +504,10 @@ impl Supervisor {
                 .set_status(bog.id, ObservedState::Failed, Some("restore_failed"))?;
             self.registry.set_desired(bog.id, false)?;
             return Err(e);
+        }
+        drop(candidate_slot);
+        if let Some(active) = restored_definition {
+            self.registry.connection()?.execute("INSERT INTO bog_definitions(bog_id,definition,digest,revision,storage_dir) VALUES (?1,?2,?3,?4,'data')",rusqlite::params![bog.id.to_string(),active.definition.normalized_json().map_err(|_|invalid())?,active.digest,active.revision as i64]).map_err(crate::registry::db_error)?;
         }
         self.registry
             .set_status(bog.id, ObservedState::Creating, None)?;
@@ -444,4 +521,77 @@ impl Supervisor {
             }
         }
     }
+}
+
+fn write_configured_backup(
+    root: &Path,
+    source: &Path,
+    id: BogId,
+    active: crate::definitions::ActiveDefinition,
+) -> Result<String, CloudError> {
+    private_directory(root)?;
+    let mut runtime =
+        bog_runtime::Runtime::open(source.join(&active.storage_dir), active.definition.clone())
+            .map_err(crate::definitions::invalid)?;
+    let first = runtime.export(0);
+    let logical = LogicalSnapshot {
+        count: first.record_count as u64,
+        records_sha256: first.source_digest.clone(),
+    };
+    let mut records = first.records;
+    let mut next = first.next_offset;
+    while let Some(offset) = next {
+        let page = runtime.export(offset);
+        if page.records.is_empty() {
+            return Err(invalid());
+        }
+        records.extend(page.records);
+        next = page.next_offset;
+    }
+    runtime.checkpoint().map_err(crate::definitions::invalid)?;
+    if records.len() as u64 != logical.count {
+        return Err(invalid());
+    }
+    crate::config::require_free_space(root, 64 * 1024 * 1024 + 16 * 1024 * 1024)?;
+    let archive_id = uuid::Uuid::new_v4().to_string();
+    let stage = root.join(format!(".staging-{archive_id}"));
+    private_directory(&stage)?;
+    let result = (|| {
+        crate::definitions::write_json(
+            &stage.join("records.json"),
+            &serde_json::to_value(&records).map_err(|_| invalid())?,
+        )?;
+        let (size, sha256) = digest_file(&stage.join("records.json"))?;
+        let manifest = Manifest {
+            format_version: 2,
+            definition: Some(active),
+            template_id: "records-v1".into(),
+            template_version: "records-v1".into(),
+            source_bog_id: id.to_string(),
+            build_commit: option_env!("BOG_BUILD_COMMIT")
+                .unwrap_or("development")
+                .into(),
+            created_at: crate::registry::now(),
+            files: vec![ArchiveFile {
+                path: "records.json".into(),
+                size,
+                sha256,
+            }],
+            logical,
+        };
+        validate_manifest(&manifest)?;
+        crate::definitions::write_json(
+            &stage.join("manifest.json"),
+            &serde_json::to_value(manifest).map_err(|_| invalid())?,
+        )?;
+        fs::rename(&stage, root.join(&archive_id)).map_err(io_error)?;
+        fs::File::open(root)
+            .and_then(|f| f.sync_all())
+            .map_err(io_error)?;
+        Ok(archive_id)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_dir_all(stage);
+    }
+    result
 }

@@ -46,3 +46,4 @@ pub mod app_access;
 pub mod observability;
 
 pub mod domains;
+pub mod definitions;

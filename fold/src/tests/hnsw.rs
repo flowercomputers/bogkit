@@ -77,3 +77,68 @@ fn hnsw_nearest_upsert_retract_recover() {
         assert_eq!(ids(&idx.search(&[9.0, 9.0, 9.0, 9.0]))[0], 3);
     });
 }
+
+#[test]
+fn hnsw_keyed_replacement_lifecycle() {
+    let path = fresh_db("hnsw_keyed.db");
+    let mut st = KeyedStream::new(&path, Sink::new("vecs", L2, 42));
+    st.wtx(|tx| {
+        tx.upsert(&1, &[0.0; 4]);
+    });
+    st.wtx(|tx| {
+        tx.upsert(&1, &[10.0; 4]);
+    });
+    st.rtx(|idx| {
+        assert_eq!(idx.len(), 1);
+        assert_eq!(idx.search(&[10.0; 4])[0].score, 0.0);
+    });
+    st.wtx(|tx| {
+        tx.upsert(&1, &[20.0; 4]);
+        tx.upsert(&1, &[30.0; 4]);
+        tx.upsert(&2, &[40.0; 4]);
+        tx.remove(&2);
+    });
+    st.rtx(|idx| {
+        assert_eq!(idx.len(), 1);
+        assert_eq!(idx.search(&[30.0; 4])[0].score, 0.0);
+    });
+    let aborted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        st.wtx(|tx| {
+            tx.upsert(&1, &[50.0; 4]);
+            tx.rtx(|idx| assert_eq!(idx.search(&[50.0; 4])[0].score, 0.0));
+            panic!("abort replacement");
+        });
+    }));
+    assert!(aborted.is_err());
+    st.rtx(|idx| assert_eq!(idx.search(&[30.0; 4])[0].score, 0.0));
+    drop(st);
+    let mut st = KeyedStream::new(&path, Sink::new("vecs", L2, 42));
+    st.rtx(|idx| assert_eq!(idx.search(&[30.0; 4])[0].score, 0.0));
+    st.wtx(|tx| {
+        tx.upsert(&1, &[60.0; 4]);
+        tx.remove(&1);
+    });
+    st.rtx(|idx| assert_eq!(idx.len(), 0));
+}
+
+#[test]
+fn hnsw_zero_delta_is_a_noop() {
+    let mut st = Stream::new(fresh_db("hnsw_zero_delta.db"), Sink::new("vecs", L2, 42));
+    st.wtx(|tx| tx.insert(&Keyed::new(1, [0.0; 4])));
+    st.wtx(|tx| {
+        tx.push(&Keyed::new(1, [10.0; 4]), 0);
+        tx.push(&Keyed::new(2, [20.0; 4]), 0);
+    });
+    st.rtx(|idx| {
+        assert_eq!(idx.len(), 1);
+        assert_eq!(idx.search(&[0.0; 4])[0].score, 0.0);
+    });
+    st.wtx(|tx| {
+        tx.insert(&Keyed::new(1, [30.0; 4]));
+        tx.push(&Keyed::new(1, [40.0; 4]), 0);
+    });
+    st.rtx(|idx| {
+        assert_eq!(idx.len(), 1);
+        assert_eq!(idx.search(&[30.0; 4])[0].score, 0.0);
+    });
+}

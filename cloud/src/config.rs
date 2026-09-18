@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 #[derive(Clone, Debug)]
 pub struct Config {
+    pub composable_enabled: bool,
+    pub composable_limits: bog_definition::Limits,
     pub root: PathBuf,
     pub worker_binary: PathBuf,
     pub max_active: usize,
@@ -12,6 +14,8 @@ pub struct Config {
 impl Config {
     pub fn new(root: PathBuf, worker_binary: PathBuf) -> Self {
         Self {
+            composable_enabled: false,
+            composable_limits: bog_definition::Limits::default(),
             root,
             worker_binary,
             max_active: 8,
@@ -61,6 +65,18 @@ impl Config {
                 )),
             }
         }
+        config.composable_enabled =
+            std::env::var("BOG_CLOUD_COMPOSABLE").is_ok_and(|v| v == "true");
+        match std::env::var("BOG_CLOUD_COMPOSABLE_LIMITS") {
+            Ok(raw) => config.composable_limits = parse_composable_limits(&raw)?,
+            Err(std::env::VarError::NotPresent) => {}
+            Err(_) => {
+                return Err(crate::CloudError::new(
+                    "invalid_config",
+                    "invalid BOG_CLOUD_COMPOSABLE_LIMITS JSON",
+                ));
+            }
+        }
         config.max_active = integer("BOG_CLOUD_MAX_ACTIVE", 8)? as usize;
         config.max_starts = integer("BOG_CLOUD_MAX_STARTS", 2)? as usize;
         config.min_free_bytes = integer("BOG_CLOUD_MIN_FREE_BYTES", 64 * 1024 * 1024)?;
@@ -75,5 +91,42 @@ impl Config {
             ));
         }
         Ok(config)
+    }
+}
+
+fn parse_composable_limits(raw: &str) -> Result<bog_definition::Limits, crate::CloudError> {
+    let limits: bog_definition::Limits = serde_json::from_str(raw).map_err(|_| {
+        crate::CloudError::new("invalid_config", "invalid BOG_CLOUD_COMPOSABLE_LIMITS JSON")
+    })?;
+    limits.validate().map_err(|_| {
+        crate::CloudError::new(
+            "invalid_config",
+            "composable limits must be positive and cannot exceed hard ceilings",
+        )
+    })?;
+    Ok(limits)
+}
+#[cfg(test)]
+mod limit_tests {
+    use super::*;
+    #[test]
+    fn environment_limits_are_lowering_only_and_strict() {
+        let limits =
+            parse_composable_limits(r#"{"resources":3,"hits":2,"build_timeout_seconds":10}"#)
+                .unwrap();
+        assert_eq!(limits.resources, 3);
+        assert_eq!(limits.hits, 2);
+        assert_eq!(limits.vectors, 10000);
+        for raw in [
+            "invalid",
+            r#"{"resources":17}"#,
+            r#"{"hits":0}"#,
+            r#"{"unknown":1}"#,
+        ] {
+            assert_eq!(
+                parse_composable_limits(raw).unwrap_err().code,
+                "invalid_config"
+            );
+        }
     }
 }

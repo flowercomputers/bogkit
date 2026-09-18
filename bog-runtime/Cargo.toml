@@ -1,0 +1,17 @@
+[package]
+name = "bog-runtime"
+version = "0.0.0"
+edition = "2024"
+publish = false
+[dependencies]
+bog-definition = { path = "../bog-definition" }
+fold = { path = "../fold" }
+anny = { path = "../anny" }
+ese = { path = "../ese", default-features = false, features = ["dim-512"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+schemars = "1"
+sha2 = "0.10"
+thiserror = "2"
+[dev-dependencies]
+tempfile = "3"

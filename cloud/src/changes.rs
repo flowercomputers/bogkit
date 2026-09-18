@@ -101,9 +101,14 @@ impl ChangeWaiter {
         service.auth.authorize(principal, Some(id), false)?;
         let lease = service.supervisor.lease(id).await?;
         let before = lease.generation;
+        let sequence_path = if service.registry.definition(id)?.configured {
+            "/_cloud/sequence"
+        } else {
+            "/views/total"
+        };
         let (status, body) = lease
             .client
-            .request(reqwest::Method::GET, "/views/total", None)
+            .request(reqwest::Method::GET, sequence_path, None)
             .await?;
         let after = service.registry.get(id)?.generation;
         service.auth.authorize(principal, Some(id), false)?;

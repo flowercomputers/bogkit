@@ -13,6 +13,30 @@ mod wordpiece;
 /// ```
 pub const DIMENSIONS: usize = lookup::DIMENSIONS;
 
+/// Reproducible identity of the model, tokenizer, preprocessing, dimensions,
+/// and stored scalar representation used by this build.
+pub const ENCODER_ID: &str = lookup::ENCODER_ID;
+
+/// Machine-readable details behind [`ENCODER_ID`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EncoderIdentity {
+    pub model_revision: &'static str,
+    pub model_sha256: &'static str,
+    pub tokenizer_sha256: &'static str,
+    pub preprocessing_version: &'static str,
+    pub dimensions: usize,
+    pub scalar_type: &'static str,
+}
+
+pub const ENCODER_IDENTITY: EncoderIdentity = EncoderIdentity {
+    model_revision: lookup::MODEL_REVISION,
+    model_sha256: lookup::MODEL_SHA256,
+    tokenizer_sha256: lookup::TOKENIZER_SHA256,
+    preprocessing_version: lookup::PREPROCESSING_VERSION,
+    dimensions: DIMENSIONS,
+    scalar_type: lookup::SCALAR_TYPE,
+};
+
 /// Encodes a batch of texts into embedding vectors.
 ///
 /// Each input string is independently normalized, tokenized, and encoded.
