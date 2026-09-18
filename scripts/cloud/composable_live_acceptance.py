@@ -188,6 +188,9 @@ class Probe:
             self.connect()
         check(self.http('GET', self.base)['name'] == 'composable-live-' + self.state['run_id'], 'Bog identity mismatch')
         reader = self.mint('read')
+        cursor = self.http('GET', self.base + '/changes?timeout=0', token=reader)['cursor']
+        waited = self.tool('wait_for_change', bog_id=self.state['bog_id'], cursor=cursor, timeout=0)
+        check(not waited['changed'] and not waited['reset'], 'cross-transport wait mismatch')
         for record in fixture('todo-records.json'):
             got = self.http('GET', self.base + '/docs/' + record['key'], token=reader)['data']
             check(digest(got) == digest(record['data']), 'record mismatch')
