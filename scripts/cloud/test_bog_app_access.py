@@ -3,6 +3,9 @@ import importlib.util
 import io
 import json
 import os
+import selectors
+import subprocess
+import sys
 from pathlib import Path
 import tempfile
 import time
@@ -40,7 +43,8 @@ class InstallerTests(unittest.TestCase):
     def test_auth_origin_and_permissions(self):
         self.cache()
         self.assertEqual(helper.read_auth(self.auth,self.base),'fixture-agent-secret')
-        self.assertIsNone(helper.read_auth(self.auth,'https://other.example'))
+        with self.assertRaisesRegex(helper.Failure, 'origin does not match'):
+            helper.read_auth(self.auth,'https://other.example')
         self.auth.chmod(0o644)
         with self.assertRaises(helper.Failure): helper.read_auth(self.auth,self.base)
     def test_install_never_prints_secret(self):
@@ -55,6 +59,75 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(json.loads(self.output.read_text())['BOG_CLOUD_TOKEN'],'fixture-app-secret')
         self.assertNotIn('fixture-app-secret',output.getvalue())
         self.assertNotIn('fixture-agent-secret',output.getvalue())
+    def test_canonical_default_reuses_authorization(self):
+        self.base = 'https://cloud.bog.new'
+        self.cache()
+        args = self.args()[2:]
+        with patch.object(helper, 'request', return_value=(200, {'bog_id':'bog', 'id':'id', 'token':'app-secret'})) as request, patch.object(helper, 'authorize') as authorize, contextlib.redirect_stdout(io.StringIO()):
+            helper.main(args)
+        authorize.assert_not_called()
+        self.assertTrue(all(call.args[0] == self.base for call in request.call_args_list))
+
+    def test_invalid_cache_fails_without_network_or_secret_output(self):
+        for value in [[], {'origin':self.base, 'access_token':'secret', 'expires_at':'later'}, {'origin':self.base, 'access_token':'secret', 'expires_at':float('nan')}]:
+            helper.write_private(self.auth, value, replace=True)
+            with patch.object(helper, 'request') as request:
+                with self.assertRaises(helper.Failure) as error: helper.main(self.args())
+                self.assertNotIn('secret', str(error.exception))
+                request.assert_not_called()
+
+    def test_expired_authorization_requires_fresh_approval(self):
+        helper.write_private(self.auth, {'origin':self.base, 'access_token':'old-secret', 'expires_at':0})
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out): self.assertIsNone(helper.read_auth(self.auth, self.base))
+        self.assertIn('expired', out.getvalue())
+        self.assertNotIn('old-secret', out.getvalue())
+
+    def test_auth_symlinks_fifo_and_non600_rejected(self):
+        self.cache()
+        link = self.path / 'link'
+        link.symlink_to(self.auth)
+        with self.assertRaises(helper.Failure): helper.read_auth(link, self.base)
+        fifo = self.path / 'fifo'
+        os.mkfifo(fifo, 0o600)
+        with self.assertRaises(helper.Failure): helper.read_auth(fifo, self.base)
+        self.auth.chmod(0o400)
+        with self.assertRaises(helper.Failure): helper.read_auth(self.auth, self.base)
+
+    def test_approval_prompt_visible_through_pipe_before_poll(self):
+        code = """import importlib.util, pathlib, time
+spec = importlib.util.spec_from_file_location('helper', %r)
+h = importlib.util.module_from_spec(spec); spec.loader.exec_module(h)
+h.request = lambda *a, **k: (200, {'verification_uri':'https://cloud.bog.new/auth/device/approve', 'user_code':'PUBLICCODE', 'device_code':'PRIVATESECRET'})
+sleep = time.sleep
+h.time.sleep = lambda seconds: sleep(30)
+h.authorize('https://cloud.bog.new', pathlib.Path(%r))
+""" % (str(Path(helper.__file__).absolute()), str(self.auth))
+        # No -u or PYTHONUNBUFFERED: a redirected agent log must work normally.
+        env = os.environ.copy(); env.pop('PYTHONUNBUFFERED', None)
+        process = subprocess.Popen([sys.executable, '-c', code], stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+        try:
+            selector = selectors.DefaultSelector(); selector.register(process.stdout, selectors.EVENT_READ)
+            data = ''
+            deadline = time.monotonic() + 5
+            while 'PUBLICCODE' not in data and time.monotonic() < deadline:
+                self.assertTrue(selector.select(timeout=max(0, deadline - time.monotonic())), 'approval prompt remained buffered')
+                chunk = os.read(process.stdout.fileno(), 8192).decode()
+                if not chunk: break
+                data += chunk
+            self.assertIn('PUBLICCODE', data)
+            self.assertNotIn('PRIVATESECRET', data)
+            self.assertIsNone(process.poll())
+            selector.close()
+        finally:
+            process.kill(); process.communicate()
+
+    def test_uncertain_redemption_explains_recovery(self):
+        self.cache()
+        with patch.object(helper, 'request', side_effect=[(200, {}), helper.Failure('transport failed')]):
+            with self.assertRaisesRegex(helper.Failure, 'outcome is uncertain.*revoke'):
+                helper.main(self.args())
+
     def test_existing_output_stops_before_redemption(self):
         self.output.write_text('existing')
         with patch.object(helper,'request') as request:

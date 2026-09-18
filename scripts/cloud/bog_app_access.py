@@ -2,6 +2,7 @@
 """Install Bog app access privately. Python 3.9+, standard library only."""
 import argparse
 import json
+import math
 import os
 from pathlib import Path
 import stat
@@ -56,7 +57,9 @@ def request(base, path, body=None, token=None):
 
 def read_auth(path, base):
     try:
-        flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0)
+        if path.is_symlink():
+            raise Failure('Helper authorization must not be a symbolic link.')
+        flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0)
         fd = os.open(path, flags)
     except FileNotFoundError:
         return None
@@ -64,14 +67,22 @@ def read_auth(path, base):
         raise Failure('Cannot open the private helper authorization file safely.') from error
     with os.fdopen(fd) as handle:
         info = os.fstat(handle.fileno())
-        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600:
             raise Failure('Helper authorization must be an owned regular file with mode 600.')
         try:
             value = json.load(handle)
-        except ValueError:
-            return None
-    if value.get('origin') == base and value.get('expires_at', 0) > time.time() + 30:
-        return value.get('access_token')
+        except ValueError as error:
+            raise Failure('Invalid helper authorization JSON; select a valid private authorization file.') from error
+    if not isinstance(value, dict):
+        raise Failure('Helper authorization must be a JSON object.')
+    if value.get('origin') != base:
+        raise Failure('Helper authorization origin does not match --origin. Select the matching authorization file or a new cache path.')
+    expiry, token = value.get('expires_at'), value.get('access_token')
+    if isinstance(expiry, bool) or not isinstance(expiry, (int, float)) or not math.isfinite(expiry) or not isinstance(token, str) or not token.strip() or any(ord(c) < 32 or ord(c) == 127 for c in token):
+        raise Failure('Helper authorization needs a valid access_token and numeric expires_at timestamp.')
+    if expiry > time.time() + 30:
+        return token
+    print('Saved helper authorization has expired or is about to expire; a fresh approval is required.', flush=True)
     return None
 
 
@@ -114,8 +125,8 @@ def authorize(base, auth_file):
     approval = device['verification_uri']
     if origin(urllib.parse.urlunsplit((*urllib.parse.urlsplit(approval)[:2], '', '', ''))) != base:
         raise Failure('Approval URL does not match the service origin.')
-    print('This helper needs its own approval; it does not read Codex or Claude credentials.')
-    print('Approve at: ' + approval + '?user_code=' + urllib.parse.quote(device['user_code']))
+    print('Approve this helper, or reuse your own device authorization with --auth-file. Codex and Claude private storage is never read.', flush=True)
+    print('Approve at: ' + approval + '?user_code=' + urllib.parse.quote(device['user_code']), flush=True)
     interval = max(5, int(device.get('interval', 5)))
     deadline = time.monotonic() + min(600, int(device.get('expires_in', 600)))
     while time.monotonic() < deadline:
@@ -135,11 +146,11 @@ def authorize(base, auth_file):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--origin', default='https://flower-bog-cloud.fly.dev')
+    parser.add_argument('--origin', default='https://cloud.bog.new')
     parser.add_argument('--handoff', required=True)
     parser.add_argument('--output', required=True, help='Private JSON file for the application; never printed')
     parser.add_argument('--replace', action='store_true', help='Explicitly replace the selected output file')
-    parser.add_argument('--auth-file', default=str(Path.home() / '.config/bog-cloud/helper-auth.json'), help='This helper’s own private authorization cache')
+    parser.add_argument('--auth-file', default=str(Path.home() / '.config/bog-cloud/helper-auth.json'), help='Owned regular mode-600 JSON file containing origin, access_token and expires_at (Unix seconds). Reuses your own device authorization for the selected origin; otherwise saves a new approval here. Never select Codex or Claude private storage.')
     args = parser.parse_args(argv)
     base = origin(args.origin)
     try:
@@ -159,14 +170,17 @@ def main(argv=None):
         status, _ = request(base, '/v1/app-access/' + handoff, token=token)
     if status != 200:
         raise Failure('Handoff unavailable. Use its initiating account and prepare a fresh handoff if expired or consumed.')
-    status, result = request(base, '/v1/app-access/' + handoff + '/redeem', {}, token)
+    try:
+        status, result = request(base, '/v1/app-access/' + handoff + '/redeem', {}, token)
+    except Failure as error:
+        raise Failure('Redemption outcome is uncertain. Prepare a new handoff; ask a workspace owner to revoke any unused credential that may have been issued.') from error
     if status != 200:
         raise Failure('Redemption failed. Check workspace access and prepare a new handoff. Do not reuse a consumed handoff.')
     try:
         write_private(output, {'BOG_CLOUD_URL': base, 'BOG_ID': result['bog_id'], 'BOG_CLOUD_TOKEN': result['token'], 'credential_id': result['id']}, args.replace)
     except (OSError, Failure, KeyError) as error:
-        raise Failure('Delivery failed after redemption. Revoke the issued credential in the console, then prepare a new handoff.') from error
-    print('App configuration saved privately with mode 600. No credential was printed.')
+        raise Failure('Delivery failed after redemption. Ask a workspace owner to revoke the issued credential, then prepare a new handoff.') from error
+    print('App configuration saved privately with mode 600. No credential was printed.', flush=True)
 
 
 if __name__ == '__main__':
@@ -174,9 +188,9 @@ if __name__ == '__main__':
     try:
         main()
     except Failure as error:
-        print(str(error), file=sys.stderr)
+        print(str(error), file=sys.stderr, flush=True)
         sys.exit(1)
     except (OSError, KeyError, TypeError, KeyboardInterrupt):
         # Known failures are deliberately generic: never serialize arbitrary server responses.
-        print('Installation could not complete. Check the selected paths, approval and handoff expiry; after a redemption attempt, prepare a new handoff; revoke any unused issued credential as a workspace owner, or ask an owner to revoke it.', file=sys.stderr)
+        print('Installation could not complete. Check the selected paths, approval and handoff expiry; after a redemption attempt, prepare a new handoff; revoke any unused issued credential as a workspace owner, or ask an owner to revoke it.', file=sys.stderr, flush=True)
         sys.exit(1)
