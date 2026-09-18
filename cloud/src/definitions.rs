@@ -713,7 +713,7 @@ mod tests {
     }
 
     #[test]
-    fn scoped_definition_creation_preserves_host_limit() {
+    fn scoped_definition_creation_preserves_workspace_limit_independently_of_resident_capacity() {
         let (_temp, registry, _) = registry();
         let auth = crate::Auth::new_with_legacy_limit(registry.clone(), OWNER, 8).unwrap();
         let identity = crate::oauth::VerifiedIdentity::native(
@@ -724,12 +724,16 @@ mod tests {
         let principal = auth
             .principal_from_verified(&identity, workspace.id)
             .unwrap();
-        registry
-            .create_defined(&principal, "first", "first", &Definition::records_v1(), 1)
-            .unwrap();
+        // The supplied legacy/resident allowance does not replace this
+        // ordinary workspace's three-Bog quota or the platform's 32-Bog cap.
+        for name in ["first", "second", "third"] {
+            registry
+                .create_defined(&principal, name, name, &Definition::records_v1(), 1)
+                .unwrap();
+        }
         assert_eq!(
             registry
-                .create_defined(&principal, "second", "second", &Definition::records_v1(), 1)
+                .create_defined(&principal, "fourth", "fourth", &Definition::records_v1(), 1)
                 .unwrap_err()
                 .code,
             "capacity"
