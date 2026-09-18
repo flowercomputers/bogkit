@@ -955,7 +955,7 @@ pub fn guide(configured: bool, legacy_limit: usize) -> String {
             ("identity_body", "Approve a connection. Your personal workspace is created automatically.".into()),
             ("sharing_summary", "Read Fold views, issue an app credential, or invite someone into your workspace.".into()),
             ("connect", "Give your agent this page. Discover the API, approve GitHub sign-in, and create a Bog without putting credentials in a conversation.".into()),
-            ("mcp", "connect an OAuth-capable client to <code>https://flower-bog-cloud.fly.dev/mcp</code> and follow its GitHub authorization prompt.".into()),
+            ("mcp", "connect an OAuth-capable client to <code>https://mcp.bog.new/mcp</code> and follow its GitHub authorization prompt.".into()),
             ("http", "follow the <a href=\"/auth.md\">device login instructions</a>, then use <a href=\"/v1\">API discovery</a>.".into()),
             ("workspace_default", "Your personal workspace is the default; choose a workspace explicitly when working with a team.".into()),
             ("revocation", "Owners can revoke access in the console. Removing a member also revokes credentials they issued in that workspace.".into()),
@@ -970,7 +970,7 @@ pub fn guide(configured: bool, legacy_limit: usize) -> String {
             ("identity_body", "Obtain a credential privately from the operator. GitHub sign-in and automatic personal workspaces are not activated.".into()),
             ("sharing_summary", "Read Fold views and issue a credential restricted to one Bog for your server-side app.".into()),
             ("connect", LEGACY_GUIDANCE.into()),
-            ("mcp", "connect a bearer-capable client to <code>https://flower-bog-cloud.fly.dev/mcp</code> using your privately supplied credential. OAuth signup is unavailable.".into()),
+            ("mcp", "connect a bearer-capable client to <code>https://mcp.bog.new/mcp</code> using your privately supplied credential. OAuth signup is unavailable.".into()),
             ("http", "use your privately supplied bearer credential and follow <a href=\"/v1\">API discovery</a>. <a href=\"/auth.md\">Authentication guidance</a> explains current access.".into()),
             ("workspace_default", "Management credentials default to the legacy workspace. The three-Bog account workspace allowance applies when account signup is activated, not to the legacy operator.".into()),
             ("revocation", "Legacy management credentials can list and revoke credentials through HTTP and MCP. The account console is not activated.".into()),
@@ -1069,6 +1069,9 @@ mod tests {
         assert!(!legacy.contains("Your GitHub, your workspace."));
         for page in [enabled, legacy] {
             assert!(!page.contains("{{"));
+            assert!(page.contains("https://mcp.bog.new/mcp"));
+            assert!(!page.contains("https://flower-bog-cloud.fly.dev/mcp"));
+            assert!(!page.contains("https://cloud.bog.new/mcp"));
             assert!(page.contains("older credentials may have no expiry"));
         }
     }
