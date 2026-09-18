@@ -71,3 +71,75 @@ fn bm25_rank_and_retract() {
         assert!(idx.search("rust", 10).is_empty());
     });
 }
+
+#[test]
+fn bm25_keyed_replacement_matches_fresh_corpus() {
+    let path = fresh_db("bm25_keyed.db");
+    let mut st = KeyedStream::new(&path, terminal::search::Bm25::new("idx"));
+    st.wtx(|tx| {
+        tx.upsert(&1u32, &"fox fox fox old".to_string());
+        tx.upsert(&2, &"fox anchor".to_string());
+    });
+    st.wtx(|tx| {
+        tx.upsert(&1, &"fox new".to_string());
+    });
+    let expected = {
+        let mut fresh = KeyedStream::new(
+            fresh_db("bm25_reference.db"),
+            terminal::search::Bm25::new("idx"),
+        );
+        fresh.wtx(|tx| {
+            tx.upsert(&1u32, &"fox new".to_string());
+            tx.upsert(&2, &"fox anchor".to_string());
+        });
+        fresh.rtx(|idx| {
+            idx.search("fox new", 10)
+                .into_iter()
+                .map(|h| (h.val, h.score))
+                .collect::<Vec<_>>()
+        })
+    };
+    let check = |hits: Vec<Scored<f64, u32>>| {
+        let actual: Vec<_> = hits.into_iter().map(|h| (h.val, h.score)).collect();
+        assert_eq!(actual, expected);
+    };
+    st.rtx(|idx| {
+        assert_eq!(idx.doc_count(), 2);
+        assert!(idx.search("old", 10).is_empty());
+        check(idx.search("fox new", 10));
+    });
+    st.wtx(|tx| {
+        tx.upsert(&1, &"temporary temporary".to_string());
+        tx.upsert(&1, &"fox new".to_string());
+        tx.upsert(&3, &"ephemeral".to_string());
+        tx.remove(&3);
+    });
+    st.rtx(|idx| check(idx.search("fox new", 10)));
+    let aborted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        st.wtx(|tx| {
+            tx.upsert(&1, &"aborted".to_string());
+            tx.rtx(|idx| assert_eq!(ids(&idx.search("aborted", 10)), vec![1]));
+            panic!("abort replacement");
+        });
+    }));
+    assert!(aborted.is_err());
+    st.rtx(|idx| check(idx.search("fox new", 10)));
+    drop(st);
+    let mut st = KeyedStream::<u32, String, _>::new(&path, terminal::search::Bm25::new("idx"));
+    st.rtx(|idx| check(idx.search("fox new", 10)));
+    st.wtx(|tx| {
+        tx.upsert(&1, &"".to_string());
+    });
+    st.rtx(|idx| {
+        assert_eq!(idx.doc_count(), 2);
+        assert_eq!(ids(&idx.search("fox", 10)), vec![2]);
+    });
+    st.wtx(|tx| {
+        tx.remove(&1);
+        tx.remove(&2);
+    });
+    st.rtx(|idx| {
+        assert_eq!(idx.doc_count(), 0);
+        assert!(idx.search("fox", 10).is_empty());
+    });
+}

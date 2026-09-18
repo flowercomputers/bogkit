@@ -65,6 +65,7 @@ async fn read_scope_cross_database_and_connected_client_revocation() {
             json!({"name":"denied","template":"records-v1","idempotency_key":"denied"}),
             "forbidden",
         ),
+        ("describe_definition", json!({"bog_id":a.id}), "forbidden"),
         ("list_bogs", json!({}), "forbidden"),
     ] {
         let result = call(&client, name, args).await;

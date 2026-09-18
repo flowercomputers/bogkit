@@ -7,3 +7,9 @@ pub use template::{
     MAX_REQUEST_BYTES, TEMPLATE_ID, TemplateError, records_router, records_service,
     records_service_with_limit, validate_batch, validate_key,
 };
+
+mod configured;
+pub use configured::ConfiguredService;
+
+mod freeze;
+pub use freeze::with_write_freeze;

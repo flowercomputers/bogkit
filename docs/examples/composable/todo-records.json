@@ -1,0 +1,32 @@
+[
+  {
+    "op": "upsert",
+    "key": "milk",
+    "data": {
+      "title": "Buy oat milk",
+      "notes": "Groceries for breakfast",
+      "completed": false,
+      "priority": 3
+    }
+  },
+  {
+    "op": "upsert",
+    "key": "release",
+    "data": {
+      "title": "Ship release",
+      "notes": "Publish release notes and changelog",
+      "completed": false,
+      "priority": 9
+    }
+  },
+  {
+    "op": "upsert",
+    "key": "backup",
+    "data": {
+      "title": "Verify backup",
+      "notes": "Restore yesterday archive",
+      "completed": true,
+      "priority": 7
+    }
+  }
+]

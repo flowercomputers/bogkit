@@ -17,15 +17,26 @@ pub struct Harness {
 }
 impl Harness {
     pub async fn new() -> Self {
-        Self::with_options(bog_cloud_mcp::McpOptions::default()).await
+        Self::with_options_and_composable(bog_cloud_mcp::McpOptions::default(), false).await
     }
     pub async fn with_options(options: bog_cloud_mcp::McpOptions) -> Self {
+        Self::with_options_and_composable(options, false).await
+    }
+    pub async fn composable() -> Self {
+        Self::with_options_and_composable(bog_cloud_mcp::McpOptions::default(), true).await
+    }
+    async fn with_options_and_composable(
+        options: bog_cloud_mcp::McpOptions,
+        composable_enabled: bool,
+    ) -> Self {
         let root = tempfile::tempdir_in("/tmp").unwrap();
         let worker = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../target/debug/bog-records-worker")
             .canonicalize()
             .expect("build bog-records-worker first");
-        let service = CloudService::open(Config::new(root.path().into(), worker), OWNER).unwrap();
+        let mut config = Config::new(root.path().into(), worker);
+        config.composable_enabled = composable_enabled;
+        let service = CloudService::open(config, OWNER).unwrap();
         let app = bog_cloud::build_rest_router(service.clone()).merge(
             bog_cloud_mcp::build_mcp_router_with_options(service.clone(), options),
         );

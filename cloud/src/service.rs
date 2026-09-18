@@ -8,6 +8,45 @@ use std::sync::Arc;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Operation {
+    ListComponents,
+    ValidateDefinition {
+        definition: Value,
+    },
+    CreateDefinedBog {
+        name: String,
+        definition: Value,
+        idempotency_key: String,
+    },
+    DescribeDefinition {
+        bog_id: BogId,
+    },
+    ListResources {
+        bog_id: BogId,
+    },
+    QueryResource {
+        bog_id: BogId,
+        resource: String,
+        query: Value,
+    },
+    SearchResource {
+        bog_id: BogId,
+        resource: String,
+        query: Value,
+    },
+    PlanDefinitionUpdate {
+        bog_id: BogId,
+        definition: Value,
+        expected_revision: u64,
+    },
+    ApplyDefinitionUpdate {
+        bog_id: BogId,
+        definition: Value,
+        expected_revision: u64,
+    },
+    DefinitionUpdateStatus {
+        bog_id: BogId,
+        job_id: String,
+    },
     CreateBog {
         name: String,
         template: String,
@@ -233,25 +272,142 @@ impl CloudService {
         use Operation::*;
         let (target, write) = match &operation {
             WaitForChange { .. } => unreachable!(),
-            ListBogs | ListWorkspaces | ListTemplates | GetCurrentContext | ListTokens { .. } => {
-                (None, false)
-            }
-            CreateBog { .. } | IssueToken { .. } | PrepareAppAccess { .. } | RevokeToken { .. } => {
-                (None, true)
-            }
-            BogMetrics { bog_id, .. }
+            ListComponents
+            | ValidateDefinition { .. }
+            | ListBogs
+            | ListWorkspaces
+            | ListTemplates
+            | GetCurrentContext
+            | ListTokens { .. } => (None, false),
+            CreateDefinedBog { .. }
+            | CreateBog { .. }
+            | IssueToken { .. }
+            | PrepareAppAccess { .. }
+            | RevokeToken { .. } => (None, true),
+            DescribeDefinition { bog_id }
+            | ListResources { bog_id }
+            | QueryResource { bog_id, .. }
+            | SearchResource { bog_id, .. }
+            | DefinitionUpdateStatus { bog_id, .. }
+            | BogMetrics { bog_id, .. }
             | BogEvents { bog_id, .. }
             | DescribeBog { bog_id }
             | Usage { bog_id }
             | Schema { bog_id }
             | GetRecord { bog_id, .. }
             | ReadView { bog_id, .. } => (Some(*bog_id), false),
-            UpsertRecord { bog_id, .. } | DeleteRecord { bog_id, .. } | Batch { bog_id, .. } => {
-                (Some(*bog_id), true)
-            }
+            PlanDefinitionUpdate { bog_id, .. }
+            | ApplyDefinitionUpdate { bog_id, .. }
+            | UpsertRecord { bog_id, .. }
+            | DeleteRecord { bog_id, .. }
+            | Batch { bog_id, .. } => (Some(*bog_id), true),
         };
         self.auth.authorize(principal, target, write)?;
+        if matches!(
+            &operation,
+            CreateDefinedBog { .. } | PlanDefinitionUpdate { .. } | ApplyDefinitionUpdate { .. }
+        ) {
+            self.auth.authorize(principal, None, true)?;
+            if !self.supervisor.config.composable_enabled {
+                return Err(CloudError::new(
+                    "feature_disabled",
+                    "composable hosted bogs are disabled",
+                ));
+            }
+        }
         let result = match operation {
+            ListComponents => {
+                let mut v = bog_definition::component_catalog_with_limits(
+                    &self.supervisor.config.composable_limits,
+                );
+                v["enabled"] = serde_json::json!(self.supervisor.config.composable_enabled);
+                v
+            }
+            ValidateDefinition { definition } => {
+                let d = crate::definitions::parse(definition)?;
+                self.supervisor
+                    .config
+                    .composable_limits
+                    .validate_definition(&d)
+                    .map_err(crate::definitions::invalid)?;
+                serde_json::json!({"valid":true,"definition":d,"digest":d.digest().map_err(crate::definitions::invalid)?,"operations":d.operation_metadata_with_limits(&self.supervisor.config.composable_limits)})
+            }
+            DescribeDefinition { bog_id } => {
+                self.auth.authorize(principal, None, false)?;
+                serde_json::to_value(self.registry.definition(bog_id)?)
+                    .map_err(crate::definitions::invalid)?
+            }
+            ListResources { bog_id } => crate::definitions::resources_with_limits(
+                &self.registry.definition(bog_id)?,
+                &self.supervisor.config.composable_limits,
+            ),
+            DefinitionUpdateStatus { bog_id, job_id } => {
+                self.auth.authorize(principal, None, false)?;
+                self.registry.definition_job(bog_id, &job_id)?
+            }
+            PlanDefinitionUpdate {
+                bog_id,
+                definition,
+                expected_revision,
+            } => self.plan_definition(bog_id, definition, expected_revision)?,
+            ApplyDefinitionUpdate {
+                bog_id,
+                definition,
+                expected_revision,
+            } => {
+                return self
+                    .apply_definition(bog_id, definition, expected_revision)
+                    .await;
+            }
+            QueryResource {
+                bog_id,
+                resource,
+                query,
+            } => {
+                self.resource_request(bog_id, &resource, query, false)
+                    .await?
+            }
+            SearchResource {
+                bog_id,
+                resource,
+                query,
+            } => {
+                self.resource_request(bog_id, &resource, query, true)
+                    .await?
+            }
+            CreateDefinedBog {
+                name,
+                definition,
+                idempotency_key,
+            } => {
+                let definition = crate::definitions::parse(definition)?;
+                self.supervisor
+                    .config
+                    .composable_limits
+                    .validate_definition(&definition)
+                    .map_err(crate::definitions::invalid)?;
+                crate::config::require_free_space(
+                    &self.supervisor.config.root,
+                    self.supervisor.config.min_free_bytes,
+                )?;
+                let bog = self.registry.create_defined(
+                    principal,
+                    &name,
+                    &idempotency_key,
+                    &definition,
+                    self.supervisor.max_active(),
+                )?;
+                let supervisor = self.supervisor.clone();
+                let id = bog.id;
+                tokio::spawn(async move {
+                    let _ = supervisor.ensure_running(id).await;
+                });
+                let mut body = serde_json::to_value(&bog).map_err(crate::definitions::invalid)?;
+                body["definition"] = serde_json::to_value(self.registry.definition(id)?)
+                    .map_err(crate::definitions::invalid)?;
+                body["api_url"] = serde_json::json!(format!("/v1/bogs/{id}"));
+                return Ok(OperationResult { status: 202, body });
+            }
             WaitForChange { .. } => unreachable!(),
             BogMetrics { bog_id, window } => {
                 let seconds = match window.as_str() {
@@ -507,7 +663,7 @@ impl CloudService {
         entry.1 += 1;
         Ok(())
     }
-    async fn worker(
+    pub(crate) async fn worker(
         &self,
         id: BogId,
         method: reqwest::Method,
@@ -523,14 +679,23 @@ impl CloudService {
                 "request exceeds 1 MiB",
             ));
         }
-        if method != reqwest::Method::GET {
+        if method != reqwest::Method::GET && !path.starts_with("/operations/") {
             crate::config::require_free_space(
                 &self.supervisor.config.root,
                 self.supervisor.config.min_free_bytes,
             )?;
         }
         let lease = self.supervisor.lease(id).await?;
-        let is_write = method != reqwest::Method::GET;
+        if method != reqwest::Method::GET
+            && !path.starts_with("/operations/")
+            && self.registry.building(id)?
+        {
+            return Err(CloudError::new(
+                "writes_paused",
+                "definition rebuild in progress; retry after the job completes",
+            ));
+        }
+        let is_write = method != reqwest::Method::GET && !path.starts_with("/operations/");
         let (status, mut value) = lease.client.request(method, &path, body).await?;
         if (200..300).contains(&status) {
             if is_write && let Some(seq) = value["seq"].as_u64() {
@@ -564,7 +729,7 @@ impl CloudService {
         ))
     }
 }
-fn encode_key(key: &str) -> Result<String, CloudError> {
+pub(crate) fn encode_key(key: &str) -> Result<String, CloudError> {
     bog_cloud_records::validate_key(key).map_err(|e| CloudError::new("invalid_request", &e))?;
     Ok(key
         .bytes()
@@ -582,7 +747,14 @@ impl Operation {
     fn observation_target(&self) -> Option<BogId> {
         use Operation::*;
         match self {
-            BogMetrics { bog_id, .. }
+            DescribeDefinition { bog_id }
+            | ListResources { bog_id }
+            | QueryResource { bog_id, .. }
+            | SearchResource { bog_id, .. }
+            | PlanDefinitionUpdate { bog_id, .. }
+            | ApplyDefinitionUpdate { bog_id, .. }
+            | DefinitionUpdateStatus { bog_id, .. }
+            | BogMetrics { bog_id, .. }
             | BogEvents { bog_id, .. }
             | WaitForChange { bog_id, .. }
             | PrepareAppAccess { bog_id, .. }
@@ -603,6 +775,16 @@ impl Operation {
     fn observation_name(&self) -> &'static str {
         use Operation::*;
         match self {
+            ListComponents => "list_components",
+            ValidateDefinition { .. } => "validate_definition",
+            CreateDefinedBog { .. } => "create_defined_bog",
+            DescribeDefinition { .. } => "describe_definition",
+            ListResources { .. } => "list_resources",
+            QueryResource { .. } => "query_resource",
+            SearchResource { .. } => "search_resource",
+            PlanDefinitionUpdate { .. } => "plan_definition_update",
+            ApplyDefinitionUpdate { .. } => "apply_definition_update",
+            DefinitionUpdateStatus { .. } => "definition_update_status",
             BogMetrics { .. } => "bog_metrics",
             BogEvents { .. } => "bog_events",
             WaitForChange { cursor: None, .. } => "initialize_cursor",

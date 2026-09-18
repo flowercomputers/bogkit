@@ -75,6 +75,22 @@ pub fn records_service_with_limit(path: &Path, limit: u64) -> Result<ServedApp, 
             .sum();
         Ok(json!({"logical_bytes":used,"limit_bytes":limit,"over_limit":used > limit}))
     })
+    .get("/_cloud/sequence", |(_, _), _: RecordPage| { Ok(json!({})) })
+    .get("/_cloud/export", |(docs, _), page: RecordPage| {
+        use sha2::{Digest,Sha256};
+        let all: std::collections::BTreeMap<_,_> = docs.iter().collect();
+        let mut hash=Sha256::new();
+        for (k,v) in &all { hash.update(serde_json::to_vec(&(k,v)).unwrap()); hash.update(b"\n"); }
+        let offset=page.offset.unwrap_or(0);
+        let mut records=Vec::new();let mut bytes=0;
+        for (key,value) in all.iter().skip(offset) {
+            let item=json!({"key":key,"value":value});let n=item.to_string().len();
+            if !records.is_empty() && bytes+n>768*1024 {break;}
+            bytes+=n;records.push(item);if records.len()==100 {break;}
+        }
+        let next=offset+records.len();
+        Ok(json!({"records":records,"record_count":all.len(),"source_digest":format!("{:x}",hash.finalize()),"next_offset":if next<all.len(){Some(next)}else{None}}))
+    })
     .get("/views/docs", |(docs, _total), page: RecordPage| {
         let mut bytes = 0usize;
         let mut items = Vec::new();

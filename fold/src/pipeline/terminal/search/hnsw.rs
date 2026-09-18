@@ -102,9 +102,9 @@ where
 /// [`anny::metric`] — smaller is closer).
 ///
 /// Like the posting sinks, documents are set-semantic per key: within a
-/// transaction deltas accumulate and the net sign decides — positive
-/// (re)indexes the key under its latest embedding, non-positive deletes it —
-/// with no read of prior state. Retraction genuinely removes the node from
+/// transaction deltas accumulate against the existing key. A positive net
+/// delta indexes the latest embedding; a zero net delta replaces an existing
+/// embedding (or leaves an absent key absent); a negative delta removes it. Retraction genuinely removes the node from
 /// the graph (anny repairs the neighborhood), so recall does not decay
 /// under churn the way tombstoning indexes do.
 ///
@@ -225,13 +225,18 @@ where
     }
 
     fn push(&mut self, tx: &mut WriteTx<'_>, data: &Keyed<K, [T; DIM]>, delta: isize) {
+        if delta == 0 {
+            return;
+        }
         tx.buf.clear();
         postcard::to_io(&data.key, &mut tx.buf).unwrap();
         let e = self
             .pending
             .entry(tx.buf.clone())
             .or_insert_with(|| (data.key.clone(), data.val, 0));
-        e.1 = data.val;
+        if delta > 0 {
+            e.1 = data.val;
+        }
         e.2 += delta as i64;
     }
 
@@ -252,20 +257,18 @@ where
             state.rebuild(metric, seed, entries);
         }
         for (kenc, (key, vec, delta)) in self.pending.drain() {
-            match delta {
-                1.. => {
-                    self.vec_buf.clear();
-                    postcard::to_io(&vec[..], &mut self.vec_buf).unwrap();
+            // Replacement emits -old/+new, so net zero still carries a
+            // new embedding when the key already exists. New insert/remove
+            // pairs cancel without creating a node.
+            if delta > 0 || (delta == 0 && state.ids.contains_key(&kenc)) {
+                self.vec_buf.clear();
+                postcard::to_io(&vec[..], &mut self.vec_buf).unwrap();
 
-                    tx.insert(&ks, &kenc, &self.vec_buf);
-                    state.upsert(kenc, key, vec);
-                }
-                0 => {}
-                _ => {
-                    if state.remove(&kenc) {
-                        tx.remove(&ks, &kenc);
-                    }
-                }
+                tx.insert(&ks, &kenc, &self.vec_buf);
+                state.upsert(kenc, key, vec);
+            } else if delta < 0 {
+                state.remove(&kenc);
+                tx.remove(&ks, &kenc);
             }
         }
     }

@@ -39,6 +39,7 @@ impl Processes {
         self.manager = Some(
             Command::new(env!("CARGO_BIN_EXE_bog-cloud"))
                 .env("BOG_ALLOW_LEGACY_PUBLIC_OPERATOR", "true")
+                .env("BOG_CLOUD_COMPOSABLE", "true")
                 .env("BOG_CLOUD_ROOT", &self.root)
                 .env("BOG_WORKER_BINARY", &self.binary)
                 .env("BOG_CLOUD_OWNER_TOKEN", OWNER)
@@ -268,4 +269,89 @@ async fn pre_socket_worker_keeps_ownership_across_manager_crash() {
         std::fs::read_to_string(&pid_file).unwrap().lines().count(),
         1
     );
+}
+
+#[tokio::test]
+async fn interrupted_definition_freeze_resumes_surviving_workers_before_writes() {
+    for configured in [false, true] {
+        let temp = tempfile::Builder::new()
+            .prefix("bcf-")
+            .tempdir_in("/tmp")
+            .unwrap();
+        let mut processes = Processes::new(temp.path().join("r"), worker());
+        processes.start();
+        processes.healthy().await;
+        // The test manager is explicitly opted into structured definitions below.
+        let body = if configured {
+            json!({"name":"frozen","definition":bog_definition::Definition::records_v1()})
+        } else {
+            json!({"name":"frozen","template":"records-v1"})
+        };
+        let (status, bog) = processes
+            .request(Method::POST, "/v1/bogs", Some(body))
+            .await;
+        assert_eq!(status, 202, "{bog}");
+        let id: BogId = serde_json::from_value(bog["id"].clone()).unwrap();
+        let path = format!("/v1/bogs/{id}/docs/saved");
+        assert_eq!(
+            processes
+                .request(Method::PUT, &path, Some(json!({"value":1})))
+                .await
+                .0,
+            200
+        );
+        let identity = processes.identity(id).await;
+        let db = rusqlite::Connection::open(processes.root.join("registry.sqlite")).unwrap();
+        db.execute("INSERT INTO definition_jobs(id,bog_id,status,payload,created_at) VALUES ('crash-build',?1,'building','{}',0)",[id.to_string()]).unwrap();
+        drop(db);
+        let socket = processes
+            .root
+            .join("instances")
+            .join(id.to_string())
+            .join("worker.sock");
+        let client = WorkerClient::new(&socket).unwrap();
+        assert_eq!(
+            client
+                .request(Method::POST, "/_cloud/pause_writes", None)
+                .await
+                .unwrap()
+                .0,
+            200
+        );
+        assert_eq!(
+            client
+                .request(Method::PUT, "/docs/late", Some(json!({"value":2})))
+                .await
+                .unwrap()
+                .0,
+            503
+        );
+        assert_eq!(processes.request(Method::GET, &path, None).await.0, 200);
+        processes.crash();
+        processes.start();
+        processes.healthy().await;
+        let (status, body) = processes
+            .request(Method::PUT, &path, Some(json!({"value":3})))
+            .await;
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(
+            processes.identity(id).await,
+            identity,
+            "surviving worker should be resumed, not replaced"
+        );
+        assert_eq!(
+            processes.request(Method::GET, &path, None).await.1["data"]["value"],
+            3
+        );
+        let db = rusqlite::Connection::open(processes.root.join("registry.sqlite")).unwrap();
+        assert_eq!(
+            db.query_row(
+                "SELECT status FROM definition_jobs WHERE id='crash-build'",
+                [],
+                |r| r.get::<_, String>(0)
+            )
+            .unwrap(),
+            "failed"
+        );
+    }
 }

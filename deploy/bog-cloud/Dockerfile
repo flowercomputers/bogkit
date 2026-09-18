@@ -9,7 +9,7 @@ RUN cargo build --locked --release -p bog-cloud-records --bin bog-records-worker
 
 FROM source AS verify
 RUN cargo build --locked -p bog-cloud-records --bin bog-records-worker
-RUN cargo test --locked -p fold -p bog-serve -p bog-cloud-records -p bog-cloud -p bog-cloud-mcp
+RUN cargo test --locked -p fold -p bog-serve -p bog-definition -p bog-runtime -p bog-cloud-records -p bog-cloud -p bog-cloud-mcp
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates gosu && rm -rf /var/lib/apt/lists/* && useradd --uid 10001 --create-home bog

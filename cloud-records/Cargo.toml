@@ -6,6 +6,11 @@ publish = false
 
 [dependencies]
 axum = "0.8"
+bog-runtime = { path = "../bog-runtime" }
+bog-definition = { path = "../bog-definition" }
+sha2 = "0.10"
+base64 = "0.22"
+uuid = { version = "1", features = ["v4"] }
 bog-serve = { path = "../serve" }
 fold = { path = "../fold" }
 schemars = "1"

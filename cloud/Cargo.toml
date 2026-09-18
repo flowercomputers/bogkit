@@ -5,6 +5,8 @@ edition = "2024"
 publish = false
 
 [dependencies]
+bog-definition = { path = "../bog-definition" }
+bog-runtime = { path = "../bog-runtime" }
 fold = { path = "../fold" }
 bog-cloud-records = { path = "../cloud-records" }
 rusqlite = { version = "0.40.2", features = ["bundled"] }

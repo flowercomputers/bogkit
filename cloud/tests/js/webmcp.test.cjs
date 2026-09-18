@@ -24,7 +24,7 @@ test('signed-out console does not expose authenticated tools',async()=>{
   const {tools}=await run('/console',false);assert.equal(tools.size,2);
 });
 test('creation uses explicit workspace, stable retry key and private CSRF; default is personal',async()=>{
-  const {tools,calls}=await run('/console');assert.equal(tools.size,12);
+  const {tools,calls}=await run('/console');assert.equal(tools.size,22);
   const create=tools.get('bog_create_bog');assert.equal(create.annotations.readOnlyHint,false);
   const value=await create.execute({name:'fixture',idempotency_key:'stable'});
   assert.equal(calls.at(-1).path,'/v1/bogs');assert.equal(calls.at(-1).options.headers['Idempotency-Key'],'stable');
@@ -132,4 +132,46 @@ test('diagnostics use read-only explicit paths and reject invalid arguments',asy
   for(const limit of [0,101,1.5,'5',null]) await assert.rejects(history.execute({bog_id:bog,limit}),/limit/);
   await assert.rejects(history.execute({bog_id:bog,cursor:12}),/cursor/);
   assert.equal(events.some(e=>e.type==='bog-resources-changed'),false);
+});
+
+test('definition and resource tools share the authenticated HTTP contract',async()=>{
+  const {tools,calls,state}=await run('/console');
+  const definition={version:1,input:{name:'todos'},resources:[]};
+  await tools.get('bog_discover_capabilities').execute({});
+  assert.equal(calls.at(-1).path,'/v1/components');
+  await tools.get('bog_validate_definition').execute({definition});
+  assert.equal(calls.at(-1).path,'/v1/definitions/validate');
+  assert.equal(calls.at(-1).options.headers['x-csrf-token'],state.csrf);
+  assert.deepEqual(JSON.parse(calls.at(-1).options.body),{definition});
+  await tools.get('bog_create_bog_from_definition').execute({name:'todos',definition,idempotency_key:'stable',workspace_id:shared});
+  assert.equal(calls.at(-1).path,`/v1/bogs?workspace_id=${shared}`);
+  assert.deepEqual(JSON.parse(calls.at(-1).options.body),{name:'todos',definition});
+  assert.equal(calls.at(-1).options.headers['Idempotency-Key'],'stable');
+  await tools.get('bog_describe_definition').execute({bog_id:bog,workspace_id:shared});
+  assert.equal(calls.at(-1).path,`/v1/bogs/${bog}/definition?workspace_id=${shared}`);
+  await tools.get('bog_list_resources').execute({bog_id:bog});
+  assert.equal(calls.at(-1).path,`/v1/bogs/${bog}/resources`);
+  await tools.get('bog_query_resource').execute({bog_id:bog,resource:'open todos',query:{action:'list'}});
+  assert.equal(calls.at(-1).path,`/v1/bogs/${bog}/resources/open%20todos/query`);
+  assert.equal(calls.at(-1).options.headers['x-csrf-token'],state.csrf);
+  await tools.get('bog_search_resource').execute({bog_id:bog,resource:'text',query:{query:'moss',limit:5}});
+  assert.equal(calls.at(-1).path,`/v1/bogs/${bog}/resources/text/search`);
+  for(const args of [{resource:'',query:{}},{resource:'x',query:null},{resource:'x',query:[]}]) {
+    await assert.rejects(tools.get('bog_query_resource').execute({bog_id:bog,...args}));
+  }
+});
+
+test('additive definition update tools plan apply and report durable status',async()=>{
+  const {tools,calls,state}=await run('/console');
+  const definition={version:1,input:{name:'todos'},resources:[]};
+  await tools.get('bog_plan_definition_update').execute({bog_id:bog,definition,expected_revision:1});
+  assert.equal(calls.at(-1).path,`/v1/bogs/${bog}/definition/plan`);
+  assert.equal(calls.at(-1).options.headers['x-csrf-token'],state.csrf);
+  const apply=tools.get('bog_apply_definition_update');
+  assert.equal(apply.annotations.readOnlyHint,false);
+  await apply.execute({bog_id:bog,definition,expected_revision:1,workspace_id:shared});
+  assert.equal(calls.at(-1).path,`/v1/bogs/${bog}/definition/apply?workspace_id=${shared}`);
+  assert.equal(calls.at(-1).options.headers['x-csrf-token'],state.csrf);
+  await tools.get('bog_definition_update_status').execute({bog_id:bog,job_id:'job/1'});
+  assert.equal(calls.at(-1).path,`/v1/bogs/${bog}/definition/jobs/job%2F1`);
 });

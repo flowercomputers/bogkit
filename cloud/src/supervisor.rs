@@ -63,6 +63,7 @@ pub struct Supervisor {
     starts: Mutex<HashMap<BogId, Arc<AsyncMutex<()>>>>,
     start_slots: Arc<Semaphore>,
     active_slots: Arc<Semaphore>,
+    build_slots: Arc<Semaphore>,
 }
 fn unavailable(message: &str) -> CloudError {
     CloudError::new("unavailable", message)
@@ -89,6 +90,10 @@ impl Supervisor {
                 "absolute paths and positive limits required",
             ));
         }
+        config
+            .composable_limits
+            .validate()
+            .map_err(|_| CloudError::new("invalid_config", "invalid composable limits"))?;
         private_directory(&config.root)?;
         config.root = std::fs::canonicalize(&config.root)
             .map_err(|_| unavailable("cannot resolve service directory"))?;
@@ -104,10 +109,13 @@ impl Supervisor {
             .map_err(|_| unavailable("cannot open manager lock"))?;
         lock.try_lock()
             .map_err(|_| unavailable("another manager owns this service root"))?;
+        registry.recover_definition_jobs()?;
+        crate::definitions::recover_candidates(&config.root.join("instances"), &registry)?;
         Ok(Self {
             observability: None,
             start_slots: Arc::new(Semaphore::new(config.max_starts)),
             active_slots: Arc::new(Semaphore::new(config.max_active)),
+            build_slots: Arc::new(Semaphore::new(1)),
             starts: Mutex::new(HashMap::new()),
             config,
             registry,
@@ -149,6 +157,20 @@ impl Supervisor {
             }
         }
         Ok(value)
+    }
+    pub(crate) fn reserve_build(&self) -> Result<OwnedSemaphorePermit, CloudError> {
+        self.build_slots
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| CloudError::new("capacity", "one definition build may run on this host"))
+    }
+    pub(crate) fn reserve_candidate(&self) -> Result<OwnedSemaphorePermit, CloudError> {
+        self.active_slots.clone().try_acquire_owned().map_err(|_| {
+            CloudError::new(
+                "capacity",
+                "no resident capacity for a separate definition candidate",
+            )
+        })
     }
     pub fn max_active(&self) -> usize {
         self.config.max_active
@@ -356,7 +378,7 @@ impl Supervisor {
             .read(true)
             .write(true)
             .custom_flags(libc::O_NOFOLLOW)
-            .open(dir.join("data/lock"))
+            .open(dir.join(self.registry.storage_dir(id)?).join("lock"))
         {
             Ok(store_lock) => store_lock
                 .try_lock()
@@ -376,11 +398,20 @@ impl Supervisor {
                     "readiness_retry"
                 }),
             );
+            let active = self.registry.definition(id)?;
+            let definition_file = dir.join(format!("definition-{}.json", active.revision));
+            if active.configured {
+                crate::definitions::write_json(
+                    &definition_file,
+                    &serde_json::to_value(&active.definition)
+                        .map_err(crate::definitions::invalid)?,
+                )?;
+            }
             let mut command = Command::new(&self.config.worker_binary);
             command
                 .args([
                     "--data-dir",
-                    dir.join("data")
+                    dir.join(&active.storage_dir)
                         .to_str()
                         .ok_or_else(|| unavailable("invalid data path"))?,
                     "--socket",
@@ -393,10 +424,22 @@ impl Supervisor {
                 .env_clear()
                 .env("BOG_INSTANCE_ID", id.to_string())
                 .env("BOG_STARTUP_NONCE", &nonce)
+                .env(
+                    "BOG_COMPOSABLE_LIMITS",
+                    serde_json::to_string(&self.config.composable_limits)
+                        .map_err(crate::definitions::invalid)?,
+                )
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .kill_on_drop(true);
+            if active.configured {
+                command
+                    .arg("--definition-file")
+                    .arg(&definition_file)
+                    .arg("--definition-revision")
+                    .arg(active.revision.to_string());
+            }
             let lock_fd = generation_lock.as_raw_fd();
             // Only the child clears CLOEXEC; unrelated concurrently spawned
             // workers cannot inherit this instance's ownership lock. fcntl is
@@ -481,6 +524,24 @@ impl Supervisor {
         {
             return Err(unavailable("worker identity mismatch"));
         }
+        let active = self.registry.worker_definition(id)?;
+        if !self.registry.building(id)? {
+            let (status, _) = client
+                .request(reqwest::Method::POST, "/_cloud/resume_writes", None)
+                .await?;
+            // A pre-composition legacy worker could never have been frozen.
+            if status != 200 && !(status == 404 && !active.configured) {
+                return Err(unavailable("worker write recovery pending"));
+            }
+        }
+        if active.configured {
+            if identity["definition_digest"] != active.digest
+                || identity["definition_revision"] != active.revision
+            {
+                return Err(unavailable("worker definition identity mismatch"));
+            }
+            return Ok(());
+        }
         let (status, schema) = client
             .request(reqwest::Method::GET, "/schema", None)
             .await?;
@@ -495,6 +556,12 @@ impl Supervisor {
     }
     pub async fn stop(&self, id: BogId) -> Result<(), CloudError> {
         let _guard = self.gate(id)?.write_owned().await;
+        if self.registry.building(id)? {
+            return Err(CloudError::new(
+                "conflict",
+                "definition build is in progress",
+            ));
+        }
         self.stop_locked(id, true).await?;
         self.event(id, "worker_stopped", Some("explicit_stop"));
         Ok(())
@@ -554,7 +621,10 @@ impl Supervisor {
     }
     fn survivor_owns_store(&self, id: BogId) -> Result<bool, CloudError> {
         let dir = self.instance_dir(id);
-        for path in [dir.join("worker.lock"), dir.join("data/lock")] {
+        for path in [
+            dir.join("worker.lock"),
+            dir.join(self.registry.storage_dir(id)?).join("lock"),
+        ] {
             match OpenOptions::new()
                 .read(true)
                 .write(true)
@@ -711,7 +781,10 @@ impl Supervisor {
         loop {
             let mut locks = Vec::new();
             let mut busy = false;
-            for path in [dir.join("worker.lock"), dir.join("data/lock")] {
+            for path in [
+                dir.join("worker.lock"),
+                dir.join(self.registry.storage_dir(id)?).join("lock"),
+            ] {
                 match OpenOptions::new()
                     .read(true)
                     .write(true)
@@ -751,6 +824,9 @@ impl Supervisor {
             let Ok(_guard) = self.gate(id)?.try_write_owned() else {
                 continue;
             };
+            if self.registry.building(id)? {
+                continue;
+            }
             let idle = self.running.lock().await.get(&id).is_some_and(|worker| {
                 worker
                     .last_use

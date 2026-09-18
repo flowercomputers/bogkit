@@ -54,15 +54,13 @@ const POSTING: u8 = 2;
 /// tokenized the same way by [`Bm25Reader::search`], which scores with the
 /// Lucene-style non-negative IDF `ln(1 + (N - df + 0.5) / (df + 0.5))`.
 ///
-/// Like [`InvertedIndex`](super::InvertedIndex), documents are set-semantic:
-/// within a transaction deltas accumulate, and the net sign decides — a
-/// positive delta (re)writes the document's postings, a non-positive one
-/// deletes them, without reading prior state. Corpus statistics do
-/// accumulate deltas, so insert each document once with delta `+1` and
-/// retract it once with `-1`. Like [`Map`](crate::pipeline::Map), this
-/// relies on determinism: a retraction must present the same `(key, text)`
-/// that was inserted, and the tokenizer must be a pure function, or index
-/// state will not cancel.
+/// Each document is inserted once and retracted once. Replacing a document
+/// retracts its old text before inserting its new text, as
+/// [`KeyedStream`](crate::stream::KeyedStream) does automatically. Term
+/// frequencies, document lengths, and corpus statistics accumulate deltas
+/// against persisted counts. Like [`Map`](crate::pipeline::Map), this relies
+/// on determinism: a retraction must present the same `(key, text)` that was
+/// inserted, and the tokenizer must be a pure function.
 ///
 /// ```no_run
 /// use fold::pipeline::{Keyed, terminal::search::Bm25};
@@ -130,20 +128,27 @@ impl<K, V, T> Bm25<K, V, T> {
     }
 }
 
-// flush a pending delta map set-semantically, like `InvertedIndex`: the net
-// sign decides between writing the magnitude and deleting the key, with no
-// read of prior state — a read-modify-write here turns mass retraction into
-// a random point read per key
+// Apply frequency/length differences to the current value. Replacements
+// may retain a term with a smaller positive frequency: the negative delta
+// must reduce its posting, rather than delete it.
 fn fold(
     tx: &mut WriteTx<'_>,
     ks: &fjall::SingleWriterTxKeyspace,
     pending: &mut FxHashMap<Vec<u8>, i64>,
 ) {
     for (key, delta) in pending.drain() {
-        match delta {
-            1.. => tx.insert(ks, &key, delta.to_be_bytes()),
-            0 => {}
-            _ => tx.remove(ks, &key),
+        if delta == 0 {
+            continue;
+        }
+        let prior = tx
+            .get(ks, &key)
+            .map(|v| i64::from_be_bytes(v.as_ref().try_into().unwrap()))
+            .unwrap_or(0);
+        let value = prior + delta;
+        if value > 0 {
+            tx.insert(ks, &key, value.to_be_bytes());
+        } else {
+            tx.remove(ks, &key);
         }
     }
 }

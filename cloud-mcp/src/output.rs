@@ -18,6 +18,51 @@ pub(crate) fn schema(name: &str) -> serde_json::Map<String, Value> {
     );
     let workspaces = json!({"type":"array","items":workspace});
     let body = match name {
+        "discover_capabilities" => object(
+            json!({"enabled":boolean,"version":integer,"definition_schema":{"type":"object"},"stages":{"type":"array","items":string},"terminals":{"type":"array","items":string},"input":{"type":"object"},"limits":{"type":"object"},"bm25":{"type":"object"},"semantic":{"type":"object"}}),
+            &[
+                "enabled",
+                "version",
+                "definition_schema",
+                "stages",
+                "terminals",
+                "input",
+                "limits",
+                "bm25",
+                "semantic",
+            ],
+        ),
+        "validate_definition" => object(
+            json!({"valid":boolean,"definition":{"type":"object"},"digest":string,"operations":{"type":"array","items":{"type":"object"}}}),
+            &["valid", "definition", "digest", "operations"],
+        ),
+        "create_bog_from_definition" => bog.clone(),
+        "describe_definition" => object(
+            json!({"definition":{"type":"object"},"digest":string,"revision":integer}),
+            &["definition", "digest", "revision"],
+        ),
+        "list_resources" => object(
+            json!({"resources":{"type":"array","items":object(json!({"name":string,"stages":{"type":"array","items":{"type":"object"}},"terminal":{"type":"object"},"operations":{"type":"array","items":{"type":"object"}}}), &["name","stages","terminal","operations"])},"revision":integer,"digest":string}),
+            &["resources", "revision", "digest"],
+        ),
+        "query_resource" | "search_resource" => json!({"type":"object"}),
+        "plan_definition_update" => object(
+            json!({"compatible":boolean,"expected_revision":integer,"target_digest":string,"requires_rebuild":boolean}),
+            &[
+                "compatible",
+                "expected_revision",
+                "target_digest",
+                "requires_rebuild",
+            ],
+        ),
+        "apply_definition_update" => object(
+            json!({"job_id":string,"bog_id":string,"status":string}),
+            &["job_id", "bog_id", "status"],
+        ),
+        "definition_update_status" => object(
+            json!({"job_id":string,"bog_id":string,"status":string,"error":{"type":["string","null"]},"expected_revision":integer,"definition":{"type":"object"},"target_digest":string,"revision":nullable_integer}),
+            &["job_id", "bog_id", "status"],
+        ),
         "bog_metrics" => bog_cloud::contract::metrics_schema(),
         "bog_events" => bog_cloud::contract::events_schema(),
         "create_bog" | "describe_bog" => bog.clone(),

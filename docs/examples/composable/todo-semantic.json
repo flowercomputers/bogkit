@@ -1,0 +1,131 @@
+{
+  "version": 1,
+  "input": "docs",
+  "resources": {
+    "docs": {
+      "terminal": {
+        "kind": "table"
+      }
+    },
+    "open": {
+      "stages": [
+        {
+          "kind": "filter",
+          "expression": {
+            "op": "equals",
+            "field": "/completed",
+            "value": false
+          }
+        },
+        {
+          "kind": "projection",
+          "fields": {
+            "title": "/title",
+            "priority": "/priority"
+          }
+        }
+      ],
+      "terminal": {
+        "kind": "table"
+      }
+    },
+    "open_count": {
+      "stages": [
+        {
+          "kind": "filter",
+          "expression": {
+            "op": "equals",
+            "field": "/completed",
+            "value": false
+          }
+        }
+      ],
+      "terminal": {
+        "kind": "count"
+      }
+    },
+    "priority": {
+      "stages": [
+        {
+          "kind": "filter",
+          "expression": {
+            "op": "equals",
+            "field": "/completed",
+            "value": false
+          }
+        }
+      ],
+      "terminal": {
+        "kind": "ranked",
+        "field": "/priority",
+        "ascending": false
+      }
+    },
+    "private_stats": {
+      "terminal": {
+        "kind": "stats",
+        "field": "/priority"
+      }
+    },
+    "text_search": {
+      "terminal": {
+        "kind": "bm25",
+        "fields": [
+          "/title",
+          "/notes"
+        ]
+      }
+    },
+    "semantic_search": {
+      "terminal": {
+        "kind": "semantic",
+        "fields": [
+          "/title",
+          "/notes"
+        ]
+      }
+    }
+  },
+  "expose": {
+    "put": {
+      "target": "docs",
+      "action": "put"
+    },
+    "remove": {
+      "target": "docs",
+      "action": "remove"
+    },
+    "batch": {
+      "target": "docs",
+      "action": "batch"
+    },
+    "get": {
+      "target": "docs",
+      "action": "get"
+    },
+    "list": {
+      "target": "docs",
+      "action": "list"
+    },
+    "open": {
+      "target": "open",
+      "action": "list"
+    },
+    "open_count": {
+      "target": "open_count",
+      "action": "read"
+    },
+    "priority": {
+      "target": "priority",
+      "action": "top"
+    },
+    "search": {
+      "target": "text_search",
+      "action": "search"
+    },
+    "semantic_search": {
+      "target": "semantic_search",
+      "action": "search"
+    }
+  }
+}
