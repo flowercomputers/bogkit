@@ -203,7 +203,10 @@ fn scope_upgrade_required(
         return false;
     };
     let target = match operation {
-        Operation::CreateBog { .. } => None,
+        Operation::CreateBog { .. }
+        | Operation::ProvisionBog { .. }
+        | Operation::PreviewCleanup { .. }
+        | Operation::ExecuteCleanup { .. } => None,
         Operation::PrepareAppAccess { bog_id, .. }
         | Operation::IssueToken { bog_id, .. }
         | Operation::RevokeToken { bog_id, .. }

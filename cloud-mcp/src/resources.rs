@@ -2,6 +2,9 @@
 use bog_cloud::{CloudService, Operation, Principal};
 use rmcp::{ErrorData, model::*};
 use serde_json::json;
+pub(crate) const INSPECTOR_URI: &str = "ui://bog-cloud/resource-inspector";
+pub(crate) const INSPECTOR_MIME: &str = "text/html;profile=mcp-app";
+
 pub(crate) fn definitions() -> Vec<Resource> {
     [
         ("quick-start", "Quick start"),
@@ -25,6 +28,30 @@ pub(crate) async fn read(
     uri: &str,
     request_id: &str,
 ) -> Result<ReadResourceResponse, ErrorData> {
+    if uri == INSPECTOR_URI {
+        // Static, credential-free document. Auth middleware still protects the
+        // resource request; subsequent reads use ordinary authorized tool calls.
+        let html = include_str!("../../cloud/static/inspector.html").replace(
+            "/* BOG_INSPECTOR_SCRIPT */",
+            include_str!("../../cloud/static/inspector.js"),
+        );
+        return Ok(ReadResourceResult::new(vec![ResourceContents::text(html, uri)
+            .with_mime_type(INSPECTOR_MIME)
+            .with_meta(MetaObject(json!({"ui":{"csp":{"connectDomains":[],"resourceDomains":[],"frameDomains":[]},"permissions":{},"prefersBorder":true}}).as_object().unwrap().clone()))]).into());
+    }
+    if uri == "bog://guide/allowances" {
+        // App context is intentionally readable, but workspace allowances remain
+        // management-only even when that context carries no quota information.
+        service
+            .auth
+            .authorize(principal, None, false)
+            .map_err(|e| {
+                ErrorData::invalid_request(
+                    e.message,
+                    Some(json!({"code":e.code,"request_id":request_id})),
+                )
+            })?;
+    }
     let operation = match uri {
         "bog://guide/templates" => Operation::ListTemplates,
         "bog://guide/components" => Operation::ListComponents,

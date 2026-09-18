@@ -18,6 +18,30 @@ pub(crate) fn schema(name: &str) -> serde_json::Map<String, Value> {
     );
     let workspaces = json!({"type":"array","items":workspace});
     let body = match name {
+        "list_routes" => object(
+            json!({"routes":{"type":"array","items":{"type":"object"}}}),
+            &["routes"],
+        ),
+        "request_info" => object(
+            json!({"bog_id":string,"request_id":string,"operation":string,"status":integer,"elapsed_ms":{"type":"number"},"at":integer,"retention":{"type":"object"}}),
+            &[
+                "bog_id",
+                "request_id",
+                "operation",
+                "status",
+                "elapsed_ms",
+                "at",
+                "retention",
+            ],
+        ),
+        "preview_cleanup" => object(
+            json!({"id":string,"bog_ids":{"type":"array","items":string}}),
+            &["id", "bog_ids"],
+        ),
+        "execute_cleanup" => object(
+            json!({"results":{"type":"array","items":object(json!({"bog_id":string,"status":string}), &["bog_id","status"])}}),
+            &["results"],
+        ),
         "discover_capabilities" => object(
             json!({"enabled":boolean,"version":integer,"definition_schema":{"type":"object"},"examples":{"type":"object","description":"Complete validated definitions: todo, todo_search and todo_semantic."},"stages":{"type":"array","items":string},"terminals":{"type":"array","items":string},"input":{"type":"object"},"limits":{"type":"object"},"bm25":{"type":"object"},"semantic":{"type":"object"}}),
             &[

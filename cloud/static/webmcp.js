@@ -10,7 +10,7 @@
     check(options.signal);
     const response = await fetch(path, { credentials: 'same-origin', cache: 'no-store', ...options });
     const data = await response.json();
-    if (!response.ok) throw new Error(`${data.error?.message || 'Request failed'}${data.request_id ? ` (request ${data.request_id})` : ''}`);
+    if (!response.ok) { const error = new Error(`${data.error?.message || 'Request failed'}${data.request_id ? ` (request ${data.request_id})` : ''}`); error.status = response.status; throw error; }
     return data;
   }
   async function register(name, description, properties, required, execute, readOnly = true, authenticated = false) {
@@ -41,6 +41,16 @@
     await register('bog_service_info', 'Discover Bog Cloud API operations, authentication, free prototype allowance and limits. No sign-in required.', {}, [], () => request('/v1'));
     await register('bog_templates', 'List the available Bog templates and the default template. No sign-in required.', {}, [], () => request('/v1/templates'));
     if (location.pathname !== '/console') return;
+    await register('bog_connection_status', 'Check whether this browser is signed in. Returns only connection state and public paths, never credentials, account identity or session details.', {}, [], async (_, options) => {
+      try {
+        const current = await request('/console-session', { signal: options.signal });
+        return { signed_in: Boolean(current.csrf_token), transport: 'browser-session', mcp_path: '/mcp', console_path: '/console' };
+      } catch (error) {
+        if (error.name === 'AbortError') throw error;
+        // Do not misreport network/server failures as a confirmed logout.
+        return { signed_in: error.status === 401 ? false : null, transport: 'browser-session', status: error.status === 401 ? 'signed_out' : 'unavailable', console_path: '/console' };
+      }
+    });
     const session = await request('/console-session');
     if (!session.csrf_token) return;
     const uuid = { type: 'string', format: 'uuid' };

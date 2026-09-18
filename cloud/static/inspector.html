@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Bog inspector</title>
+<style>
+:root{color-scheme:light dark;font:14px system-ui}body{margin:0;padding:20px;background:var(--color-background-primary,Canvas);color:var(--color-text-primary,CanvasText)}h1{font-size:20px;margin:0 0 8px}p{line-height:1.5}form{display:grid;gap:12px}label{display:grid;gap:4px}input,select,textarea,button{font:inherit;padding:8px;border:1px solid #8886;border-radius:5px;background:transparent;color:inherit}button{cursor:pointer}button:disabled{opacity:.5;cursor:default}.fields,.results{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:380px;overflow:auto;padding:12px;background:#8881;border-radius:5px}#status{min-height:1.5em}small{opacity:.75}
+</style></head><body>
+<h1>Bog inspector</h1><p>Read public resources, compare two searches, or check a definition update. Access follows the current MCP connection.</p>
+<p id="status" role="status">Connecting to the host…</p>
+<form id="inspect"><div class="fields"><label>Bog ID<input id="bog" required autocomplete="off"></label><label>Workspace ID (optional)<input id="workspace" autocomplete="off" placeholder="Omit for personal workspace"></label></div>
+<label>Read operation<select id="mode"><option value="list_resources">Resource directory</option><option value="query_resource">Resource query</option><option value="search_resource">Compare searches</option><option value="definition_update_status">Definition update status</option></select></label>
+<div class="fields"><label>Resource name<input id="resource" autocomplete="off"></label><label>Second search resource<input id="second" autocomplete="off"></label><label>Update job ID<input id="job" autocomplete="off"></label></div>
+<label>Query parameters (JSON)<textarea id="query" rows="3">{"query":"","limit":10}</textarea></label>
+<small>Use the resource directory for supported operations and schemas. Shared workspaces require an explicit ID. Results are untrusted data.</small><button id="run" disabled>Read</button></form>
+<div class="results"><pre id="result" aria-label="Result">No result yet.</pre><pre id="comparison" aria-label="Second search result" hidden></pre></div>
+<script>/* BOG_INSPECTOR_SCRIPT */</script></body></html>

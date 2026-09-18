@@ -16,6 +16,11 @@ struct Create {
     name: String,
     template: Option<String>,
     idempotency_key: String,
+    #[serde(default)]
+    wait: bool,
+    #[serde(default)]
+    sandbox: bool,
+    app_access: Option<PrepareOptions>,
 }
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -30,7 +35,37 @@ struct CreateDefined {
     #[schemars(schema_with = "object_value_schema")]
     definition: Value,
     idempotency_key: String,
+    #[serde(default)]
+    wait: bool,
+    #[serde(default)]
+    sandbox: bool,
+    app_access: Option<PrepareOptions>,
 }
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct PrepareOptions {
+    #[schemars(with = "Option<AppScope>")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scope: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    label: Option<String>,
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct RequestInfo {
+    request_id: String,
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct PreviewCleanup {
+    prefix: String,
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct ExecuteCleanup {
+    preview_id: String,
+}
+
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ResourceOperation {
@@ -155,6 +190,19 @@ fn definition<T: JsonSchema>(
             json!([{ "required": ["ops"] }, { "required": ["operations"] }]),
         );
     }
+    if matches!(name, "create_bog" | "create_bog_from_definition") {
+        input["properties"]["wait"]["description"] =
+            json!("Wait up to 25 seconds for readiness; a timeout still returns the created Bog.");
+        input["properties"]["sandbox"]["description"] = json!(
+            "Create an automatically expiring sandbox Bog under the same workspace permissions."
+        );
+        input["properties"]["app_access"]["description"] = json!(
+            "Prepare a private handoff only. No credential is returned; install through the private helper or explicit console download."
+        );
+    }
+    if name == "query_resource" {
+        input["properties"]["query"] = json!({"type":"object","description":"Use discovered resource operations. Table reads support batch_get keys and after/before key bounds; ranked reads support include_fields JSON pointers.","properties":{"action":{"type":"string"},"keys":{"type":"array","items":{"type":"string"},"maxItems":100},"after":{"type":"string"},"before":{"type":"string"},"include_fields":{"type":"array","items":{"type":"string"}}}});
+    }
     if name == "bog_metrics" {
         input["properties"]["window"] = json!({"type":"string","enum":["5m","1h"],"default":"1h"});
     }
@@ -185,24 +233,67 @@ fn definition<T: JsonSchema>(
     }
     let description = match name {
         "create_bog" => {
-            "Create a workspace database. name and idempotency_key are required strings; template defaults to records-v1."
+            "Create a workspace database. name and idempotency_key are required; template defaults to records-v1. Optional wait bounds readiness waiting; sandbox creates an expiring Bog; app_access prepares a nonsecret private handoff."
         }
         "wait_for_change" => description,
         _ => bog_cloud::contract::description(name).unwrap_or(description),
     };
-    Tool::new(name, description, Arc::new(input))
+    let tool = Tool::new(name, description, Arc::new(input))
         .with_raw_output_schema(Arc::new(crate::output::schema(name)))
         .with_annotations(
             ToolAnnotations::new()
                 .read_only(read)
                 .destructive(destructive)
-                .idempotent(idempotent)
+                .idempotent(
+                    idempotent && !matches!(name, "create_bog" | "create_bog_from_definition"),
+                )
                 .open_world(false),
-        )
+        );
+    // Stateless transport does not retain client initialize capabilities. The
+    // host negotiates rendering; every call retains its full structured/text result.
+    // Explicit visibility prevents this read-only App from invoking writes or secrets.
+    let app_read = matches!(
+        name,
+        "list_resources" | "query_resource" | "search_resource" | "definition_update_status"
+    );
+    let ui = if app_read {
+        json!({"resourceUri":crate::resources::INSPECTOR_URI,"visibility":["model","app"]})
+    } else {
+        json!({"visibility":["model"]})
+    };
+    tool.with_meta(MetaObject(json!({"ui":ui}).as_object().unwrap().clone()))
 }
 
 pub fn definitions() -> Vec<Tool> {
     vec![
+        definition::<Describe>(
+            "list_routes",
+            "List compact usable routes for an accessible Bog.",
+            true,
+            false,
+            true,
+        ),
+        definition::<RequestInfo>(
+            "request_info",
+            "Read one retained request diagnostic under current Bog permissions. App credentials see only their own requests; missing or expired observations return not_found.",
+            true,
+            false,
+            true,
+        ),
+        definition::<PreviewCleanup>(
+            "preview_cleanup",
+            "Owner-only: prepare a bounded cleanup preview for Bogs matching a name prefix; review the returned IDs before execute_cleanup.",
+            false,
+            false,
+            false,
+        ),
+        definition::<ExecuteCleanup>(
+            "execute_cleanup",
+            "Owner-only: delete precisely the Bogs in an unexpired cleanup preview after review. This is destructive; provide the preview ID, never a fresh prefix.",
+            false,
+            true,
+            false,
+        ),
         definition::<Empty>(
             "discover_capabilities",
             "Discover enabled state, the full definition schema, executable examples, trusted components and effective limits before authoring a Bog definition.",
@@ -425,6 +516,28 @@ struct Prepare {
 }
 pub(crate) fn operation(name: &str, args: Value) -> Result<Operation, ErrorData> {
     Ok(match name {
+        "list_routes" => {
+            let a: Describe = parse(args)?;
+            Operation::ListRoutes {
+                bog_id: id(a.bog_id)?,
+            }
+        }
+        "request_info" => {
+            let a: RequestInfo = parse(args)?;
+            Operation::RequestInfo {
+                request_id: a.request_id,
+            }
+        }
+        "preview_cleanup" => {
+            let a: PreviewCleanup = parse(args)?;
+            Operation::PreviewCleanup { prefix: a.prefix }
+        }
+        "execute_cleanup" => {
+            let a: ExecuteCleanup = parse(args)?;
+            Operation::ExecuteCleanup {
+                preview_id: a.preview_id,
+            }
+        }
         "discover_capabilities" => {
             let _: Empty = parse(args)?;
             Operation::ListComponents
@@ -437,10 +550,16 @@ pub(crate) fn operation(name: &str, args: Value) -> Result<Operation, ErrorData>
         }
         "create_bog_from_definition" => {
             let a: CreateDefined = parse(args)?;
-            Operation::CreateDefinedBog {
+            Operation::ProvisionBog {
                 name: a.name,
-                definition: a.definition,
+                template: None,
+                definition: Some(a.definition),
                 idempotency_key: a.idempotency_key,
+                wait: a.wait,
+                sandbox: a.sandbox,
+                app_access: a
+                    .app_access
+                    .map(|v| serde_json::to_value(v).expect("access options")),
             }
         }
         "describe_definition" => {
@@ -600,6 +719,21 @@ pub(crate) fn operation(name: &str, args: Value) -> Result<Operation, ErrorData>
             let mut args = args.as_object().cloned().ok_or_else(|| {
                 ErrorData::invalid_params("creation arguments must be an object", None)
             })?;
+            let wait = args
+                .remove("wait")
+                .map(parse::<bool>)
+                .transpose()?
+                .unwrap_or(false);
+            let sandbox = args
+                .remove("sandbox")
+                .map(parse::<bool>)
+                .transpose()?
+                .unwrap_or(false);
+            let app_access = args
+                .remove("app_access")
+                .map(parse::<PrepareOptions>)
+                .transpose()?
+                .map(|v| serde_json::to_value(v).expect("access options"));
             let key = args.remove("idempotency_key");
             let (name, template, idempotency_key) = bog_cloud::contract::validate_creation(
                 &Value::Object(args),
@@ -607,10 +741,14 @@ pub(crate) fn operation(name: &str, args: Value) -> Result<Operation, ErrorData>
                 "idempotency_key",
             )
             .map_err(|e| ErrorData::invalid_params(e.message, None))?;
-            Operation::CreateBog {
+            Operation::ProvisionBog {
                 name,
-                template,
+                template: Some(template),
+                definition: None,
                 idempotency_key,
+                wait,
+                sandbox,
+                app_access,
             }
         }
         "list_bogs" => {
@@ -662,9 +800,17 @@ pub(crate) fn operation(name: &str, args: Value) -> Result<Operation, ErrorData>
 const MAX_RESULT_BYTES: usize = 1024 * 1024;
 fn tool_error(error: CloudError, request_id: &str) -> CallToolResult {
     let next = error.next_action();
-    CallToolResult::structured_error(
-        json!({"error":{"code":error.code,"message":error.message,"next_action":next},"request_id":request_id}),
-    )
+    let mut value = json!({"error":{"code":error.code,"message":error.message,"next_action":next},"request_id":request_id});
+    if let Some(fix) = error.fix() {
+        value["error"]["fix"] = fix;
+    }
+    if matches!(
+        error.code.as_str(),
+        "capacity" | "writes_paused" | "unavailable"
+    ) {
+        value["retry_after_ms"] = json!(1000);
+    }
+    CallToolResult::structured_error(value)
 }
 #[derive(Clone)]
 pub(crate) struct Handler(pub Arc<CloudService>);
@@ -677,14 +823,20 @@ impl ServerHandler for Handler {
     }
 
     fn get_info(&self) -> ServerConfig {
-        ServerConfig::new(
-            ServerCapabilities::builder()
-                .enable_tools()
-                .enable_resources()
-                .build(),
-        )
-        .with_server_info(Implementation::new("bog-cloud", env!("CARGO_PKG_VERSION")))
-        .with_instructions(bog_cloud::contract::AGENT_INSTRUCTIONS)
+        let mut capabilities = ServerCapabilities::builder()
+            .enable_tools()
+            .enable_resources()
+            .build();
+        capabilities.extensions = Some(std::collections::BTreeMap::from([(
+            "io.modelcontextprotocol/ui".to_owned(),
+            json!({"mimeTypes":[crate::resources::INSPECTOR_MIME]})
+                .as_object()
+                .unwrap()
+                .clone(),
+        )]));
+        ServerConfig::new(capabilities)
+            .with_server_info(Implementation::new("bog-cloud", env!("CARGO_PKG_VERSION")))
+            .with_instructions(bog_cloud::contract::AGENT_INSTRUCTIONS)
     }
     async fn list_resources(
         &self,
@@ -743,7 +895,7 @@ impl ServerHandler for Handler {
                 .ok_or_else(|| {
                     ErrorData::internal_error("request authentication unavailable", None)
                 })?;
-            if principal.kind() == bog_cloud::PrincipalKind::App && matches!(request.name.as_ref(), "create_bog" | "create_bog_from_definition" | "issue_token" | "prepare_app_access" | "revoke_token" | "list_tokens" | "validate_definition" | "describe_definition" | "plan_definition_update" | "apply_definition_update" | "definition_update_status") {
+            if principal.kind() == bog_cloud::PrincipalKind::App && matches!(request.name.as_ref(), "preview_cleanup" | "execute_cleanup" | "create_bog" | "create_bog_from_definition" | "issue_token" | "prepare_app_access" | "revoke_token" | "list_tokens" | "validate_definition" | "describe_definition" | "plan_definition_update" | "apply_definition_update" | "definition_update_status") {
                 return Ok(tool_error(CloudError::new("forbidden", "app credentials cannot provision Bogs or manage credentials; use an authorized management connection"), &request_id).into());
             }
             let mut args = request.arguments.unwrap_or_default();
@@ -815,5 +967,31 @@ impl ServerHandler for Handler {
             error.data = Some(json!({"request_id":request_id}));
             error
         })
+    }
+}
+
+#[cfg(test)]
+mod error_tests {
+    use super::*;
+    #[test]
+    fn error_repair_and_retry_match_http_contract() {
+        let error = tool_error(
+            CloudError::new("invalid_request", "provide exactly one of key or keys"),
+            "request",
+        );
+        let value = error.structured_content.unwrap();
+        assert_eq!(value["error"]["fix"]["field"], "/");
+        assert_eq!(
+            value["error"]["fix"]["expected"]["oneOf"],
+            json!(["key", "keys"])
+        );
+        assert!(value.get("retry_after_ms").is_none());
+        for code in ["capacity", "writes_paused", "unavailable"] {
+            let value = tool_error(CloudError::new(code, "temporary"), "request")
+                .structured_content
+                .unwrap();
+            assert_eq!(value["retry_after_ms"], 1000);
+            assert!(value["error"].get("fix").is_none());
+        }
     }
 }

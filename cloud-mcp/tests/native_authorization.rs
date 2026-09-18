@@ -69,7 +69,7 @@ async fn real_http_device_login_approval_rest_and_mcp_share_revocable_bog_creden
         .json()
         .await
         .unwrap();
-    assert_eq!(pending["error"]["code"], "authorization_pending");
+    assert_eq!(pending["error"], "authorization_pending");
     let login = http
         .get(format!("{url}/auth/login?user_code={public}"))
         .send()

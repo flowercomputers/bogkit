@@ -32,18 +32,22 @@ async fn sdk_initializes_and_discovers_exact_tools() {
             "describe_bog",
             "describe_definition",
             "discover_capabilities",
+            "execute_cleanup",
             "get_current_context",
             "get_record",
             "issue_token",
             "list_bogs",
             "list_resources",
+            "list_routes",
             "list_templates",
             "list_tokens",
             "list_workspaces",
             "plan_definition_update",
             "prepare_app_access",
+            "preview_cleanup",
             "query_resource",
             "read_view",
+            "request_info",
             "revoke_token",
             "search_resource",
             "upsert_record",
@@ -473,7 +477,7 @@ async fn legacy_initialize_wire_discovery_and_bad_jsonrpc() {
         .json()
         .await
         .unwrap();
-    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 28);
+    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 32);
     let bad = post(json!({"jsonrpc":"bogus","id":3,"method":"tools/list"}))
         .send()
         .await
@@ -797,7 +801,7 @@ async fn newer_clients_negotiate_verified_revision_and_cannot_select_newer_inlin
         .json()
         .await
         .unwrap();
-    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 28);
+    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 32);
     assert!(list["result"].get("resultType").is_none());
     h.close().await;
 }

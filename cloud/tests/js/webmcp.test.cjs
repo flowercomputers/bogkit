@@ -9,7 +9,7 @@ async function run(pathname, signedIn=true, legacy=false) {
   const context = { registerTool: async t => tools.set(t.name,t) };
   const document = { modelContext: legacy ? undefined : context, dispatchEvent: event => events.push(event) };
   await vm.runInNewContext(code, { document, navigator: legacy ? {modelContext:context} : {}, location:{pathname}, Event:class{constructor(type){this.type=type;}}, CustomEvent:class{constructor(type,{detail}){this.type=type;this.detail=detail;}},
-    fetch: async (path,options) => { calls.push({path,options}); if (state.beforeFetch) await state.beforeFetch(path,options); const ok = path !== '/console-session' || state.signedIn; return {ok, json:async()=> path==='/console-session' ? (ok?{csrf_token:state.csrf}:{error:{message:'sign in'}}) : (state.responses.get(path) || {path})}; }
+    fetch: async (path,options) => { calls.push({path,options}); if (state.beforeFetch) await state.beforeFetch(path,options); const ok = path !== '/console-session' || state.signedIn; return {ok, status:ok?200:401, json:async()=> path==='/console-session' ? (ok?{csrf_token:state.csrf}:{error:{message:'sign in'}}) : (state.responses.get(path) || {path})}; }
   });
   return {tools,calls,events,state};
 }
@@ -21,10 +21,10 @@ test('public tools work in current and older WebMCP browsers without exposing au
   }
 });
 test('signed-out console does not expose authenticated tools',async()=>{
-  const {tools}=await run('/console',false);assert.equal(tools.size,2);
+  const {tools}=await run('/console',false);assert.equal(tools.size,3);
 });
 test('creation uses explicit workspace, stable retry key and private CSRF; default is personal',async()=>{
-  const {tools,calls}=await run('/console');assert.equal(tools.size,22);
+  const {tools,calls}=await run('/console');assert.equal(tools.size,23);
   const create=tools.get('bog_create_bog');assert.equal(create.annotations.readOnlyHint,false);
   const value=await create.execute({name:'fixture',idempotency_key:'stable'});
   assert.equal(calls.at(-1).path,'/v1/bogs');assert.equal(calls.at(-1).options.headers['Idempotency-Key'],'stable');
@@ -87,7 +87,7 @@ test('prepare app access returns only nonsecret metadata and refreshes UI withou
 test('every signed-in tool checks current session after logout, including reads',async()=>{
   const {tools,calls,state,events}=await run('/console');state.signedIn=false;
   for(const [name,tool] of tools) {
-    if(['bog_service_info','bog_templates'].includes(name))continue;
+    if(['bog_service_info','bog_templates','bog_connection_status'].includes(name))continue;
     const before=calls.length;
     await assert.rejects(tool.execute({bog_id:bog,scope:'read',label:'demo',name:'demo',idempotency_key:'retry'}),/sign in/);
     assert.equal(calls.length,before+1);assert.equal(calls.at(-1).path,'/console-session');
@@ -174,4 +174,14 @@ test('additive definition update tools plan apply and report durable status',asy
   assert.equal(calls.at(-1).options.headers['x-csrf-token'],state.csrf);
   await tools.get('bog_definition_update_status').execute({bog_id:bog,job_id:'job/1'});
   assert.equal(calls.at(-1).path,`/v1/bogs/${bog}/definition/jobs/job%2F1`);
+});
+
+test('connection status is a fresh allowlisted check without session or credential data', async()=>{
+  const {tools,state}=await run('/console');
+  const tool=tools.get('bog_connection_status'); assert.equal(tool.annotations.readOnlyHint,true);
+  let value=JSON.parse((await tool.execute({})).content[0].text);
+  assert.deepEqual(value,{signed_in:true,transport:'browser-session',mcp_path:'/mcp',console_path:'/console'});
+  assert.equal(JSON.stringify(value).includes('private-csrf'),false);
+  state.signedIn=false;
+  value=JSON.parse((await tool.execute({})).content[0].text); assert.equal(value.signed_in,false);
 });
