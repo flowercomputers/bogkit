@@ -177,7 +177,8 @@ impl Registry {
             usize::MAX,
             initial,
             None,
-            maximum,
+            // The legacy workspace allowance is independent of platform retention.
+            32,
             None,
         )
     }
@@ -483,7 +484,7 @@ impl Registry {
         name: &str,
         key: &str,
         definition: &bog_definition::Definition,
-        maximum: usize,
+        legacy_maximum: usize,
     ) -> Result<Bog, CloudError> {
         let scoped = principal.kind() != crate::PrincipalKind::Operator;
         self.create_in_workspace(
@@ -493,12 +494,17 @@ impl Registry {
             name,
             "records-v1",
             key,
-            if scoped { 3 } else { maximum },
+            if scoped { 3 } else { legacy_maximum },
             if scoped { 3 } else { usize::MAX },
             ObservedState::Creating,
             if scoped { Some(principal) } else { None },
-            if scoped { maximum.min(32) } else { maximum },
+            // Resident worker capacity must not limit retained Bogs across workspaces.
+            32,
             Some(definition),
         )
     }
 }
+
+#[cfg(test)]
+#[path = "registry_quota_tests.rs"]
+mod quota_tests;
