@@ -7,6 +7,39 @@ pub struct CloudError {
     pub message: String,
 }
 impl CloudError {
+    /// Safe repair metadata for known validation failures; never copies submitted values.
+    pub fn fix(&self) -> Option<serde_json::Value> {
+        if self.code != "invalid_request" {
+            return None;
+        }
+        let (field, expected) = if self.message.contains("exactly one of key or keys") {
+            ("/", serde_json::json!({"oneOf":["key","keys"]}))
+        } else if self.message.contains("bounds cannot")
+            || self.message.contains("offset") && self.message.contains("bound")
+        {
+            (
+                "/offset",
+                serde_json::json!("omit offset with after or before"),
+            )
+        } else if self.message.contains("name required") {
+            ("/name", serde_json::json!("nonempty string"))
+        } else if self.message.contains("unsupported creation field") {
+            (
+                "/",
+                serde_json::json!([
+                    "name",
+                    "template",
+                    "definition",
+                    "wait",
+                    "sandbox",
+                    "app_access"
+                ]),
+            )
+        } else {
+            return None;
+        };
+        Some(serde_json::json!({"field":field,"expected":expected}))
+    }
     pub fn next_action(&self) -> &'static str {
         match self.code.as_str() {
             "not_found" if self.message.contains("resource operation") => {

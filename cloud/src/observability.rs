@@ -317,6 +317,49 @@ impl Observability {
             release_ms,
         });
     }
+    pub(crate) fn request_target(&self, request_id: &str) -> Result<BogId, CloudError> {
+        let id = uuid::Uuid::parse_str(request_id)
+            .map_err(|_| CloudError::new("invalid_request", "invalid request ID"))?
+            .to_string();
+        let m = self.memory.lock().map_err(|_| unavailable())?;
+        m.requests
+            .iter()
+            .rev()
+            .find(|r| r.request_id == id && r.at >= now() - HOUR)
+            .map(|r| r.bog)
+            .ok_or_else(|| CloudError::new("not_found", "request observation not found"))
+    }
+    /// Look up a retained, content-free observation. The caller authorizes Bog access;
+    /// app credentials are additionally restricted to their own observations here.
+    pub fn request(
+        &self,
+        bog: BogId,
+        p: &Principal,
+        request_id: &str,
+    ) -> Result<Value, CloudError> {
+        let id = uuid::Uuid::parse_str(request_id)
+            .map_err(|_| CloudError::new("invalid_request", "invalid request ID"))?
+            .to_string();
+        let m = self.memory.lock().map_err(|_| unavailable())?;
+        let own = (p.kind() == PrincipalKind::App).then(|| credential(p));
+        let row = m
+            .requests
+            .iter()
+            .rev()
+            .find(|r| {
+                r.bog == bog
+                    && r.request_id == id
+                    && r.at >= now() - HOUR
+                    && own.as_ref().is_none_or(|c| *c == r.credential)
+            })
+            .ok_or_else(|| CloudError::new("not_found", "request observation not found"))?;
+        Ok(
+            json!({"bog_id":bog,"request_id":row.request_id,"operation":row.operation,
+            "credential_id":row.credential,"code":row.code,"status":row.status,
+            "elapsed_ms":row.ms,"at":row.at,"reset_at":self.since,
+            "retention":{"max_age_seconds":HOUR,"max_request_observations_global":MAX_REQUESTS,"survives_restart":false}}),
+        )
+    }
     pub fn snapshot(&self, bog: BogId, p: &Principal, seconds: i64) -> Result<Value, CloudError> {
         let m = self.memory.lock().map_err(|_| unavailable())?;
         let at = now();
@@ -444,6 +487,46 @@ mod tests {
             status: 200,
             body: json!({}),
         })
+    }
+    #[test]
+    fn request_lookup_is_scoped_redacted_expiring_and_ephemeral() {
+        let tmp = tempfile::tempdir().unwrap();
+        let s = service(tmp.path());
+        let owner = person(&s, "request-owner");
+        let bog = s
+            .registry
+            .create_for_principal(&owner, "request", "records-v1", "request", 32)
+            .unwrap()
+            .id;
+        let a = s.auth.issue(&owner, bog, Scope::Read).unwrap();
+        let b = s.auth.issue(&owner, bog, Scope::Read).unwrap();
+        let app = s.auth.authenticate(&a.secret).unwrap();
+        let other = s.auth.authenticate(&b.secret).unwrap();
+        let obs = Observability::open(tmp.path()).unwrap();
+        let id = uuid::Uuid::new_v4().to_string();
+        let failure = Err(CloudError::new(
+            "invalid_request",
+            "private request payload",
+        ));
+        obs.record(bog, &app, "search", Instant::now(), &id, &failure);
+        let got = obs.request(bog, &app, &id).unwrap();
+        assert_eq!(got["status"], 400);
+        assert_eq!(got["code"], "invalid_request");
+        assert!(got["elapsed_ms"].as_f64().unwrap() >= 0.0);
+        assert!(!got.to_string().contains("private request payload"));
+        assert!(!got.to_string().contains(&a.secret));
+        assert!(obs.request(bog, &owner, &id).is_ok());
+        assert_eq!(obs.request(bog, &other, &id).unwrap_err().code, "not_found");
+        assert_eq!(
+            obs.request(bog, &app, "bad").unwrap_err().code,
+            "invalid_request"
+        );
+        obs.memory.lock().unwrap().requests.front_mut().unwrap().at = now() - HOUR - 1;
+        assert_eq!(obs.request(bog, &owner, &id).unwrap_err().code, "not_found");
+        obs.record(bog, &app, "search", Instant::now(), &id, &ok());
+        drop(obs);
+        let obs = Observability::open(tmp.path()).unwrap();
+        assert_eq!(obs.request(bog, &owner, &id).unwrap_err().code, "not_found");
     }
     #[tokio::test]
     async fn metrics_isolate_credentials_recheck_membership_and_never_start_worker() {
