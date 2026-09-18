@@ -221,12 +221,25 @@ impl Auth {
             .registry
             .connection()?
             .execute(
-                "UPDATE tokens SET revoked_at=?3 WHERE id=?1 AND bog_id=?2",
+                "UPDATE tokens SET revoked_at=?3 WHERE id=?1 AND bog_id=?2 AND revoked_at IS NULL",
                 params![id, bog.to_string(), now()],
             )
             .map_err(db_error)?;
         if n == 0 {
-            Err(CloudError::new("not_found", "token not found"))
+            let exists: bool = self
+                .registry
+                .connection()?
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM tokens WHERE id=?1 AND bog_id=?2)",
+                    params![id, bog.to_string()],
+                    |row| row.get(0),
+                )
+                .map_err(db_error)?;
+            if exists {
+                Ok(())
+            } else {
+                Err(CloudError::new("not_found", "token not found"))
+            }
         } else {
             self.credential_event(bog, "credential_revoked", id);
             Ok(())

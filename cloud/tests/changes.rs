@@ -136,3 +136,79 @@ async fn changes_wake_timeout_reset_revoke_and_cancel() {
     );
     svc.supervisor.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn resource_wait_and_default_empty_queries_use_hosted_contracts() {
+    use serde_json::json;
+    let tmp = tempfile::Builder::new()
+        .prefix("bc-resource-")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let worker = std::env::var_os("BOG_TEST_WORKER")
+        .map(Into::into)
+        .unwrap_or_else(|| {
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../target/debug/bog-records-worker")
+        });
+    let svc = CloudService::open(Config::new(tmp.path().join("r"), worker), OWNER).unwrap();
+    let owner = svc.auth.authenticate(OWNER).unwrap();
+    let id = svc
+        .registry
+        .create("resource", "records-v1", "resource")
+        .unwrap()
+        .id;
+    let token = svc.auth.issue(&owner, id, Scope::Read).unwrap();
+    let reader = svc.auth.authenticate(&token.secret).unwrap();
+    let query = |resource: &str, query| Operation::QueryResource {
+        bog_id: id,
+        resource: resource.into(),
+        query,
+    };
+    let table = svc
+        .execute(&reader, query("docs", json!({})))
+        .await
+        .unwrap();
+    assert_eq!(table.body["data"], json!([]));
+    let count = svc
+        .execute(&reader, query("total", json!({})))
+        .await
+        .unwrap();
+    assert_eq!(count.body["data"], json!(0));
+    let initial = svc
+        .execute(&reader, query("docs", json!({"action":"wait","timeout":0})))
+        .await
+        .unwrap();
+    assert!(initial.body["cursor"].is_string());
+    let again = svc
+        .execute(
+            &reader,
+            query(
+                "docs",
+                json!({"action":"wait","cursor":initial.body["cursor"],"timeout":0}),
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(again.body["changed"], false);
+    assert_eq!(
+        svc.execute(
+            &reader,
+            query("docs", json!({"action":"wait","timeout":0,"timeout_ms":0}))
+        )
+        .await
+        .err()
+        .unwrap()
+        .code,
+        "invalid_request"
+    );
+    svc.auth.revoke(&owner, id, &token.id).unwrap();
+    assert_eq!(
+        svc.execute(&reader, query("docs", json!({"action":"wait","timeout":0})))
+            .await
+            .err()
+            .unwrap()
+            .code,
+        "unauthorized"
+    );
+    svc.supervisor.stop(id).await.unwrap();
+}

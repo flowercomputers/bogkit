@@ -231,6 +231,37 @@ impl CloudService {
         principal: &Principal,
         operation: Operation,
     ) -> Result<OperationResult, CloudError> {
+        // Resource waits use the same authorized waiter, quotas and revocation checks.
+        let operation =
+            if let Operation::QueryResource {
+                bog_id,
+                resource,
+                query,
+            } = &operation
+            {
+                if query.get("action").and_then(Value::as_str) == Some("wait") {
+                    self.auth.authorize(principal, Some(*bog_id), false)?;
+                    let active = self.registry.definition(*bog_id)?;
+                    if !active.definition.expose.values().any(|op| {
+                        op.target == *resource && op.action == bog_definition::Action::Wait
+                    }) {
+                        return Err(CloudError::new(
+                            "not_found",
+                            "resource operation is not exposed",
+                        ));
+                    }
+                    let (cursor, timeout_seconds) = normalize_wait(query.clone())?;
+                    Operation::WaitForChange {
+                        bog_id: *bog_id,
+                        cursor,
+                        timeout_seconds,
+                    }
+                } else {
+                    operation
+                }
+            } else {
+                operation
+            };
         if let Operation::WaitForChange {
             bog_id,
             cursor,
@@ -402,7 +433,7 @@ impl CloudService {
                 tokio::spawn(async move {
                     let _ = supervisor.ensure_running(id).await;
                 });
-                let mut body = serde_json::to_value(&bog).map_err(crate::definitions::invalid)?;
+                let mut body = self.describe_bog_value(bog.id)?;
                 body["definition"] = serde_json::to_value(self.registry.definition(id)?)
                     .map_err(crate::definitions::invalid)?;
                 body["api_url"] = serde_json::json!(format!("/v1/bogs/{id}"));
@@ -481,8 +512,7 @@ impl CloudService {
                             registry.set_status(id, crate::ObservedState::Failed, Some(&e.code));
                     }
                 });
-                let mut value = serde_json::to_value(&bog)
-                    .map_err(|_| CloudError::new("unavailable", "cannot describe database"))?;
+                let mut value = self.describe_bog_value(bog.id)?;
                 value["api_url"] = Value::String(format!("/v1/bogs/{}", bog.id));
                 return Ok(OperationResult {
                     status: 202,
@@ -490,7 +520,15 @@ impl CloudService {
                 });
             }
             ListBogs => {
-                serde_json::json!({"bogs":match principal.workspace_id() { Some(w)=>self.registry.list_scoped(w)?,None=>self.registry.list()? }})
+                let bogs = match principal.workspace_id() {
+                    Some(w) => self.registry.list_scoped(w)?,
+                    None => self.registry.list()?,
+                };
+                let descriptions = bogs
+                    .iter()
+                    .map(|bog| self.describe_bog_value(bog.id))
+                    .collect::<Result<Vec<_>, _>>()?;
+                serde_json::json!({"bogs":descriptions})
             }
             ListTemplates => crate::contract::templates(),
             GetCurrentContext => {
@@ -520,8 +558,7 @@ impl CloudService {
                 self.observability.merge_activity(&mut tokens);
                 serde_json::json!({"tokens":tokens})
             }
-            DescribeBog { bog_id } => serde_json::to_value(self.registry.get(bog_id)?)
-                .map_err(|_| CloudError::new("unavailable", "cannot describe database"))?,
+            DescribeBog { bog_id } => self.describe_bog_value(bog_id)?,
             IssueToken { bog_id, scope } => {
                 let token = self.auth.issue(principal, bog_id, scope)?;
                 serde_json::json!({"id":token.id,"token":token.secret,"scope":scope})
@@ -551,7 +588,22 @@ impl CloudService {
                 let mut response = self
                     .worker(bog_id, reqwest::Method::GET, "/schema".into(), None)
                     .await?;
-                response["template_version"] = Value::String("records-v1".into());
+                let active = self.registry.definition(bog_id)?;
+                response["template_version"] = if active.configured {
+                    Value::Null
+                } else {
+                    Value::String("records-v1".into())
+                };
+                response["kind"] = serde_json::json!(if active.configured {
+                    "defined"
+                } else {
+                    "template"
+                });
+                response["resources"] = crate::definitions::resources_with_limits(
+                    &active,
+                    &self.supervisor.config.composable_limits,
+                )["resources"]
+                    .clone();
                 response
             }
             GetRecord { bog_id, key } => {
@@ -606,6 +658,7 @@ impl CloudService {
                 .await?
             }
             Batch { bog_id, operations } => {
+                let operations = normalize_batch(operations)?;
                 bog_cloud_records::validate_batch(&operations)
                     .map_err(|e| CloudError::new("invalid_request", &e))?;
                 self.worker(
@@ -621,6 +674,29 @@ impl CloudService {
             status: 200,
             body: result,
         })
+    }
+    fn describe_bog_value(&self, id: BogId) -> Result<Value, CloudError> {
+        let mut value =
+            serde_json::to_value(self.registry.get(id)?).map_err(crate::definitions::invalid)?;
+        let active = self.registry.definition(id)?;
+        value["kind"] = serde_json::json!(if active.configured {
+            "defined"
+        } else {
+            "template"
+        });
+        if active.configured {
+            value["template"] = Value::Null;
+            value["template_version"] = Value::Null;
+        }
+        value["definition"] = serde_json::json!({"revision":active.revision,"digest":active.digest,"configured":active.configured});
+        value["capabilities"] = crate::definitions::resources_with_limits(
+            &active,
+            &self.supervisor.config.composable_limits,
+        );
+        let job = self.registry.active_definition_job(id)?;
+        value["writes_paused"] = serde_json::json!(job.is_some());
+        value["active_definition_job"] = job.unwrap_or(Value::Null);
+        Ok(value)
     }
     /// Snapshot the existing bucket without authenticating or charging a request.
     /// No bucket means this principal has not reached the rate-limited operation path.
@@ -806,6 +882,100 @@ impl Operation {
             ListWorkspaces => "list_workspaces",
             ListTemplates => "list_templates",
             GetCurrentContext => "get_current_context",
+        }
+    }
+}
+
+/// Normalize the hosted batch envelope while retaining legacy clients.
+pub fn normalize_batch(value: Value) -> Result<Value, CloudError> {
+    match value {
+        Value::Array(_) => Ok(value),
+        Value::Object(mut object) if object.len() == 1 => {
+            let ops = object.remove("ops").or_else(|| object.remove("operations"));
+            match ops {
+                Some(Value::Array(ops)) => Ok(Value::Array(ops)),
+                _ => Err(crate::definitions::invalid("expected ops array")),
+            }
+        }
+        _ => Err(crate::definitions::invalid(
+            "expected an ops array envelope",
+        )),
+    }
+}
+fn normalize_wait(value: Value) -> Result<(Option<String>, u64), CloudError> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Wait {
+        action: String,
+        cursor: Option<String>,
+        timeout: Option<u64>,
+        timeout_seconds: Option<u64>,
+        timeout_ms: Option<u64>,
+    }
+    let wait: Wait = serde_json::from_value(value).map_err(crate::definitions::invalid)?;
+    if wait.action != "wait"
+        || ([wait.timeout, wait.timeout_seconds, wait.timeout_ms]
+            .iter()
+            .filter(|v| v.is_some())
+            .count()
+            > 1)
+    {
+        return Err(crate::definitions::invalid(
+            "expected wait with one timeout field",
+        ));
+    }
+    if wait.timeout_ms.is_some_and(|ms| ms > 25_000)
+        || wait
+            .timeout_seconds
+            .or(wait.timeout)
+            .is_some_and(|s| s > 25)
+    {
+        return Err(crate::definitions::invalid("timeout exceeds 25 seconds"));
+    }
+    Ok((
+        wait.cursor,
+        wait.timeout
+            .or(wait.timeout_seconds)
+            .or_else(|| wait.timeout_ms.map(|ms| ms.div_ceil(1000)))
+            .unwrap_or(25),
+    ))
+}
+
+#[cfg(test)]
+mod transport_normalization_tests {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn batch_envelopes_are_strict_and_compatible() {
+        for input in [json!([]), json!({"ops":[]}), json!({"operations":[]})] {
+            assert_eq!(normalize_batch(input).unwrap(), json!([]));
+        }
+        for input in [
+            json!({"ops":[],"operations":[]}),
+            json!({"ops":[],"extra":1}),
+            json!({"ops":{}}),
+            json!(null),
+        ] {
+            assert!(normalize_batch(input).is_err());
+        }
+    }
+    #[test]
+    fn wait_input_is_bounded_and_strict() {
+        assert_eq!(
+            normalize_wait(json!({"action":"wait","timeout_seconds":0})).unwrap(),
+            (None, 0)
+        );
+        assert_eq!(
+            normalize_wait(json!({"action":"wait","timeout_ms":25000})).unwrap(),
+            (None, 25)
+        );
+        for input in [
+            json!({"action":"wait","timeout_seconds":26}),
+            json!({"action":"wait","timeout_ms":25001}),
+            json!({"action":"wait","timeout_ms":0,"timeout_seconds":0}),
+            json!({"action":"wait","extra":1}),
+        ] {
+            assert!(normalize_wait(input).is_err());
         }
     }
 }

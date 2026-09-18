@@ -289,3 +289,71 @@ async fn legacy_workspace_reports_service_configured_limit() {
     assert_eq!(body["workspaces"][0]["bog_limit"], 17);
     assert_eq!(body["workspaces"][0]["uncapped_bogs"], false);
 }
+
+#[tokio::test]
+async fn app_management_forbidden_before_body_validation_and_metrics_are_scoped() {
+    let tmp = tempfile::tempdir().unwrap();
+    let svc = CloudService::open(
+        Config::new(tmp.path().join("service"), std::env::current_exe().unwrap()),
+        OWNER,
+    )
+    .unwrap();
+    let owner = svc.auth.authenticate(OWNER).unwrap();
+    let bog = svc.registry.create("a", "records-v1", "a").unwrap();
+    let other = svc.registry.create("b", "records-v1", "b").unwrap();
+    let app = svc.auth.issue(&owner, bog.id, Scope::Write).unwrap();
+    let router = build_rest_router(svc.clone());
+    for path in ["/v1/bogs".into(), format!("/v1/bogs/{}/tokens", bog.id)] {
+        assert_eq!(
+            request(&router, "POST", &path, Some(&app.secret), None)
+                .await
+                .0,
+            403
+        );
+    }
+    let (status, metrics) = request(
+        &router,
+        "GET",
+        &format!("/v1/bogs/{}/metrics", bog.id),
+        Some(&app.secret),
+        None,
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert!(metrics["worker"].is_object());
+    assert_eq!(
+        request(
+            &router,
+            "GET",
+            &format!("/v1/bogs/{}/metrics", other.id),
+            Some(&app.secret),
+            None
+        )
+        .await
+        .0,
+        404
+    );
+    assert_eq!(
+        request(
+            &router,
+            "GET",
+            &format!("/v1/bogs/{}/events", bog.id),
+            Some(&app.secret),
+            None
+        )
+        .await
+        .0,
+        403
+    );
+    svc.auth.revoke(&owner, bog.id, &app.id).unwrap();
+    svc.auth.revoke(&owner, bog.id, &app.id).unwrap();
+    let (_, events) = request(
+        &router,
+        "GET",
+        &format!("/v1/bogs/{}/events", bog.id),
+        Some(OWNER),
+        None,
+    )
+    .await;
+    assert_eq!(events.to_string().matches("credential_revoked").count(), 1);
+}

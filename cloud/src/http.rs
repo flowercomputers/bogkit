@@ -629,6 +629,7 @@ async fn dispatch_inner(
         },
         ("GET", 2) => Operation::ListBogs,
         ("POST", 2) => {
+            service.auth.authorize(&principal, None, true)?;
             let value = parse()?;
             if let Some(definition) = value.get("definition") {
                 if value
@@ -714,6 +715,8 @@ async fn dispatch_inner(
             }
         }
         ("POST", 4) if path[3] == "tokens" => {
+            service.auth.authorize(&principal, None, true)?;
+            service.auth.authorize(&principal, id, true)?;
             #[derive(Deserialize)]
             #[serde(deny_unknown_fields)]
             struct Issue {
