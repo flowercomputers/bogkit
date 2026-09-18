@@ -166,13 +166,19 @@ impl Supervisor {
             .try_acquire_owned()
             .map_err(|_| CloudError::new("capacity", "one definition build may run on this host"))
     }
-    pub(crate) fn reserve_candidate(&self) -> Result<OwnedSemaphorePermit, CloudError> {
-        self.active_slots.clone().try_acquire_owned().map_err(|_| {
-            CloudError::new(
-                "capacity",
-                "no resident capacity for a separate definition candidate",
-            )
-        })
+    pub(crate) async fn reserve_candidate(&self) -> Result<OwnedSemaphorePermit, CloudError> {
+        let slot = self.reserve_resident_slot(None).await?;
+        self.check_physical_capacity(None).await?;
+        Ok(slot)
+    }
+    /// Called with the source's exclusive gate held and source already resident.
+    pub(crate) async fn reserve_build_candidate(
+        &self,
+        source: BogId,
+    ) -> Result<OwnedSemaphorePermit, CloudError> {
+        let slot = self.reserve_resident_slot(Some(source)).await?;
+        self.check_physical_capacity(Some(source)).await?;
+        Ok(slot)
     }
     pub fn max_active(&self) -> usize {
         self.config.max_active
@@ -263,53 +269,8 @@ impl Supervisor {
         {
             return Err(unavailable("database is not available"));
         }
-        let slot = self.reserve_resident_slot(id).await?;
-        // Surviving but unresponsive workers still consume physical capacity.
-        // Their lifetime/store locks are authoritative even before a socket
-        // exists; never launch replacement capacity beside those processes.
-        let running = self.running.lock().await;
-        let mut untracked = 0;
-        for entry in std::fs::read_dir(self.config.root.join("instances"))
-            .map_err(|_| unavailable("cannot inspect resident worker capacity"))?
-        {
-            let entry =
-                entry.map_err(|_| unavailable("cannot inspect resident worker capacity"))?;
-            let Ok(uuid) = uuid::Uuid::parse_str(&entry.file_name().to_string_lossy()) else {
-                continue;
-            };
-            let other = BogId(uuid);
-            if other == id || running.contains_key(&other) {
-                continue;
-            }
-            for path in [
-                entry.path().join("worker.lock"),
-                entry.path().join("data/lock"),
-            ] {
-                match OpenOptions::new()
-                    .read(true)
-                    .write(true)
-                    .custom_flags(libc::O_NOFOLLOW)
-                    .open(path)
-                {
-                    Ok(lock) if lock.try_lock().is_err() => {
-                        untracked += 1;
-                        break;
-                    }
-                    Ok(_) => {}
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(_) => return Err(unavailable("cannot inspect resident worker ownership")),
-                }
-            }
-        }
-        drop(running);
-        if self.config.max_active - self.active_slots.available_permits() + untracked
-            > self.config.max_active
-        {
-            return Err(CloudError::new(
-                "capacity",
-                "surviving workers occupy resident slots; retry when they recover or stop an unused database",
-            ));
-        }
+        let slot = self.reserve_resident_slot(Some(id)).await?;
+        self.check_physical_capacity(Some(id)).await?;
         let _start_slot = self
             .start_slots
             .clone()
@@ -510,12 +471,62 @@ impl Supervisor {
         self.event(id, "worker_failed", Some("worker_start_failed"));
         Err(unavailable("database worker failed readiness checks"))
     }
+    async fn check_physical_capacity(&self, id: Option<BogId>) -> Result<(), CloudError> {
+        // Surviving but unresponsive workers still consume physical capacity.
+        // Their lifetime/store locks are authoritative even before a socket
+        // exists; never launch replacement capacity beside those processes.
+        let running = self.running.lock().await;
+        let mut untracked = 0;
+        for entry in std::fs::read_dir(self.config.root.join("instances"))
+            .map_err(|_| unavailable("cannot inspect resident worker capacity"))?
+        {
+            let entry =
+                entry.map_err(|_| unavailable("cannot inspect resident worker capacity"))?;
+            let Ok(uuid) = uuid::Uuid::parse_str(&entry.file_name().to_string_lossy()) else {
+                continue;
+            };
+            let other = BogId(uuid);
+            if Some(other) == id || running.contains_key(&other) {
+                continue;
+            }
+            for path in [
+                entry.path().join("worker.lock"),
+                entry.path().join("data/lock"),
+            ] {
+                match OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .custom_flags(libc::O_NOFOLLOW)
+                    .open(path)
+                {
+                    Ok(lock) if lock.try_lock().is_err() => {
+                        untracked += 1;
+                        break;
+                    }
+                    Ok(_) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(_) => return Err(unavailable("cannot inspect resident worker ownership")),
+                }
+            }
+        }
+        drop(running);
+        if self.config.max_active - self.active_slots.available_permits() + untracked
+            > self.config.max_active
+        {
+            return Err(CloudError::new(
+                "capacity",
+                "surviving workers occupy resident slots; retry when they recover or stop an unused database",
+            ));
+        }
+        Ok(())
+    }
+
     /// Warm workers are a cache, not reservations. Under pressure close the
     /// least recently used worker whose exclusive gate is immediately available.
     /// Never wait for a victim's gate: callers already hold their target's gate.
     async fn reserve_resident_slot(
         &self,
-        target: BogId,
+        target: Option<BogId>,
     ) -> Result<OwnedSemaphorePermit, CloudError> {
         let _admission = self.admission.lock().await;
         if let Ok(slot) = self.active_slots.clone().try_acquire_owned() {
@@ -526,7 +537,7 @@ impl Supervisor {
             .lock()
             .await
             .iter()
-            .filter(|(id, _)| **id != target)
+            .filter(|(id, _)| Some(**id) != target)
             .filter_map(|(id, worker)| worker.last_use.lock().ok().map(|last| (*id, *last)))
             .collect();
         candidates.sort_by_key(|(_, last)| *last);
@@ -534,6 +545,11 @@ impl Supervisor {
             let Ok(_guard) = self.gate(id)?.try_write_owned() else {
                 continue;
             };
+            // The journal protects the source even between export and activation,
+            // when no operation lease is held. Check while holding its write gate.
+            if self.registry.building(id)? {
+                continue;
+            }
             // A newer request may have completed since the candidate snapshot.
             let unchanged = self.running.lock().await.get(&id).is_some_and(|worker| {
                 worker

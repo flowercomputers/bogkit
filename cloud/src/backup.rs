@@ -444,7 +444,7 @@ impl Supervisor {
             None
         };
         let candidate_slot = if manifest.definition.is_some() {
-            Some(self.reserve_candidate()?)
+            Some(self.reserve_candidate().await?)
         } else {
             None
         };

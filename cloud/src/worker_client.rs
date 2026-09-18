@@ -54,6 +54,11 @@ impl WorkerClient {
             }
             bytes.extend_from_slice(&chunk);
         }
+        // Older workers use the router's empty 404 for unsupported control
+        // endpoints. Preserve that definitive status for safe compatibility.
+        if status == 404 && bytes.is_empty() {
+            return Ok((status, Value::Null));
+        }
         let value = serde_json::from_slice(&bytes)
             .map_err(|_| CloudError::new("unavailable", "invalid worker response"))?;
         Ok((status, value))

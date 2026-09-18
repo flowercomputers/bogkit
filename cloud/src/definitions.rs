@@ -291,7 +291,12 @@ impl crate::CloudService {
                 .min_free_bytes
                 .saturating_add(128 * 1024 * 1024),
         )?;
-        let candidate_slot = self.supervisor.reserve_candidate()?;
+        if self.supervisor.max_active() < 2 {
+            return Err(CloudError::new(
+                "capacity",
+                "definition builds require resident capacity for both source and candidate",
+            ));
+        }
         let guard = self.supervisor.gate(id)?.write_owned().await;
         let current = self.registry.definition(id)?;
         if current.revision != expected || self.registry.building(id)? {
@@ -300,6 +305,11 @@ impl crate::CloudService {
                 "definition changed or a build is in progress",
             ));
         }
+        // Keep source admission and candidate reservation under the source gate.
+        // Waking first ensures a sleeping source cannot lose its needed slot to
+        // the candidate, and the gate excludes it from pressure reclamation.
+        self.supervisor.start_locked(id).await?;
+        let candidate_slot = self.supervisor.reserve_build_candidate(id).await?;
         let job = uuid::Uuid::new_v4().to_string();
         let payload = json!({"expected_revision":expected,"definition":definition,"target_digest":definition.digest().map_err(invalid)?});
         self.registry.connection()?.execute("INSERT INTO definition_jobs(id,bog_id,status,payload,created_at) VALUES (?1,?2,'building',?3,?4)",params![job,id.to_string(),payload.to_string(),crate::registry::now()]).map_err(crate::registry::db_error)?;
@@ -348,6 +358,12 @@ impl crate::supervisor::Supervisor {
             // have released its lease while its worker mutation is still queued.
             paused_client=Some(lease.client.clone());
             let (status,_)=lease.client.request(reqwest::Method::POST,"/_cloud/pause_writes",None).await?;
+            if status==404 {
+                // A worker predating freeze support never paused. Do not send a
+                // matching unsupported resume or retain a false write block.
+                paused_client=None;
+                return Err(CloudError::new("unavailable","source worker must be restarted before definition builds are supported"));
+            }
             if status!=200 {return Err(CloudError::new("unavailable","worker cannot freeze source writes"));}
             let mut offset=0usize; let mut records=Vec::new(); let mut expected_snapshot=None;
             loop {
