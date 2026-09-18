@@ -118,7 +118,7 @@ class Probe:
         names = {t['name'] for t in self.rpc('tools/list', {})['tools']}
         check({'discover_capabilities', 'validate_definition', 'describe_definition',
                'list_resources', 'query_resource', 'search_resource', 'plan_definition_update',
-               'apply_definition_update', 'definition_update_status'} <= names, 'missing MCP tools')
+               'apply_definition_update', 'definition_update_status', 'create_bog_from_definition'} <= names, 'missing MCP tools')
         check(self.tool('discover_capabilities')['enabled'], 'MCP composition disabled')
 
     def mint(self, scope):
@@ -184,8 +184,8 @@ class Probe:
     def verify(self, connected=False):
         if not connected:
             self.connect()
-        reader = self.mint('read')
         check(self.http('GET', self.base)['name'] == 'composable-live-' + self.state['run_id'], 'Bog identity mismatch')
+        reader = self.mint('read')
         for record in fixture('todo-records.json'):
             got = self.http('GET', self.base + '/docs/' + record['key'], token=reader)['data']
             check(digest(got) == digest(record['data']), 'record mismatch')
@@ -209,7 +209,10 @@ class Probe:
         resources = self.tool('list_resources', bog_id=self.state['bog_id'])
         check('private_stats' not in json.dumps(resources), 'private resource exposed')
         definition = self.tool('describe_definition', bog_id=self.state['bog_id'])
-        check(definition == self.http('GET', self.base + '/definition'), 'definition transport mismatch')
+        rest_definition = self.http('GET', self.base + '/definition')
+        rest_definition.pop('request_id', None)
+        definition.pop('request_id', None)
+        check(definition == rest_definition, 'definition transport mismatch')
         fingerprint = digest(definition)
         check(self.state.get('definition_hash', fingerprint) == fingerprint, 'definition changed')
         self.state['definition_hash'] = fingerprint
@@ -222,7 +225,7 @@ class Probe:
         bog = self.http('GET', self.base)
         check(bog['name'] == 'composable-live-' + str(uuid.UUID(self.state['run_id'])), 'cleanup identity mismatch')
         self.revoke()
-        self.http('DELETE', self.base, expected=(200, 202, 204))
+        self.http('DELETE', self.base, {'confirm': self.state['bog_id']}, expected=(200, 202, 204))
         self.http('GET', self.base, expected=(404,))
         self.path.unlink()
 
