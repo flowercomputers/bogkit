@@ -82,3 +82,10 @@
 .site-shell main #app .console-sections{border-radius:10px}
 .site-shell main #app .console-sections a{padding:.33em .77em;line-height:1.33;display:flex;align-items:center;justify-content:center;box-sizing:border-box}
 @supports(corner-shape:superellipse(2)){.site-shell main #app .console-sections{border-radius:20px;corner-shape:superellipse(2)}}
+.section-actions,.identity-label{display:flex;align-items:center;gap:.5em}.section-actions{flex-wrap:wrap}
+.site-shell :is(#new-bog,#new-access,#new-invite,#new-organization){background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.identity-label .account-avatar{border:0}
+.site-header .user-menu summary{overflow:visible;position:relative;isolation:isolate}
+.site-header .user-menu summary::before{content:"";position:absolute;inset:-.33em -.77em;border:1px solid transparent;border-radius:10px;z-index:-1}
+.site-header .user-menu summary:hover::before,.site-header .user-menu summary:focus-visible::before{background:var(--code);border-color:var(--line)}
+@supports(corner-shape:superellipse(2)){.site-header .user-menu summary::before{border-radius:20px;corner-shape:superellipse(2)}}

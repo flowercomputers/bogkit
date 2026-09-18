@@ -7,7 +7,7 @@ const id = '12345678-1234-4123-8123-123456789abc';
 const key = 'bog.pending-app-handoff';
 async function page(storage, search = '', signedIn = true, handoffStatus = 200) {
   const calls = [], nodes = new Map(), listeners = new Map();
-  const node = () => ({hidden:true, value:'workspace', dataset:{}, selectedOptions:[{dataset:{role:'owner'}}], showModal(){this.open=true;}, close(){this.open=false;}, before(){}, addEventListener(){}, setAttribute(){}, querySelector(){return {focus(){}};}, focus(){}, append(){}, replaceChildren(){}, toggleAttribute(){}, scrollIntoView(){}, remove(){}, click(){return this.onclick?.();}});
+  const node = () => ({hidden:true, value:'workspace', dataset:{}, style:{}, selectedOptions:[{dataset:{role:'owner'}}], showModal(){this.open=true;}, close(){this.open=false;}, before(){}, addEventListener(){}, setAttribute(){}, querySelector(){return {focus(){}};}, focus(){}, append(){}, replaceChildren(){}, toggleAttribute(){}, scrollIntoView(){}, remove(){}, click(){return this.onclick?.();}});
   const get = name => {if (!nodes.has(name)) nodes.set(name,node()); return nodes.get(name);};
   const location = {search,pathname:'/console',hash:'',origin:'https://example.test'};
   const context = vm.createContext({URLSearchParams, location, sessionStorage:{getItem:k=>storage.get(k),setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)},

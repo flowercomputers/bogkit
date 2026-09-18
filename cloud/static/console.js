@@ -57,17 +57,16 @@ async function refresh() {
   $('hide-secret').click();
   const [bogData, memberData] = await Promise.all([api(selected('/v1/bogs')), api('/v1/workspaces/' + workspace + '/members')]);
   const bogs = bogData.bogs || []; $('bogs').replaceChildren(); $('token-bog').replaceChildren(); $('tokens').replaceChildren();
-  const bogRows = makeTable($('bogs'), ['Name', 'Status', 'Storage', 'Actions'], 'No Bogs yet. Create your first Bog above.');
+  const bogRows = makeTable($('bogs'), ['Name', 'Status', 'Storage', 'Requests · 1h', 'Waiting', 'Actions'], 'No Bogs yet. Create your first Bog above.');
   const keyRows = makeTable($('tokens'), ['Name', 'Bog', 'Permissions', 'Actions'], 'No application API keys yet.');
   for (const bog of bogs) {
     const row = element('tr', ''), info = element('td', bog.name), storage = element('td', ''), controls = element('td', '');
-    info.append(element('small', bog.id)); row.append(info, element('td', bog.status || 'saved'), storage, controls);
+    info.append(element('small', bog.id)); const requests = element('td', '—'), waiting = element('td', '—'); row.append(info, element('td', bog.status || 'saved'), storage, requests, waiting); row.append(controls);
+    try { const result = await api(selected('/v1/bogs/' + bog.id + '/metrics?window=1h')); const metrics = result.data || result; requests.textContent = (metrics.requests || []).reduce((n, r) => n + r.count, 0).toLocaleString() + (metrics.window_complete && !metrics.truncated ? '' : ' (partial)'); waiting.textContent = String(metrics.waits?.active ?? '—'); requests.title = 'Observed requests in the last hour; partial means collection started recently or observations were truncated.'; } catch { requests.title = waiting.title = 'Metrics unavailable'; }
     try { const usage = await api(selected('/v1/bogs/' + bog.id + '/usage')); const data = usage.data || usage; storage.append(element('span', `${(data.logical_bytes / 1048576).toFixed(2)} MiB used of ${(data.limit_bytes / 1048576).toFixed(0)} MiB`)); } catch { storage.append(element('span', 'Unavailable')); }
     const option = element('option', bog.name); option.value = bog.id; $('token-bog').append(option);
     if (owner) controls.append(action('Delete Bog', async () => {
-      const confirm = prompt(`Permanently delete ${bog.name} and its records? Type its ID to confirm:\n${bog.id}`);
-      if (confirm !== bog.id) return;
-      await api(selected('/v1/bogs/' + bog.id), { method: 'DELETE', body: JSON.stringify({ confirm }) }); await refresh(); status('Bog deleted.');
+      openBogDeletion(bog);
     }));
     addTableRow(bogRows, row);
     const tokenData = await api(selected('/v1/bogs/' + bog.id + '/tokens'));
@@ -80,7 +79,7 @@ async function refresh() {
   }
   const memberRows = makeTable($('members'), ['Account', 'Role', 'Status', 'Actions'], 'No members.');
   for (const member of memberData.members || []) {
-    const row = element('tr', ''), actions = element('td', ''); row.append(element('td', `${member.account_id.slice(0,8)}${member.account_id === account ? ' (you)' : ''}`), element('td', member.role), element('td', 'Active'), actions);
+    const row = element('tr', ''), actions = element('td', ''); const memberCell = element('td', ''); memberCell.append(identityLabel(member.account_id, `${member.account_id.slice(0,8)}${member.account_id === account ? ' (you)' : ''}`)); row.append(memberCell, element('td', member.role), element('td', 'Active'), actions);
     if (owner && member.account_id !== account) actions.append(action('Remove', async () => {
       if (!confirm('Remove this person and revoke the app credentials they issued in this workspace?')) return;
       await api('/v1/workspaces/' + workspace + '/members/' + member.account_id, { method: 'DELETE' }); await refresh(); status('Member removed.');
@@ -101,6 +100,7 @@ async function refresh() {
 function renderOrganizationSwitcher() {
   const current = workspaceItems.find(item => item.id === workspace);
   $('organization-name').textContent = current?.name || 'Select organization';
+  $('workspace-heading').textContent = 'Your Workspace: ' + (current?.name || 'Personal');
   $('organization-switcher').hidden = !workspaceItems.length;
   $('organization-options').replaceChildren();
   for (const item of workspaceItems) {
@@ -165,7 +165,7 @@ async function start() {
     const identity = account.slice(0, 8);
     const userMenu = document.createElement('details'); userMenu.className = 'user-menu';
     const userLabel = element('summary', ''); userLabel.setAttribute('aria-label', 'Account: ' + (identity || 'signed in'));
-    const avatar = element('span', '', 'account-avatar'); avatar.setAttribute('aria-hidden', 'true');
+    const avatar = identityAvatar(account);
     userLabel.append(avatar, element('span', identity || 'Account'));
     $('logout').before(userMenu); userMenu.append(userLabel, $('logout'));
     for (const link of document.querySelectorAll('.site-header a[href="/docs"], .site-header a[href="/connect"], .site-header a[href="/console"], #mobile-navigation a[href="/docs"], #mobile-navigation a[href="/connect"], #mobile-navigation a[href="/console"]')) link.remove();
@@ -173,7 +173,7 @@ async function start() {
     document.addEventListener('keydown', event => { if (event.key === 'Escape' && userMenu.open) { userMenu.open = false; userLabel.focus(); } });
     await loadWorkspaces();
     const me = await api('/v1/me'); if (me.workspace_id) $('workspace').value = me.workspace_id;
-    platformOperator = me.platform_operator === true; $('platform').hidden = !platformOperator; if (platformOperator) await refreshPlatform();
+    platformOperator = me.platform_operator === true; $('platform').hidden = !platformOperator; $('admin-nav').hidden = !platformOperator; if (platformOperator) await refreshPlatform();
     workspace = $('workspace').value; owner = $('workspace').selectedOptions[0]?.dataset.role === 'owner';
     renderOrganizationSwitcher(); await refresh(); status('Signed in. Your workspace is ready.');
     if (location.hash === '#agent-access') selectAccess('agent');
@@ -198,7 +198,8 @@ async function refreshAgents() {
   for (const token of data.tokens || []) {
     if (token.revoked_at) continue;
     const row = element('tr', ''), actions = element('td', '');
-    row.append(element('td', token.name), element('td', 'Your permitted workspaces'), element('td', new Date(token.expires_at * 1000).toLocaleDateString()), actions);
+    const agentCell = element('td', ''); agentCell.append(identityLabel(token.id, token.name));
+    row.append(agentCell, element('td', 'Your permitted workspaces'), element('td', new Date(token.expires_at * 1000).toLocaleDateString()), actions);
     actions.append(action('Revoke', async () => { await api('/v1/agent-tokens/' + token.id, {method:'DELETE'}); await refreshAgents(); status('Agent credential revoked.'); }));
     addTableRow(rows, row);
   }
@@ -231,17 +232,19 @@ $('create-workspace').onsubmit = event => {
 async function refreshPlatform() {
   const data = await api('/v1/platform');
   for (const kind of ['accounts', 'workspaces']) {
-    const container = $('platform-' + kind); container.replaceChildren();
+    const rows = makeTable($('platform-' + kind), [kind === 'accounts' ? 'Account' : 'Workspace', kind === 'accounts' ? 'Identity' : 'ID', 'Allowance', 'Actions'], 'No ' + kind + ' found.');
     for (const item of data[kind] || []) {
-      const row = element('div', '', 'row');
-      const label = kind === 'accounts' ? `${item.issuer === 'https://github.com' ? 'GitHub ID' : item.issuer} ${item.subject} · account ${item.id}` : `${item.name} · ${item.id}`;
-      const info = element('div', label);
-      info.append(element('small', item.uncapped_bogs ? 'Uncapped flag enabled' : (kind === 'workspaces' && item.bog_limit === null ? 'Uncapped through account flag' : 'Standard allowance')));
-      row.append(info, action(item.uncapped_bogs ? 'Use standard allowance' : 'Enable uncapped Bogs', async () => {
+      const row = element('tr', ''), actions = element('td', '');
+      const identity = kind === 'accounts' ? `${item.issuer === 'https://github.com' ? 'GitHub ID' : item.issuer} ${item.subject}` : item.id.slice(0, 8);
+      const label = element('td', kind === 'accounts' ? item.id.slice(0, 8) : item.name); label.title = item.id; if (kind === 'accounts') { label.textContent = ''; label.append(identityLabel(item.id, item.id.slice(0,8))); }
+      const identityCell = element('td', identity); if (kind === 'workspaces') identityCell.title = item.id;
+      const inherited = kind === 'workspaces' && !item.uncapped_bogs && item.bog_limit === null;
+      row.append(label, identityCell, element('td', item.uncapped_bogs ? 'Uncapped' : inherited ? 'Uncapped via account' : 'Standard'), actions);
+      actions.append(action(item.uncapped_bogs ? 'Use standard allowance' : inherited ? 'Set workspace override' : 'Enable uncapped Bogs', async () => {
         await api('/v1/platform/' + kind + '/' + encodeURIComponent(item.id) + '/quota', {method:'PUT', body:JSON.stringify({uncapped_bogs:!item.uncapped_bogs})});
         await loadWorkspaces(); await refresh(); await refreshPlatform(); status('Allowance updated. Existing records are unchanged.');
       }));
-      container.append(row);
+      addTableRow(rows, row);
     }
   }
 }
@@ -297,3 +300,33 @@ for (const [buttonId, dialogId, focusId] of [['new-bog','new-bog-dialog','name']
   $(dialogId).addEventListener('close', () => $(buttonId).focus());
 }
 for (const button of document.querySelectorAll('[data-close]')) button.onclick = () => $(button.dataset.close).close();
+
+function identityAvatar(id) {
+  let hash = 2166136261; for (const character of String(id)) hash = Math.imul(hash ^ character.charCodeAt(0), 16777619) >>> 0;
+  const hue = hash % 360, other = (hue + 90 + ((hash >>> 8) % 150)) % 360;
+  const avatar = element('span', '', 'account-avatar'); avatar.setAttribute('aria-hidden', 'true');
+  avatar.style.background = `linear-gradient(90deg, oklch(72% 0.22 ${hue}) 0 50%, oklch(65% 0.24 ${other}) 50% 100%)`; return avatar;
+}
+function identityLabel(id, text) { const label = element('span', '', 'identity-label'); label.append(identityAvatar(id), element('span', text)); return label; }
+
+let deletingBog = null;
+function openBogDeletion(bog) {
+  deletingBog = { ...bog, workspace_id: workspace };
+  $('delete-bog-description').textContent = `Delete ${bog.name} and all its records? Type its full ID to confirm: ${bog.id}`;
+  $('delete-bog-confirm').value = ''; $('delete-bog-dialog').querySelector('.dialog-error').hidden = true;
+  $('delete-bog-dialog').showModal(); $('delete-bog-confirm').focus();
+}
+$('delete-bog-form').onsubmit = event => {
+  event.preventDefault(); task(event.submitter, async () => {
+    const target = deletingBog;
+    if (!target || $('delete-bog-confirm').value !== target.id) throw new Error('Enter the exact Bog ID shown above.');
+    await api('/v1/bogs/' + encodeURIComponent(target.id) + '?workspace_id=' + encodeURIComponent(target.workspace_id), {method:'DELETE',body:JSON.stringify({confirm:target.id})});
+    $('delete-bog-dialog').close(); deletingBog = null; await refresh(); status('Bog deleted.');
+  });
+};
+for (const dialog of document.querySelectorAll('dialog')) {
+  let startedOutside = false;
+  const outside = event => { const bounds = dialog.getBoundingClientRect(); return event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom; };
+  dialog.addEventListener('pointerdown', event => { startedOutside = event.target === dialog && outside(event); });
+  dialog.addEventListener('click', event => { if (startedOutside && event.target === dialog && outside(event)) dialog.close(); startedOutside = false; });
+}
