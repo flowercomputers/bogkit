@@ -1,0 +1,1 @@
+../../scripts/cloud/bog_cli.py

@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+[project]
+name = "bog-cloud"
+version = "0.1.0"
+description = "Private server-side client for Bog Cloud"
+requires-python = ">=3.9"
+[project.scripts]
+bog-cloud = "bog_cli:main"
+[tool.setuptools]
+py-modules = ["bog_client", "bog_app_access", "bog_project", "bog_cli"]
+package-dir = {"" = "."}

@@ -1,0 +1,101 @@
+{
+  "source": "cloud/src/contract.rs::OPERATIONS",
+  "commands": {
+    "resources": {
+      "operation": "list_resources",
+      "method": "GET",
+      "path": "/v1/bogs/{bog_id}/resources"
+    },
+    "routes": {
+      "operation": "list_routes",
+      "method": "GET",
+      "path": "/v1/bogs/{bog_id}/routes"
+    },
+    "get": {
+      "operation": "get_record",
+      "method": "GET",
+      "path": "/v1/bogs/{bog_id}/docs/{key}"
+    },
+    "put": {
+      "operation": "upsert_record",
+      "method": "PUT",
+      "path": "/v1/bogs/{bog_id}/docs/{key}"
+    },
+    "remove": {
+      "operation": "delete_record",
+      "method": "DELETE",
+      "path": "/v1/bogs/{bog_id}/docs/{key}"
+    },
+    "batch": {
+      "operation": "batch",
+      "method": "POST",
+      "path": "/v1/bogs/{bog_id}/batch"
+    },
+    "batch-get": {
+      "operation": "query_resource",
+      "method": "POST",
+      "path": "/v1/bogs/{bog_id}/resources/{resource}/query"
+    },
+    "query": {
+      "operation": "query_resource",
+      "method": "POST",
+      "path": "/v1/bogs/{bog_id}/resources/{resource}/query"
+    },
+    "list": {
+      "operation": "query_resource",
+      "method": "POST",
+      "path": "/v1/bogs/{bog_id}/resources/{resource}/query"
+    },
+    "top": {
+      "operation": "query_resource",
+      "method": "POST",
+      "path": "/v1/bogs/{bog_id}/resources/{resource}/query"
+    },
+    "search": {
+      "operation": "search_resource",
+      "method": "POST",
+      "path": "/v1/bogs/{bog_id}/resources/{resource}/search"
+    },
+    "wait": {
+      "operation": "wait_for_change",
+      "method": "GET",
+      "path": "/v1/bogs/{bog_id}/changes"
+    },
+    "request-status": {
+      "operation": "request_info",
+      "method": "GET",
+      "path": "/v1/requests/{request_id}"
+    },
+    "explain": {
+      "operation": "request_info",
+      "method": "GET",
+      "path": "/v1/requests/{request_id}"
+    },
+    "create": {
+      "operation": "create_bog",
+      "method": "POST",
+      "path": "/v1/bogs"
+    },
+    "cleanup-preview": {
+      "operation": "preview_cleanup",
+      "method": "POST",
+      "path": "/v1/bogs/cleanup/preview"
+    },
+    "cleanup-execute": {
+      "operation": "execute_cleanup",
+      "method": "POST",
+      "path": "/v1/bogs/cleanup/execute"
+    },
+    "add-search": {
+      "operation": "apply_definition_update",
+      "method": "POST",
+      "path": "/v1/bogs/{bog_id}/definition/apply"
+    }
+  },
+  "local_workflows": {
+    "connect": "Device authorization saved privately",
+    "install": "Private one-use app-access redemption",
+    "delete-sandbox": "DELETE /v1/bogs/{bog_id}, confirm exact ID; server enforces ownership",
+    "diagnostics": "GET /v1/bogs/{bog_id}/usage"
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "input": "docs",
+  "resources": {
+    "docs": {
+      "terminal": {
+        "kind": "table"
+      }
+    },
+    "recent": {
+      "terminal": {
+        "kind": "ranked",
+        "field": "/created_at",
+        "ascending": false
+      }
+    }
+  },
+  "expose": {
+    "put": {
+      "target": "docs",
+      "action": "put"
+    },
+    "remove": {
+      "target": "docs",
+      "action": "remove"
+    },
+    "batch": {
+      "target": "docs",
+      "action": "batch"
+    },
+    "get": {
+      "target": "docs",
+      "action": "get"
+    },
+    "list": {
+      "target": "docs",
+      "action": "list"
+    },
+    "wait": {
+      "target": "docs",
+      "action": "wait"
+    },
+    "recent": {
+      "target": "recent",
+      "action": "top"
+    }
+  }
+}

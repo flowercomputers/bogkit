@@ -1,0 +1,1 @@
+{"name":"@bog/cloud","version":"0.1.0","type":"module","description":"Private server-side Bog Cloud client","engines":{"node":">=22"},"exports":{".":{"types":"./src/index.d.ts","default":"./src/index.js"}},"bin":{"bog-cloud":"./src/cli.js"},"files":["src"],"scripts":{"test":"node --test test/*.test.js"}}

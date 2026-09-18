@@ -1,0 +1,206 @@
+[
+  {
+    "method": "get",
+    "args": [
+      "a/b"
+    ],
+    "http": "GET",
+    "path": "/v1/bogs/bog/docs/a%2Fb",
+    "body": null
+  },
+  {
+    "method": "put",
+    "args": [
+      "a",
+      {
+        "title": "hello"
+      }
+    ],
+    "http": "PUT",
+    "path": "/v1/bogs/bog/docs/a",
+    "body": {
+      "title": "hello"
+    }
+  },
+  {
+    "method": "remove",
+    "args": [
+      "a"
+    ],
+    "http": "DELETE",
+    "path": "/v1/bogs/bog/docs/a",
+    "body": null
+  },
+  {
+    "method": "batch",
+    "args": [
+      [
+        {
+          "op": "put",
+          "key": "a",
+          "value": {
+            "title": "hello"
+          }
+        }
+      ]
+    ],
+    "http": "POST",
+    "path": "/v1/bogs/bog/batch",
+    "body": {
+      "ops": [
+        {
+          "op": "put",
+          "key": "a",
+          "value": {
+            "title": "hello"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "method": "batch_get",
+    "args": [
+      [
+        "a",
+        "missing",
+        "a"
+      ]
+    ],
+    "http": "POST",
+    "path": "/v1/bogs/bog/resources/docs/query",
+    "body": {
+      "action": "batch_get",
+      "keys": [
+        "a",
+        "missing",
+        "a"
+      ]
+    }
+  },
+  {
+    "method": "search",
+    "args": [
+      "words",
+      "hello",
+      3,
+      [
+        "/title"
+      ]
+    ],
+    "http": "POST",
+    "path": "/v1/bogs/bog/resources/words/search",
+    "body": {
+      "query": "hello",
+      "limit": 3,
+      "include_fields": [
+        "/title"
+      ]
+    }
+  },
+  {
+    "method": "wait",
+    "args": [
+      "opaque",
+      0
+    ],
+    "http": "GET",
+    "path": "/v1/bogs/bog/changes?timeout=0&cursor=opaque",
+    "body": null
+  },
+  {
+    "method": "routes",
+    "args": [],
+    "http": "GET",
+    "path": "/v1/bogs/bog/routes",
+    "body": null
+  },
+  {
+    "method": "request_status",
+    "args": [
+      "req"
+    ],
+    "http": "GET",
+    "path": "/v1/requests/req",
+    "body": null
+  },
+  {
+    "method": "top",
+    "args": [
+      "priority",
+      5,
+      0
+    ],
+    "http": "POST",
+    "path": "/v1/bogs/bog/resources/priority/query",
+    "body": {
+      "action": "top",
+      "limit": 5,
+      "offset": 0
+    }
+  },
+  {
+    "method": "preview_cleanup",
+    "args": [
+      "sandbox-"
+    ],
+    "http": "POST",
+    "path": "/v1/bogs/cleanup/preview",
+    "body": {
+      "name_prefix": "sandbox-"
+    }
+  },
+  {
+    "method": "execute_cleanup",
+    "args": [
+      "preview",
+      "preview"
+    ],
+    "http": "POST",
+    "path": "/v1/bogs/cleanup/execute",
+    "body": {
+      "preview_id": "preview"
+    }
+  },
+  {
+    "method": "delete_sandbox",
+    "args": [
+      "bog"
+    ],
+    "http": "DELETE",
+    "path": "/v1/bogs/bog",
+    "body": {
+      "confirm": "bog"
+    }
+  },
+  {
+    "method": "explain",
+    "args": [
+      "req"
+    ],
+    "http": "GET",
+    "path": "/v1/requests/req",
+    "body": null
+  },
+  {
+    "method": "top",
+    "args": [
+      "priority",
+      5,
+      0,
+      [
+        "/title"
+      ]
+    ],
+    "http": "POST",
+    "path": "/v1/bogs/bog/resources/priority/query",
+    "body": {
+      "action": "top",
+      "limit": 5,
+      "offset": 0,
+      "include_fields": [
+        "/title"
+      ]
+    }
+  }
+]
