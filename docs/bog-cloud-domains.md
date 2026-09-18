@@ -31,3 +31,7 @@ Keep the legacy issuer until existing client connections have been deliberately 
 Run `python3 scripts/cloud/verify-discovery.py` for read-only live checks of issuer matching, endpoints, resource metadata, challenges, GitHub callback and browser redirects. This does not grant access, exchange credentials, or constitute a full user approval test.
 
 DNS discovery is published as `_index._agents.cloud.bog.new HTTPS 1 cloud.bog.new. mandatory="alpn,port" alpn="h2" port="443"`. The existing `bog.new` zone is signed with DNSSEC. The record advertises only the HTTPS transport actually served by Fly.
+
+## Rollback
+
+Before rolling back to a binary that only accepts the Fly callback (including `0f1196d`), stage `BOG_GITHUB_REDIRECT_URI=https://flower-bog-cloud.fly.dev/auth/callback` with that deployment. Do not launch that older binary with the cloud callback setting: its configuration validation will reject it. The old callback remains registered in GitHub for this purpose. No database rollback is required for this change.
