@@ -6,6 +6,10 @@ pub(crate) fn definitions() -> Vec<Resource> {
     [
         ("quick-start", "Quick start"),
         ("templates", "Templates"),
+        (
+            "components",
+            "Definition schema, examples and effective limits",
+        ),
         ("access-rules", "Access rules"),
         ("allowances", "Your workspace allowances"),
     ]
@@ -23,6 +27,7 @@ pub(crate) async fn read(
 ) -> Result<ReadResourceResponse, ErrorData> {
     let operation = match uri {
         "bog://guide/templates" => Operation::ListTemplates,
+        "bog://guide/components" => Operation::ListComponents,
         "bog://guide/quick-start" | "bog://guide/access-rules" | "bog://guide/allowances" => {
             Operation::GetCurrentContext
         }

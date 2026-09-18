@@ -209,3 +209,46 @@ async fn response_contract_matches_running_records_worker() {
         );
     }
 }
+
+#[test]
+fn composition_guidance_exposes_a_complete_fresh_agent_journey() {
+    let spec = bog_cloud::contract::openapi();
+    for (path, method) in [
+        ("/v1/components", "get"),
+        ("/v1/definitions/validate", "post"),
+        ("/v1/bogs", "post"),
+        ("/v1/bogs/{bog_id}/definition", "get"),
+        ("/v1/bogs/{bog_id}/resources", "get"),
+        ("/v1/bogs/{bog_id}/resources/{resource}/query", "post"),
+        ("/v1/bogs/{bog_id}/resources/{resource}/search", "post"),
+        ("/v1/bogs/{bog_id}/definition/plan", "post"),
+        ("/v1/bogs/{bog_id}/definition/apply", "post"),
+        ("/v1/bogs/{bog_id}/definition/jobs/{job_id}", "get"),
+    ] {
+        assert!(spec["paths"][path][method].is_object(), "{method} {path}");
+    }
+    let catalog = bog_definition::component_catalog();
+    assert!(catalog["definition_schema"]["$defs"].is_object());
+    for name in ["todo", "todo_search", "todo_semantic"] {
+        let definition: bog_definition::Definition =
+            serde_json::from_value(catalog["examples"][name].clone()).unwrap();
+        definition.validate().unwrap();
+    }
+    let instructions = bog_cloud::contract::AGENT_INSTRUCTIONS;
+    for tool in [
+        "discover_capabilities",
+        "validate_definition",
+        "create_bog_from_definition",
+        "describe_definition",
+        "list_resources",
+        "query_resource",
+        "search_resource",
+        "plan_definition_update",
+        "apply_definition_update",
+        "definition_update_status",
+    ] {
+        assert!(instructions.contains(tool), "missing {tool}");
+    }
+    assert!(instructions.contains("enabled"));
+    assert!(instructions.contains("recovery_required"));
+}

@@ -19,7 +19,7 @@ pub(crate) fn schema(name: &str) -> serde_json::Map<String, Value> {
     let workspaces = json!({"type":"array","items":workspace});
     let body = match name {
         "discover_capabilities" => object(
-            json!({"enabled":boolean,"version":integer,"definition_schema":{"type":"object"},"stages":{"type":"array","items":string},"terminals":{"type":"array","items":string},"input":{"type":"object"},"limits":{"type":"object"},"bm25":{"type":"object"},"semantic":{"type":"object"}}),
+            json!({"enabled":boolean,"version":integer,"definition_schema":{"type":"object"},"examples":{"type":"object","description":"Complete validated definitions: todo, todo_search and todo_semantic."},"stages":{"type":"array","items":string},"terminals":{"type":"array","items":string},"input":{"type":"object"},"limits":{"type":"object"},"bm25":{"type":"object"},"semantic":{"type":"object"}}),
             &[
                 "enabled",
                 "version",
@@ -45,7 +45,10 @@ pub(crate) fn schema(name: &str) -> serde_json::Map<String, Value> {
             json!({"resources":{"type":"array","items":object(json!({"name":string,"stages":{"type":"array","items":{"type":"object"}},"terminal":{"type":"object"},"operations":{"type":"array","items":{"type":"object"}}}), &["name","stages","terminal","operations"])},"revision":integer,"digest":string}),
             &["resources", "revision", "digest"],
         ),
-        "query_resource" | "search_resource" => json!({"type":"object"}),
+        "query_resource" | "search_resource" => object(
+            json!({"seq":integer,"data":{"description":"Result shape depends on the exposed action; list_resources returns its response_schema."}}),
+            &["seq", "data"],
+        ),
         "plan_definition_update" => object(
             json!({"compatible":boolean,"expected_revision":integer,"target_digest":string,"requires_rebuild":boolean}),
             &[

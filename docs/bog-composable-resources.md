@@ -4,6 +4,14 @@ Composable Bogs build several resources from one collection of string-keyed JSON
 
 This is an opt-in prototype. Set `BOG_CLOUD_COMPOSABLE=true` on the cloud manager. Existing `records-v1` Bogs continue to use their existing APIs. No hosted rollout is implied by these examples.
 
+## Discover without a checkout
+
+Authenticate using the service's `/auth.md`. `GET /v1/components` returns `enabled`, the complete `definition_schema`, effective limits, and full `examples.todo`, `examples.todo_search` and `examples.todo_semantic` JSON definitions. These examples are compiled into the service; a fresh agent does not need this repository. Use the catalog's actual limits when adapting an example. `POST /v1/definitions/validate` accepts `{"definition": ...}`; it does not accept a bare definition.
+
+MCP offers the same catalog as `discover_capabilities` and the resource `bog://guide/components`. Continue with `validate_definition`, `create_bog_from_definition`, `describe_definition`, `list_resources`, `query_resource`, `search_resource`, `plan_definition_update`, `apply_definition_update` and `definition_update_status`. Signed-in WebMCP offers these names with `bog_` prefixes. Resource discovery includes exposed operation request and response schemas. Address a query/search by resource name, and use an `action` for a query when needed to distinguish exposed reads. Keep private resource names out of application assumptions.
+
+When `enabled` is false, do not attempt configurable creation or definition changes. Existing Bogs remain available. Management authority is required to inspect or change definitions; matching app read credentials may discover and query their Bog's exposed resources.
+
 ## Run locally
 
 The local runner serves the same configured runtime on loopback. Run from the repository root:
@@ -63,7 +71,7 @@ curl -fsS "$BASE/v1" | jq .
 curl -fsS "$BASE/v1/components" -H "Authorization: Bearer $TOKEN" | jq .
 curl -fsS "$BASE/v1/definitions/validate" \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  --data-binary @docs/examples/composable/todo.json | jq .
+  --data "$(jq -c '{definition:.}' docs/examples/composable/todo.json)" | jq .
 jq -n --slurpfile definition docs/examples/composable/todo.json \
   '{name:"todo",definition:$definition[0]}' > /tmp/todo-create.json
 curl -fsS "$BASE/v1/bogs" \

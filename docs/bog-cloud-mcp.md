@@ -20,7 +20,7 @@ See [the verification report](verification/mcp-agent-journey-2026-09-17.md) for 
 
 ## Operations
 
-The current tool surface includes workspace and Bog discovery, creation, schema inspection, record reads/replacements/deletion, bounded views, atomic batches, change waiting, and scoped credential management. `tools/list` is the executable contract.
+The current tool surface includes workspace and Bog discovery, creation, schema inspection, record reads/replacements/deletion, bounded views, atomic batches, change waiting, scoped credential management, definition validation and creation, public resource queries and search, and additive definition updates. `tools/list` is the executable contract.
 
 Creation requires `name` and `idempotency_key`; `template` defaults to `records-v1`. Retry with the same creation key and body. Reads default to 100 records, with a maximum page size of 1000 and offset of 10000. Change waiting uses `timeout` (0–25 seconds); `timeout_seconds` is a compatibility alias, and supplying both is invalid. Treat cursors as opaque and refetch on reset; there is no retained event replay.
 
@@ -39,3 +39,11 @@ cargo clippy --locked -p bog-cloud -p bog-cloud-mcp --all-targets -- -D warnings
 ```
 
 Requests and serialized MCP results are bounded to 1 MiB; operations have a 30-second request deadline. Large results return an actionable error rather than silently truncating records. Use smaller pages when needed.
+
+## Composable Bogs
+
+Start with `discover_capabilities` or read `bog://guide/components`. The result includes the deployment's `enabled` state, full definition schema, effective limits and complete todo, text-search and semantic-search examples. Check this state instead of assuming hosted composition is enabled. Validate with `validate_definition`, then create with `create_bog_from_definition` and a stable idempotency key. `list_templates` continues to describe the default records-v1 template.
+
+Use `list_resources` to discover exposed resource operations and their request/response schemas. `query_resource` takes a resource name and a query object such as `{"action":"list","limit":10}`; `search_resource` takes `{"query":"release","limit":5}` in its query argument. Source writes use record/batch tools only when exposed by the definition. App credentials cannot inspect full definitions or perform definition updates.
+
+For an additive update, read `describe_definition`, preserve the current resources and operations, call `plan_definition_update` with its revision, then `apply_definition_update`. Poll `definition_update_status`; acceptance is not activation. `succeeded` confirms the active revision, `failed` retains the previous revision, and `recovery_required` needs operator recovery. Reads remain available while writes may be paused. HTTP and signed-in WebMCP expose the same operations; see the served `/docs` and `/openapi.json` for routes.

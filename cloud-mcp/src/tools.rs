@@ -195,7 +195,7 @@ pub fn definitions() -> Vec<Tool> {
     vec![
         definition::<Empty>(
             "discover_capabilities",
-            "Discover the supported definition components, versions, constraints and schemas before authoring a Bog definition.",
+            "Discover enabled state, the full definition schema, executable examples, trusted components and effective limits before authoring a Bog definition.",
             true,
             false,
             true,
@@ -216,7 +216,7 @@ pub fn definitions() -> Vec<Tool> {
         ),
         definition::<Describe>(
             "describe_definition",
-            "Read the active normalized definition, digest and revision for an accessible Bog.",
+            "Management authority required. Read the active normalized definition, digest and revision for an accessible Bog.",
             true,
             false,
             true,
@@ -230,14 +230,14 @@ pub fn definitions() -> Vec<Tool> {
         ),
         definition::<ResourceOperation>(
             "query_resource",
-            "Run a definition-controlled query against one public non-search resource.",
+            "Use list_resources first for operation request/response schemas. Query a public resource by resource name; query is an object with action get, list, read or top and the action parameters.",
             true,
             false,
             true,
         ),
         definition::<ResourceOperation>(
             "search_resource",
-            "Run a bounded text or semantic search against one public search resource.",
+            "Use list_resources first. Search a public BM25 or semantic resource by resource name; query is an object with query text, optional limit and offset. Respect discover_capabilities effective limits.",
             true,
             false,
             true,
@@ -251,7 +251,7 @@ pub fn definitions() -> Vec<Tool> {
         ),
         definition::<DefinitionUpdate>(
             "apply_definition_update",
-            "Start an already validated additive definition update against the expected active revision.",
+            "Management authority required. Start an additive definition update against expected_revision. Poll definition_update_status until succeeded or failed; acceptance is not activation. Writes may return writes_paused during rebuild.",
             false,
             false,
             false,

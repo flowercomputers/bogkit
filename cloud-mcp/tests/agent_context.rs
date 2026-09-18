@@ -129,7 +129,7 @@ async fn context_resources_and_private_handoff_use_current_account_permissions()
         .unwrap();
     assert_eq!(templates["data"]["templates"][0]["id"], "records-v1");
     let resources = client.list_all_resources().await.unwrap();
-    assert_eq!(resources.len(), 4);
+    assert_eq!(resources.len(), 5);
     for resource in resources {
         let read = client
             .read_resource(ReadResourceRequestParams::new(resource.uri))

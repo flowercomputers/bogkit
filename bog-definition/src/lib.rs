@@ -575,10 +575,15 @@ pub fn component_catalog() -> Value {
 /// Callers must validate host configuration before publishing its effective policy.
 pub fn component_catalog_with_limits(limits: &Limits) -> Value {
     json!({"version":DEFINITION_VERSION,"input":{"kind":"keyed_json_object","key_type":"string"},
-        "stages":["filter","projection"],"terminals":["table","count","stats","ranked","bm25","semantic"],
-        "bm25":{"tokenizer":BM25_TOKENIZER},"semantic":{"model":SEMANTIC_MODEL,"dimensions":SEMANTIC_DIMENSIONS,"scalar":"f32","metric":"cosine","index":"anny"},
-        "limits":{"resources":limits.resources,"stages_per_resource":limits.stages_per_resource,"semantic_indexes":MAX_SEMANTIC_INDEXES,"vectors":limits.vectors,"text_bytes":limits.text_bytes,"query_bytes":limits.query_bytes,"hits":limits.hits,"build_timeout_seconds":limits.build_timeout_seconds},
-        "definition_schema":schema()})
+    "stages":["filter","projection"],"terminals":["table","count","stats","ranked","bm25","semantic"],
+    "bm25":{"tokenizer":BM25_TOKENIZER},"semantic":{"model":SEMANTIC_MODEL,"dimensions":SEMANTIC_DIMENSIONS,"scalar":"f32","metric":"cosine","index":"anny"},
+    "limits":{"resources":limits.resources,"stages_per_resource":limits.stages_per_resource,"semantic_indexes":MAX_SEMANTIC_INDEXES,"vectors":limits.vectors,"text_bytes":limits.text_bytes,"query_bytes":limits.query_bytes,"hits":limits.hits,"build_timeout_seconds":limits.build_timeout_seconds},
+    "definition_schema":schema(),
+    "examples":{
+        "todo":serde_json::from_str::<Value>(include_str!("../../docs/examples/composable/todo.json")).expect("todo fixture"),
+        "todo_search":serde_json::from_str::<Value>(include_str!("../../docs/examples/composable/todo-search.json")).expect("search fixture"),
+        "todo_semantic":serde_json::from_str::<Value>(include_str!("../../docs/examples/composable/todo-semantic.json")).expect("semantic fixture")
+    }})
 }
 
 #[cfg(test)]
@@ -925,6 +930,14 @@ mod tests {
     }
     #[test]
     fn schemas_and_catalog_are_serializable() {
+        for example in component_catalog()["examples"]
+            .as_object()
+            .unwrap()
+            .values()
+        {
+            let definition: Definition = serde_json::from_value(example.clone()).unwrap();
+            definition.validate().unwrap();
+        }
         assert!(schema()["properties"]["resources"].is_object());
         assert_eq!(component_catalog()["semantic"]["dimensions"], 512);
         assert_eq!(
