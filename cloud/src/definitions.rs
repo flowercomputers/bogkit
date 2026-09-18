@@ -512,6 +512,43 @@ fn check_deadline(deadline: std::time::Instant) -> Result<(), CloudError> {
         Ok(())
     }
 }
+pub(crate) fn recover_candidates(
+    root: &std::path::Path,
+    registry: &Registry,
+) -> Result<(), CloudError> {
+    for instance in std::fs::read_dir(root)
+        .map_err(|_| CloudError::new("unavailable", "cannot inspect candidate recovery"))?
+    {
+        let instance = instance
+            .map_err(|_| CloudError::new("unavailable", "cannot inspect candidate recovery"))?;
+        if !instance.file_type().is_ok_and(|t| t.is_dir()) {
+            continue;
+        }
+        let Ok(id) = uuid::Uuid::parse_str(&instance.file_name().to_string_lossy()) else {
+            continue;
+        };
+        let active = registry.storage_dir(BogId(id))?;
+        for entry in std::fs::read_dir(instance.path())
+            .map_err(|_| CloudError::new("unavailable", "cannot inspect candidate recovery"))?
+        {
+            let entry = entry
+                .map_err(|_| CloudError::new("unavailable", "cannot inspect candidate recovery"))?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name != active
+                && name
+                    .strip_prefix("candidate-")
+                    .is_some_and(|suffix| uuid::Uuid::parse_str(suffix).is_ok())
+                && entry.file_type().is_ok_and(|t| t.is_dir())
+            {
+                std::fs::remove_dir_all(entry.path()).map_err(|_| {
+                    CloudError::new("unavailable", "cannot remove interrupted candidate")
+                })?;
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -975,41 +1012,4 @@ mod tests {
             .unwrap();
         service.supervisor.shutdown().await.unwrap();
     }
-}
-
-pub(crate) fn recover_candidates(
-    root: &std::path::Path,
-    registry: &Registry,
-) -> Result<(), CloudError> {
-    for instance in std::fs::read_dir(root)
-        .map_err(|_| CloudError::new("unavailable", "cannot inspect candidate recovery"))?
-    {
-        let instance = instance
-            .map_err(|_| CloudError::new("unavailable", "cannot inspect candidate recovery"))?;
-        if !instance.file_type().is_ok_and(|t| t.is_dir()) {
-            continue;
-        }
-        let Ok(id) = uuid::Uuid::parse_str(&instance.file_name().to_string_lossy()) else {
-            continue;
-        };
-        let active = registry.storage_dir(BogId(id))?;
-        for entry in std::fs::read_dir(instance.path())
-            .map_err(|_| CloudError::new("unavailable", "cannot inspect candidate recovery"))?
-        {
-            let entry = entry
-                .map_err(|_| CloudError::new("unavailable", "cannot inspect candidate recovery"))?;
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if name != active
-                && name
-                    .strip_prefix("candidate-")
-                    .is_some_and(|suffix| uuid::Uuid::parse_str(suffix).is_ok())
-                && entry.file_type().is_ok_and(|t| t.is_dir())
-            {
-                std::fs::remove_dir_all(entry.path()).map_err(|_| {
-                    CloudError::new("unavailable", "cannot remove interrupted candidate")
-                })?;
-            }
-        }
-    }
-    Ok(())
 }

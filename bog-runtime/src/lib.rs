@@ -179,18 +179,13 @@ impl Runtime {
                 Mutation::Upsert { key, data } => {
                     validate_key(key)?;
                     for resource in self.definition.resources.values() {
-                        if let Some(value) = evaluate(resource, data.as_value())? {
-                            if let Terminal::Bm25 { fields, .. }
-                            | Terminal::Semantic { fields, .. } = &resource.terminal
-                            {
-                                if extracted_text(&value, fields)?
-                                    .is_some_and(|text| text.len() > self.limits.text_bytes)
-                                {
-                                    return Err(invalid(
-                                        "extracted text exceeds configured byte limit",
-                                    ));
-                                }
-                            }
+                        if let Some(value) = evaluate(resource, data.as_value())?
+                            && let Terminal::Bm25 { fields, .. } | Terminal::Semantic { fields, .. } =
+                                &resource.terminal
+                            && extracted_text(&value, fields)?
+                                .is_some_and(|text| text.len() > self.limits.text_bytes)
+                        {
+                            return Err(invalid("extracted text exceeds configured byte limit"));
                         }
                     }
                 }
@@ -425,10 +420,8 @@ pub(crate) fn evaluate(resource: &Resource, value: &Value) -> Result<Option<Valu
                 }
             }
         },
-        Terminal::Bm25 { fields, .. } => {
-            if extracted_text(&value, fields)?.is_none() {
-                return Ok(None);
-            }
+        Terminal::Bm25 { fields, .. } if extracted_text(&value, fields)?.is_none() => {
+            return Ok(None);
         }
         Terminal::Semantic { fields, .. } => match extracted_text(&value, fields)? {
             None => return Ok(None),

@@ -590,7 +590,7 @@ impl Supervisor {
                 .request(reqwest::Method::POST, "/_cloud/resume_writes", None)
                 .await?;
             // A pre-composition legacy worker could never have been frozen.
-            if status != 200 && !(status == 404 && !active.configured) {
+            if status != 200 && (status != 404 || active.configured) {
                 return Err(unavailable("worker write recovery pending"));
             }
         }

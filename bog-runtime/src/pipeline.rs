@@ -21,12 +21,13 @@ pub(crate) enum Sink {
     Bm25(search::Bm25<String, String>),
     Semantic(VectorIndex),
 }
+type TextReader<'tx, R> = search::Bm25Reader<'tx, R, String, fn(&str, &mut Vec<u8>)>;
 pub(crate) enum Reader<'tx, R: Readable> {
     Table(terminal::TableReader<'tx, R, String, JsonDocument>),
     Count(terminal::CountReader<'tx, R>),
     Stats(terminal::StatsReader<'tx, R>),
     Ranked(terminal::RankedReader<'tx, R, f64, String>, bool),
-    Bm25(search::Bm25Reader<'tx, R, String, fn(&str, &mut Vec<u8>)>),
+    Bm25(TextReader<'tx, R>),
     Semantic(VectorReader<'tx, R>),
 }
 struct Branch {
@@ -197,13 +198,12 @@ impl Push<Doc> for Pipeline {
 }
 impl<R: Readable> Reader<'_, R> {
     pub fn validate_state(&self) -> Result<()> {
-        if let Self::Stats(s) = self {
-            if !s.sum().is_finite()
+        if let Self::Stats(s) = self
+            && (!s.sum().is_finite()
                 || s.mean().is_some_and(|x| !x.is_finite())
-                || s.variance().is_some_and(|x| !x.is_finite())
-            {
-                return Err(invalid("numeric aggregate exceeds finite range"));
-            }
+                || s.variance().is_some_and(|x| !x.is_finite()))
+        {
+            return Err(invalid("numeric aggregate exceeds finite range"));
         }
         Ok(())
     }
