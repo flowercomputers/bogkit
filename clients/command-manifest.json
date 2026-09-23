@@ -94,6 +94,8 @@
   },
   "local_workflows": {
     "connect": "Device authorization saved privately",
+    "try": "Anonymous one-hour Bog creation with private local credential installation",
+    "claim-link": "POST /v1/claimable-bogs/{bog_id}/claim; show only the short-lived URL",
     "install": "Private one-use app-access redemption",
     "delete-sandbox": "DELETE /v1/bogs/{bog_id}, confirm exact ID; server enforces ownership",
     "diagnostics": "GET /v1/bogs/{bog_id}/usage"

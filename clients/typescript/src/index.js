@@ -1,6 +1,6 @@
 import {open, constants, lstat, stat, rename, unlink} from 'node:fs/promises';
 import {resolve, dirname} from 'node:path';
-import {randomUUID} from 'node:crypto';
+import {randomUUID,randomBytes} from 'node:crypto';
 const codes = new Set(['capacity','rate_limited','conflict','writes_paused','unauthorized','forbidden','not_found','invalid_request','authorization_pending','slow_down','access_denied','expired_token']);
 export class BogError extends Error {
   constructor(status, code='request_rejected',retryAfterMs=null) { super(`Bog request failed (${status}, ${codes.has(code)?code:'request_rejected'}).`); this.status=status; this.code=codes.has(code)?code:'request_rejected';this.retryAfterMs=retryAfterMs; }
@@ -35,6 +35,26 @@ export async function writePrivate(path,value,format='json',replace=false) {
   const target=replace?resolve(dirname(path),'.bog-'+randomUUID()):path;
   const file=await open(target,'wx',0o600);
   try {try{await file.writeFile(format==='dotenv'?Object.entries(value).map(([k,v])=>`${k}=${JSON.stringify(v)}`).join('\n')+'\n':JSON.stringify(value)+'\n');await file.sync();}finally{await file.close();}if(replace)await rename(target,path);}finally{if(replace)await unlink(target).catch(()=>{});}
+}
+export async function createClaimable(base,name,output,definition) {
+  base=origin(base);
+  if(typeof name!=='string'||!name.trim()||typeof output!=='string'||!output)throw new Error('Name and private output path required.');
+  let pending;
+  try {pending=await readPrivate(output);} catch(error) {
+    if(error.code!=='ENOENT')throw error;
+    pending={status:'pending',origin:base,name,idempotency_key:randomUUID(),recovery_secret:randomBytes(32).toString('hex')};
+    await writePrivate(output,pending);
+  }
+  if(pending.status!=='pending'||pending.origin!==base||pending.name!==name)throw new Error('Output already exists.');
+  let response;
+  try {response=await fetch(base+'/v1/claimable-bogs',{method:'POST',redirect:'error',signal:AbortSignal.timeout(35000),headers:{'Content-Type':'application/json','Idempotency-Key':pending.idempotency_key},body:JSON.stringify({name,recovery_secret:pending.recovery_secret,...(definition===undefined?{}:{definition})})});}
+  catch {throw new Error('Creation outcome uncertain. Retry with the same private output file.');}
+  const raw=await response.text();if(raw.length>1024*1024)throw new Error('Unexpected creation response size.');
+  let data;try{data=JSON.parse(raw);}catch{throw new Error('Unexpected creation response.');}
+  if(!response.ok)throw new BogError(response.status,data?.error?.code);
+  if(typeof data?.id!=='string'||typeof data?.credential?.access_token!=='string'||!Number.isFinite(data.expires_at))throw new Error('Invalid creation response.');
+  await writePrivate(output,{BOG_CLOUD_URL:base,BOG_ID:data.id,BOG_CLOUD_TOKEN:data.credential.access_token,expires_at:data.expires_at},'json',true);
+  return {status:'created',bog_id:data.id,expires_at:data.expires_at,configuration:output};
 }
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 export class Client {
@@ -76,6 +96,7 @@ export class Client {
   wait(cursor,timeout=25){if(!Number.isInteger(timeout)||timeout<0||timeout>25)throw new Error('Wait timeout must be 0 through 25 seconds.');return this.request('GET',this.path('/changes?')+new URLSearchParams({timeout:String(timeout),...(cursor===undefined?{}:{cursor})}));}
   diagnostics(){return this.request('GET',this.path('/usage'));}
   requestStatus(id){return this.request('GET','/v1/requests/'+encodeURIComponent(id));}
+  claimLink(){return this.request('POST',this.path().replace('/v1/bogs/','/v1/claimable-bogs/')+'/claim');}
   async create(name,idempotencyKey,definition,timeout=60,{wait=true,sandbox=false,appAccess}={}){if(typeof wait!=='boolean'||typeof sandbox!=='boolean')throw new Error('wait and sandbox must be booleans.');if(!idempotencyKey)throw new Error('Creation requires a stable idempotency key.');let r=await this.request('POST','/v1/bogs',{name,wait,sandbox,...(appAccess===undefined?{}:{app_access:appAccess}),...(definition===undefined?{}:{definition})},idempotencyKey);this.bogId=r.id;const access=r.app_access;if(!wait)return {...r,bog_id:this.bogId};const end=Date.now()+timeout*1000;while(r.status!=='ready'){if(r.status==='failed'||Date.now()>=end)throw new Error('Startup incomplete; retain the Bog ID and original idempotency key.');await pause(500);r=await this.request('GET',this.path());}return {bog_id:this.bogId,status:'ready',resources:await this.resources(),...(access===undefined?{}:{app_access:access})};}
   async addSearch(name,fields,kind='semantic',stages=[],timeout=120){if(!['semantic','bm25'].includes(kind)||! /^[a-z][a-z0-9_]{0,47}$/.test(name)||!Array.isArray(fields)||!fields.length||fields.some(f=>typeof f!=='string'||!f.startsWith('/')))throw new Error('Invalid additive search definition.');const current=await this.request('GET',this.path('/definition'));const definition=structuredClone(current.definition);if(name in definition.resources||name in definition.expose)throw new Error('Resource already exists.');definition.resources[name]={stages,terminal:{kind,fields}};definition.expose[name]={target:name,action:'search'};const body={definition,expected_revision:current.revision};await this.request('POST',this.path('/definition/plan'),body);let job=await this.request('POST',this.path('/definition/apply'),body);const end=Date.now()+timeout*1000;while(job.status!=='succeeded'){if(['failed','recovery_required'].includes(job.status)||Date.now()>=end)throw new Error('Search activation incomplete; inspect definition jobs before retrying.');await pause(500);job=await this.request('GET',this.path('/definition/jobs/'+encodeURIComponent(job.job_id)));}return job;}
 }

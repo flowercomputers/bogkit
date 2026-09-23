@@ -3,6 +3,11 @@ import argparse
 import contextlib
 import json
 import os
+import secrets
+import stat
+import uuid
+import urllib.request
+import urllib.error
 from pathlib import Path
 import sys
 from bog_client import Client, Failure
@@ -14,6 +19,8 @@ def main(argv=None):
     p.add_argument('--config'); p.add_argument('--auth-file'); p.add_argument('--origin', default='https://cloud.bog.new'); p.add_argument('--bog-id'); p.add_argument('--workspace-id')
     sub = p.add_subparsers(dest='command', required=True)
     sub.add_parser('connect')
+    s = sub.add_parser('try'); s.add_argument('--name', required=True); s.add_argument('--output', required=True); s.add_argument('--definition')
+    sub.add_parser('claim-link')
     s = sub.add_parser('install'); s.add_argument('--handoff', required=True); s.add_argument('--output', required=True); s.add_argument('--format', choices=['json','dotenv'], default='json'); s.add_argument('--replace', action='store_true')
     s = sub.add_parser('top'); s.add_argument('--resource', required=True); s.add_argument('--limit', type=int, default=100); s.add_argument('--offset', type=int, default=0); s.add_argument('--include-fields', nargs='+')
     s = sub.add_parser('query'); s.add_argument('--resource', default='docs'); s.add_argument('--input', required=True)
@@ -45,6 +52,33 @@ def main(argv=None):
             with contextlib.redirect_stdout(sys.stderr):
                 install_private(['--connect', '--origin', a.origin, '--auth-file', a.auth_file])
             result = {'status':'connected'}
+        elif a.command == 'try':
+            from bog_app_access import origin, NoRedirect
+            output = Path(a.output).absolute()
+            if not output.parent.is_dir() or output.is_symlink(): raise Failure('Choose a private output file in an existing directory.')
+            if output.exists():
+                info=output.stat()
+                if not stat.S_ISREG(info.st_mode) or info.st_uid!=os.getuid() or stat.S_IMODE(info.st_mode)!=0o600: raise Failure('Pending output must be an owned mode-600 regular file.')
+                state = json.loads(output.read_text())
+                if state.get('status') != 'pending' or state.get('origin') != origin(a.origin) or state.get('name') != a.name: raise Failure('Output already exists.')
+            else:
+                state = {'status':'pending','origin':origin(a.origin),'name':a.name,'idempotency_key':str(uuid.uuid4()),'recovery_secret':secrets.token_hex(32)}
+                with os.fdopen(os.open(output, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os,'O_NOFOLLOW',0), 0o600),'w') as handle:
+                    json.dump(state,handle); handle.write('\n'); handle.flush(); os.fsync(handle.fileno())
+            definition = json.loads(Path(a.definition).read_text()) if a.definition else None
+            body = {'name':a.name,'recovery_secret':state['recovery_secret']}
+            if definition is not None: body['definition'] = definition
+            request = urllib.request.Request(origin(a.origin)+'/v1/claimable-bogs',data=json.dumps(body).encode(),headers={'Content-Type':'application/json','Idempotency-Key':state['idempotency_key']},method='POST')
+            try:
+                with urllib.request.build_opener(NoRedirect).open(request,timeout=35) as response: created=json.load(response)
+            except urllib.error.HTTPError as error:
+                raise Failure('Temporary Bog creation failed; retry with the same output file after checking capacity.') from error
+            config = {'BOG_CLOUD_URL':origin(a.origin),'BOG_ID':created['id'],'BOG_CLOUD_TOKEN':created['credential']['access_token'],'expires_at':created['expires_at']}
+            replacement = output.with_name('.'+output.name+'.'+uuid.uuid4().hex)
+            with os.fdopen(os.open(replacement,os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os,'O_NOFOLLOW',0),0o600),'w') as handle:
+                json.dump(config,handle); handle.write('\n'); handle.flush(); os.fsync(handle.fileno())
+            os.replace(replacement,output)
+            result={'status':'created','bog_id':created['id'],'expires_at':created['expires_at'],'configuration':str(output)}
         else:
             if a.config: c = Client.from_config(a.config)
             elif a.auth_file:
@@ -67,6 +101,7 @@ def main(argv=None):
             elif a.command == 'cleanup-preview': result = c.preview_cleanup(a.name_prefix)
             elif a.command == 'cleanup-execute': result = c.execute_cleanup(a.preview_id,a.confirm)
             elif a.command == 'delete-sandbox': result = c.delete_sandbox(a.confirm)
+            elif a.command == 'claim-link': result = c.claim_link()
             elif a.command == 'add-search': result = c.add_search(a.name,a.fields,a.kind)
         print(json.dumps(result))
     except (Failure,OSError,ValueError,KeyError,TypeError,KeyboardInterrupt):

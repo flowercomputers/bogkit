@@ -6,6 +6,11 @@ pub struct Config {
     pub public_origin: Option<String>,
     /// Roll out separately; disable creation before rollback, retain expiry-capable manager for existing sandboxes.
     pub sandboxes_enabled: bool,
+    /// Anonymous, one-hour Bog creation. Existing claimable Bogs still expire when disabled.
+    pub claimable_enabled: bool,
+    pub claimable_limit: usize,
+    pub claimable_per_source_hour: usize,
+    pub claimable_daily_limit: usize,
     pub composable_limits: bog_definition::Limits,
     pub root: PathBuf,
     pub worker_binary: PathBuf,
@@ -21,6 +26,10 @@ impl Config {
             composable_enabled: false,
             public_origin: None,
             sandboxes_enabled: false,
+            claimable_enabled: false,
+            claimable_limit: 4,
+            claimable_per_source_hour: 6,
+            claimable_daily_limit: 24,
             composable_limits: bog_definition::Limits::default(),
             root,
             worker_binary,
@@ -75,6 +84,11 @@ impl Config {
             config.public_origin = Some(validate_public_origin(&value)?);
         }
         config.sandboxes_enabled = std::env::var("BOG_CLOUD_SANDBOXES").is_ok_and(|v| v == "true");
+        config.claimable_enabled = std::env::var("BOG_CLOUD_CLAIMABLE").is_ok_and(|v| v == "true");
+        config.claimable_limit = integer("BOG_CLOUD_CLAIMABLE_LIMIT", 4)? as usize;
+        config.claimable_per_source_hour =
+            integer("BOG_CLOUD_CLAIMABLE_PER_SOURCE_HOUR", 6)? as usize;
+        config.claimable_daily_limit = integer("BOG_CLOUD_CLAIMABLE_DAILY_LIMIT", 24)? as usize;
         config.composable_enabled =
             std::env::var("BOG_CLOUD_COMPOSABLE").is_ok_and(|v| v == "true");
         match std::env::var("BOG_CLOUD_COMPOSABLE_LIMITS") {
@@ -94,6 +108,9 @@ impl Config {
             || !(1..=8).contains(&config.max_starts)
             || config.max_starts > config.max_active
             || config.min_free_bytes < 1024 * 1024
+            || !(1..=32).contains(&config.claimable_limit)
+            || !(1..=1000).contains(&config.claimable_per_source_hour)
+            || !(1..=10000).contains(&config.claimable_daily_limit)
         {
             return Err(crate::CloudError::new(
                 "invalid_config",

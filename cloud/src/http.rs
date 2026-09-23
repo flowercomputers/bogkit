@@ -65,6 +65,12 @@ pub fn build_rest_router(service: Arc<CloudService>) -> Router {
         .route("/auth/callback", get(browser_endpoint))
         .route("/auth/logout", axum::routing::post(browser_endpoint))
         .route("/auth/refresh", axum::routing::post(browser_endpoint))
+        .route("/v1/claimable-bogs", axum::routing::post(crate::claimable::create))
+        .route("/v1/claimable-bogs/{id}/claim", axum::routing::post(crate::claimable::issue_claim))
+        .route("/claim/{code}", get(crate::claimable::claim_page).post(crate::claimable::claim))
+        .route("/claim/{code}/status", get(crate::claimable::claim_status))
+        .route("/claim.js", get(|| async { guide_asset("text/javascript; charset=utf-8", include_str!("../static/claim.js")) }))
+        .route("/claimable.js", get(|| async { guide_asset("text/javascript; charset=utf-8", include_str!("../static/claimable.js")) }))
         .route("/console-session", get(browser_endpoint))
         .route("/v1", get(discovery))
         .route("/v1/templates", get(discovery))
@@ -384,7 +390,17 @@ async fn dispatch_inner(
                         && path[3] == "definition"
                         && matches!(path[4].as_str(), "plan" | "apply")))));
     if management_post && principal.kind() == crate::PrincipalKind::App {
-        service.auth.authorize(&principal, None, true)?;
+        let definition_target = if path.len() == 5 && path[3] == "definition" {
+            Uuid::parse_str(&path[2]).ok().map(BogId)
+        } else {
+            None
+        };
+        if !service
+            .registry
+            .is_live_claimable_credential(&principal, definition_target)?
+        {
+            service.auth.authorize(&principal, None, true)?;
+        }
     }
     let bytes = to_bytes(request.into_body(), 1024 * 1024)
         .await

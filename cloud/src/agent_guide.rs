@@ -15,8 +15,16 @@ fn authentication(service: &CloudService) -> &'static str {
 
 pub fn index(service: &CloudService) -> String {
     let base = crate::public_discovery::origin(service);
+    let claimable = if service.supervisor.config.claimable_enabled && service.native_auth.is_some()
+    {
+        format!(
+            "- [Try a temporary Bog]({base}/#try-bog): no sign-in, one hour, claim before expiry. Agents: POST {base}/v1/claimable-bogs or use bog-cloud try.\n"
+        )
+    } else {
+        String::new()
+    };
     format!(
-        "# Bog Cloud\n\n> Hosted JSON records with maintained views for small apps and agents. Free prototype; keep a separate copy of important data.\n\n{}\n\n- [Agent guide]({base}/agent.md): start here for authorization, composition, queries and private app access.\n- [Markdown docs]({base}/docs.md)\n- [Private helper]({base}/bog-app-access.py)\n- [Authentication]({base}/auth.md): active deployment instructions.\n- [API operations]({base}/v1): machine-readable service discovery.\n- [OpenAPI]({base}/openapi.json): exact HTTP contracts.\n- [Notes definition]({base}/examples/notes.json): one composable example.\n- [Agent skills]({base}/.well-known/agent-skills/index.json)\n- [MCP server card]({base}/mcp/server-card)\n- [Resource catalog]({base}/.well-known/ard.json)\n",
+        "# Bog Cloud\n\n> Hosted JSON records with maintained views for small apps and agents. Free prototype; keep a separate copy of important data.\n\n{}\n\n{claimable}- [Agent guide]({base}/agent.md): start here for authorization, composition, queries and private app access.\n- [Markdown docs]({base}/docs.md)\n- [Private helper]({base}/bog-app-access.py)\n- [Authentication]({base}/auth.md): active deployment instructions.\n- [API operations]({base}/v1): machine-readable service discovery.\n- [OpenAPI]({base}/openapi.json): exact HTTP contracts.\n- [Notes definition]({base}/examples/notes.json): one composable example.\n- [Agent skills]({base}/.well-known/agent-skills/index.json)\n- [MCP server card]({base}/mcp/server-card)\n- [Resource catalog]({base}/.well-known/ard.json)\n",
         authentication(service)
     )
 }
@@ -61,12 +69,22 @@ pub fn guide(service: &CloudService) -> String {
     } else {
         "Management defaults to the legacy workspace; public accounts/sharing are disabled."
     };
+    let claimable = if service.supervisor.config.claimable_enabled && service.native_auth.is_some()
+    {
+        format!(
+            "## Try before sign-in (one hour)\n\n`bog-cloud --origin {base} try --name notes --output ./temporary-bog.json` creates a real Bog and saves its credential to an owned private file. No account or approval is needed. Add `--definition ./notes.json` to create with a bounded custom definition. Use `bog-cloud --config ./temporary-bog.json claim-link` when ready; show only the returned short-lived claim URL to the human. The human signs in with GitHub, chooses a workspace with room, and claims the same Bog before `expires_at`. Poll `GET /claim/CODE/status` for active, claimed, or expired; do not put the credential in chat. Old credentials stop working on claim. If the output file says pending after a network failure, retry the same command and file. Raw API: `POST /v1/claimable-bogs` with Idempotency-Key and JSON {{\"name\":\"notes\",\"recovery_secret\":\"64 random hex characters\"}}; response includes a private credential, routes, and expiry. A retry with the same key and recovery secret rotates the old temporary credential. Do not print the raw response. MCP can use the temporary bearer after HTTP creation; neither MCP sign-in nor a browser login creates a temporary Bog.\n\n"
+        )
+    } else {
+        String::new()
+    };
     format!(
         r#"# Bog Cloud agent guide
 
 Prototype; keep backups. Origin: {base}. Send Authorization: Bearer TOKEN; never expose tokens in chat/URLs/logs.
 
 {auth} See /auth.md. MCP: read /mcp/server-card, initialize, tools/list.
+
+{claimable}
 
 ## Three-call start
 

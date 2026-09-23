@@ -81,6 +81,7 @@ Implementation references:
 ## Documentation
 
 - [Agent connection and project workflow](docs/bog-agent-experience.md): discovery, private connection, Python/TypeScript clients and starters.
+- [Claimable Bogs](docs/claimable-bogs.md): one-hour, pre-sign-in creation and human claiming.
 - [Phased improvement register](docs/plans/bog-agent-improvement-register.md): findings, local verification and external release gates.
 
 - [Anatomy of a Bog](docs/anatomy-of-a-bog.md): definitions, resources, provisioning, and application access.

@@ -159,6 +159,9 @@ class Client:
 
     def routes(self): return self.request('GET', self.path('/routes'))
     def request_status(self, request_id): return self.request('GET', '/v1/requests/' + urllib.parse.quote(request_id, safe=''))
+    def claim_link(self):
+        if not self.bog_id: raise Failure('Select a temporary Bog ID.')
+        return self.request('POST', '/v1/claimable-bogs/' + urllib.parse.quote(self.bog_id, safe='') + '/claim')
     def diagnostics(self): return self.request('GET', self.path('/usage'))
 
     def create(self, name, idempotency_key, definition=None, timeout=60, *, wait=True, sandbox=False, app_access=None):

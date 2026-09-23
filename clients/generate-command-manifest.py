@@ -17,7 +17,7 @@ COMMANDS={
 }
 source=(ROOT/'cloud/src/contract.rs').read_text().split('pub const OPERATIONS:',1)[1].split('\n];',1)[0]
 operations={name:{'operation':name,'method':method,'path':path} for name,method,path in re.findall(r'\(\s*"([a-z_]+)",\s*"([A-Z]+)",\s*"([^"]+)"',source)}
-value={'source':'cloud/src/contract.rs::OPERATIONS','commands':{command:operations[name] for command,name in COMMANDS.items()},'local_workflows':{'connect':'Device authorization saved privately','install':'Private one-use app-access redemption','delete-sandbox':'DELETE /v1/bogs/{bog_id}, confirm exact ID; server enforces ownership','diagnostics':'GET /v1/bogs/{bog_id}/usage'}}
+value={'source':'cloud/src/contract.rs::OPERATIONS','commands':{command:operations[name] for command,name in COMMANDS.items()},'local_workflows':{'connect':'Device authorization saved privately','try':'Anonymous one-hour Bog creation with private local credential installation','claim-link':'POST /v1/claimable-bogs/{bog_id}/claim; show only the short-lived URL','install':'Private one-use app-access redemption','delete-sandbox':'DELETE /v1/bogs/{bog_id}, confirm exact ID; server enforces ownership','diagnostics':'GET /v1/bogs/{bog_id}/usage'}}
 text=json.dumps(value,indent=2)+'\n';output=ROOT/'clients/command-manifest.json'
 p=argparse.ArgumentParser();p.add_argument('--check',action='store_true');args=p.parse_args()
 if args.check:

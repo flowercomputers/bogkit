@@ -19,6 +19,8 @@ kill_timeout = 120
   BOG_CLOUD_COMPOSABLE = "true"
   # Enabled after the agent-experience rollout and persistence canary passed.
   BOG_CLOUD_SANDBOXES = "true"
+  # Small-audience, one-hour Bogs.
+  BOG_CLOUD_CLAIMABLE = "true"
   BOG_CLOUD_MAX_ACTIVE = "8"
   BOG_CLOUD_MAX_STARTS = "2"
   BOG_CLOUD_MIN_FREE_BYTES = "67108864"

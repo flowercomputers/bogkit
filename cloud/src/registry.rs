@@ -110,6 +110,8 @@ impl Registry {
         }
         // Additive extensions preserve schema-5 rollback before sandboxes are used.
         db.execute_batch("CREATE TABLE IF NOT EXISTS sandboxes (bog_id TEXT PRIMARY KEY REFERENCES bogs(id), creator_credential TEXT NOT NULL, expires_at INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS cleanup_previews (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, ids TEXT NOT NULL);").map_err(db_error)?;
+        db.execute_batch(include_str!("../migrations/005_claimable.sql"))
+            .map_err(db_error)?;
         let foreign_key_errors: i64 = db
             .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |r| {
                 r.get(0)

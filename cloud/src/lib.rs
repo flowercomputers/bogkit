@@ -1,5 +1,6 @@
 //! Private Bog resource management.
 pub mod agent_guide;
+pub mod claimable;
 mod sandboxes;
 pub use sandboxes::{CleanupPreview, CleanupResult};
 mod registry;

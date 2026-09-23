@@ -160,6 +160,7 @@ pub struct CloudService {
     requests: tokio::sync::Semaphore,
     provisioning: tokio::sync::Semaphore,
     rates: std::sync::Mutex<std::collections::HashMap<String, (std::time::Instant, u32)>>,
+    pub(crate) claimable_create: tokio::sync::Mutex<()>,
 }
 impl CloudService {
     pub fn authentication_configured(&self) -> bool {
@@ -204,6 +205,7 @@ impl CloudService {
             requests: tokio::sync::Semaphore::new(64),
             provisioning: tokio::sync::Semaphore::new(16),
             rates: Default::default(),
+            claimable_create: tokio::sync::Mutex::new(()),
         }))
     }
     pub async fn execute(
@@ -511,7 +513,12 @@ impl CloudService {
             &operation,
             CreateDefinedBog { .. } | PlanDefinitionUpdate { .. } | ApplyDefinitionUpdate { .. }
         ) {
-            self.auth.authorize(principal, None, true)?;
+            if !self
+                .registry
+                .is_live_claimable_credential(principal, target)?
+            {
+                self.auth.authorize(principal, None, true)?;
+            }
             if !self.supervisor.config.composable_enabled {
                 return Err(CloudError::new(
                     "feature_disabled",
@@ -721,9 +728,12 @@ impl CloudService {
                 });
             }
             ListBogs => {
-                let bogs = match principal.workspace_id() {
-                    Some(w) => self.registry.list_scoped(w)?,
-                    None => self.registry.list()?,
+                let bogs = match principal.bog_id {
+                    Some(id) => vec![self.registry.get(id)?],
+                    None => match principal.workspace_id() {
+                        Some(w) => self.registry.list_scoped(w)?,
+                        None => self.registry.list()?,
+                    },
                 };
                 let descriptions = bogs
                     .iter()

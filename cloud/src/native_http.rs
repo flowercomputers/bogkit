@@ -121,14 +121,21 @@ pub async fn browser_inner(
         "/auth/login" => {
             let code = url_query(request.uri().query().unwrap_or(""), "user_code");
             let start = native.begin_login(code.as_deref())?;
-            (
+            let mut response = (
                 [
                     (header::LOCATION, start.authorization_url),
                     (header::SET_COOKIE, start.set_cookie),
                 ],
                 StatusCode::SEE_OTHER,
             )
-                .into_response()
+                .into_response();
+            if let Some(claim) = url_query(request.uri().query().unwrap_or(""), "claim")
+                && claim.len() == 64
+                && claim.bytes().all(|b| b.is_ascii_hexdigit())
+            {
+                response.headers_mut().append(header::SET_COOKIE,format!("__Host-bog_claim_return={claim}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=900").parse().unwrap());
+            }
+            response
         }
         "/auth/callback" => {
             let q = request.uri().query().unwrap_or("");
@@ -150,6 +157,11 @@ pub async fn browser_inner(
             let target = login
                 .public_code
                 .map(|c| format!("/auth/device/approve?user_code={c}"))
+                .or_else(|| {
+                    cookie_value(h, "__Host-bog_claim_return")
+                        .filter(|c| c.len() == 64 && c.bytes().all(|b| b.is_ascii_hexdigit()))
+                        .map(|c| format!("/claim/{c}"))
+                })
                 .unwrap_or_else(|| "/console".into());
             let mut r = (
                 [
@@ -163,6 +175,12 @@ pub async fn browser_inner(
                 header::SET_COOKIE,
                 header::HeaderValue::from_static(
                     "__Host-bog_login=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0",
+                ),
+            );
+            r.headers_mut().append(
+                header::SET_COOKIE,
+                header::HeaderValue::from_static(
+                    "__Host-bog_claim_return=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0",
                 ),
             );
             r
@@ -252,7 +270,7 @@ pub fn discovery(service: &CloudService, path: &str) -> Option<Response> {
     Some(match path {
         "/auth.md" => (
             [(header::CONTENT_TYPE, "text/markdown; charset=utf-8")],
-            format!("{}\n## Agent context and private app installation\n\n{}\n\n{}\n\nDownload /bog-app-access.py and follow the installation command returned by prepare_app_access. The helper may require a separate device approval; it never reads client credential stores.\n", AUTH_MARKDOWN, crate::contract::AGENT_INSTRUCTIONS, crate::contract::ACCESS_RULES),
+            format!("{}\n{}\n## Agent context and private app installation\n\n{}\n\n{}\n\nDownload /bog-app-access.py and follow the installation command returned by prepare_app_access. The helper may require a separate device approval; it never reads client credential stores.\n", AUTH_MARKDOWN, if service.supervisor.config.claimable_enabled {"## Temporary, claimable access\n\nStart with `bog-cloud try --name notes --output ./temporary-bog.json`. This writes a private one-Bog credential without GitHub approval; it expires one hour after creation. Use `bog-cloud --config ./temporary-bog.json claim-link` when the human is ready. They must sign in and claim before expiry. Existing approval remains the path for account and workspace management.\n"} else {""}, crate::contract::AGENT_INSTRUCTIONS, crate::contract::ACCESS_RULES),
         )
             .into_response(),
         "/.well-known/oauth-protected-resource" => (
@@ -291,6 +309,7 @@ pub fn discovery(service: &CloudService, path: &str) -> Option<Response> {
         "/v1" => {
             let mut v = crate::contract::overview();
             v["pricing"] = json!({"plan":"free prototype","price":0,"currency":"USD","payment_card_required":false,"self_serve_signup":"/auth/login","self_serve_credentials":"/console","sandbox":{"enabled":service.supervisor.config.sandboxes_enabled,"per_workspace":1,"lifetime_seconds":3600,"storage_bytes":16777216}});
+            v["claimable"] = json!({"enabled":service.supervisor.config.claimable_enabled,"create":"/v1/claimable-bogs","lifetime_seconds":3600,"concurrent_limit":service.supervisor.config.claimable_limit,"per_source_hour":service.supervisor.config.claimable_per_source_hour,"daily_limit":service.supervisor.config.claimable_daily_limit,"claim":"/v1/claimable-bogs/{bog_id}/claim"});
             v["interfaces"] = json!({"http":"/v1","mcp":"/mcp","graphql":false});
             v["authentication_configured"] = json!(service.authentication_configured());
             v["authentication_mode"] = json!("github_native");
@@ -303,12 +322,24 @@ pub fn discovery(service: &CloudService, path: &str) -> Option<Response> {
         _ => return None,
     })
 }
-pub fn guide(service: &CloudService) -> String {
+pub fn guide(service: &CloudService, signed_in: bool) -> String {
     if service.native_auth.is_none() {
         return crate::contract::guide(
             service.public_auth.is_some(),
             service.supervisor.max_active(),
         );
     }
-    include_str!("../static/home.html").to_owned()
+    let home = include_str!("../static/home.html").to_owned();
+    if service.supervisor.config.claimable_enabled && !signed_in {
+        home.replacen(
+            "</section><section class=\"reading\">",
+            &format!(
+                "</section>{}<section class=\"reading\">",
+                include_str!("../static/claimable-home.html")
+            ),
+            1,
+        )
+    } else {
+        home
+    }
 }

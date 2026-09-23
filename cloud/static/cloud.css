@@ -4,3 +4,9 @@
 @media(max-width:640px){.site-footer-nav-list{justify-content:flex-start;gap:1em}.site-footer-nav{justify-content:flex-start}.site-shell main .hero-actions-stack{width:100%}.site-brand{font-size:1em}}
 
 .copy-icon{width:1em;height:1em;align-self:center;fill:none;stroke:currentColor;stroke-width:1.5;flex-shrink:0}
+.site-shell main .claimable-start{max-width:60ch;margin-block:var(--site-section-gap)}
+.claimable-start form,.claimable-start #claimable-result>div{display:flex;align-items:center;gap:.5em;flex-wrap:wrap;margin-block:1em}
+.claimable-start input{font:inherit;min-width:12em;max-width:100%;padding:.33em .5em;color:var(--site-foreground);background:transparent;border:1px solid var(--site-hairline);border-radius:10px}
+.site-shell .claimable-start button.primary{color:var(--site-background);background:var(--site-foreground);border-color:var(--site-foreground)}
+.claimable-start pre{white-space:pre-wrap;overflow-wrap:anywhere}
+@media(max-width:640px){.claimable-start form,.claimable-start #claimable-result>div{align-items:stretch;flex-direction:column}.claimable-start input{width:100%}}

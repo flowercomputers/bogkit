@@ -1,0 +1,14 @@
+<section class="claimable-start" id="try-bog">
+  <h2>Try a Bog before signing in</h2>
+  <p>Create a real, private Bog for notes. It lasts one hour. Claim it into your workspace before then to keep the same data and Bog ID. This shared test service has limited capacity.</p>
+  <form id="claimable-create"><label>Temporary Bog name <input name="name" value="notes" required maxlength="100"></label><button class="primary" type="submit">Try a temporary Bog</button></form>
+  <p id="claimable-status" role="status"></p>
+  <div id="claimable-result" hidden>
+    <p>Your Bog is ready until <time id="claimable-expiry"></time> (<span id="claimable-countdown"></span> remaining). Keep this tab open to use it or renew the short-lived claim link.</p>
+    <p><a id="claimable-claim" href="#">Claim this Bog</a> <button type="button" id="claimable-renew">Renew claim link</button></p>
+    <div><label>Example note <input id="claimable-note" value="A note from Bog Cloud"></label><button type="button" id="claimable-write">Write note</button><button type="button" id="claimable-read">Read notes</button></div>
+    <pre id="claimable-output" aria-live="polite"></pre>
+  </div>
+  <p><a class="button" href="/agent.md">Give your agent a Bog</a></p>
+  <p>It can create a temporary Bog through the same service, store its credential privately, and send you a claim link when the app works.</p>
+</section><script src="/claimable.js" defer></script>

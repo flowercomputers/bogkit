@@ -102,7 +102,11 @@ pub async fn homepage(State(service): State<Arc<CloudService>>, request: Request
             crate::agent_guide::guide(&service),
         )
     } else {
-        let html = crate::native_http::guide(&service);
+        let signed_in = service.native_auth.as_ref().is_some_and(|auth| {
+            crate::http::cookie_value(request.headers(), crate::browser_auth::SESSION_COOKIE)
+                .is_some_and(|session| auth.authenticate(&session).is_ok())
+        });
+        let html = crate::native_http::guide(&service, signed_in);
         let meta = metadata(&base, "/");
         let html = if html.contains("</head>") {
             html.replacen("</head>", &format!("{meta}</head>"), 1)

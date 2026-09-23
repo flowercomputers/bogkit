@@ -1586,7 +1586,7 @@ impl Auth {
         self.authorize(p, None, false)?;
         let db = self.registry.connection()?;
         platform_access(&db, p)?;
-        let mut s=db.prepare("SELECT w.id,w.name,w.personal_account_id,w.uncapped_bogs,w.uncapped_bogs OR COALESCE(a.uncapped_bogs,0),(SELECT COUNT(*) FROM bogs b WHERE b.workspace_id=w.id AND (b.deleted_at IS NULL OR b.cleanup_completed_at IS NULL)) FROM workspaces w LEFT JOIN accounts a ON a.id=w.personal_account_id WHERE w.deleted_at IS NULL AND w.id<>'00000000-0000-0000-0000-000000000001' ORDER BY w.created_at,w.id").map_err(db_error)?;
+        let mut s=db.prepare("SELECT w.id,w.name,w.personal_account_id,w.uncapped_bogs,w.uncapped_bogs OR COALESCE(a.uncapped_bogs,0),(SELECT COUNT(*) FROM bogs b WHERE b.workspace_id=w.id AND (b.deleted_at IS NULL OR b.cleanup_completed_at IS NULL)) FROM workspaces w LEFT JOIN accounts a ON a.id=w.personal_account_id WHERE w.deleted_at IS NULL AND w.id NOT IN ('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000002') ORDER BY w.created_at,w.id").map_err(db_error)?;
         s.query_map([],|r| Ok(serde_json::json!({"id":r.get::<_,String>(0)?,"name":r.get::<_,String>(1)?,"personal_account_id":r.get::<_,Option<String>>(2)?,"personal":r.get::<_,Option<String>>(2)?.is_some(),"uncapped_bogs":r.get::<_,bool>(3)?,"effective_uncapped_bogs":r.get::<_,bool>(4)?,"bog_limit_source":allowance_source(r.get(3)?,r.get(4)?),"bog_limit":if r.get::<_,bool>(4)? {None} else {Some(3)},"bog_count":r.get::<_,i64>(5)?}))).map_err(db_error)?.collect::<Result<Vec<_>,_>>().map_err(db_error)
     }
     pub fn bootstrap_workspace(

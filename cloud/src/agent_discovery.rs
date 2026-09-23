@@ -33,7 +33,7 @@ pub fn server_card(base: &str) -> Value {
         "remotes":[{"type":"streamable-http", "url":endpoint,
             "supportedProtocolVersions":["2025-11-25"],
             "headers":[{"name":"Authorization", "isRequired":true,"isSecret":true,
-                "description":format!("Bearer token. Read {base}/auth.md for approval instructions; never paste credentials into chat.")}]}],
+                "description":format!("Bearer token. Read {base}/auth.md for approval or temporary access instructions; never paste credentials into chat.")}]}],
         "_meta":{"flowercomputer.com/runtime-name":"bog-cloud",
             "flowercomputer.com/discovery-status":"Experimental server-card draft; the catalog identifier is namespaced, while initialize reports bog-cloud."}
     })
